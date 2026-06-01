@@ -1,0 +1,23 @@
+# Build Task — FFmpeg + Whisper + Remotion Pipeline
+
+- [ ] video-bot/ project scaffold (package.json, tsconfig, remotion.config)
+- [ ] .claude/commands/transcribe.md
+- [ ] .claude/commands/produce.md
+- [ ] .claude/commands/new-series.md
+- [ ] .claude/commands/real-overlay.md
+- [ ] .claude/commands/finalize.md
+- [ ] src/utils/parse-whisper.ts
+- [ ] src/utils/ffmpeg.ts
+- [ ] src/utils/detect-silences.ts
+- [ ] src/utils/detect-retakes.ts
+- [ ] src/utils/sfx-matcher.ts
+- [ ] src/transcribe.ts
+- [ ] src/produce.ts
+- [ ] src/new-series.ts
+- [ ] src/real-overlay.ts
+- [ ] src/finalize.ts
+- [ ] src/compositions/TopHalf.tsx
+- [ ] src/compositions/Overlay.tsx
+- [ ] src/compositions/Root.tsx
+- [ ] src/index.ts
+- [ ] assets/sfx/ placeholders

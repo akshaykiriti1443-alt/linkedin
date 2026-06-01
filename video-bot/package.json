@@ -1,0 +1,31 @@
+{
+  "name": "video-bot",
+  "version": "1.0.0",
+  "description": "AI video editing pipeline — Whisper + FFmpeg + Remotion + Claude Code",
+  "type": "module",
+  "scripts": {
+    "transcribe": "tsx src/transcribe.ts",
+    "produce": "tsx src/produce.ts",
+    "new-series": "tsx src/new-series.ts",
+    "real-overlay": "tsx src/real-overlay.ts",
+    "finalize": "tsx src/finalize.ts",
+    "preview": "npx remotion preview src/index.ts",
+    "render-top": "npx remotion render src/index.ts TopHalf out/top_animations.mov --codec=prores --prores-profile=4444",
+    "render-overlay": "npx remotion render src/index.ts Overlay out/overlay.mov --codec=prores --prores-profile=4444"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.0",
+    "remotion": "^4.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "uuid": "^10.0.0",
+    "dotenv": "^16.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@types/uuid": "^10.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}
