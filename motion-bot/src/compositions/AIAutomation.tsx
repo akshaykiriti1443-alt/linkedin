@@ -7,12 +7,7 @@ import {
   interpolate,
   Easing,
 } from 'remotion';
-import { loadFont as loadSyne } from '@remotion/google-fonts/Syne';
-import { loadFont as loadSpaceMono } from '@remotion/google-fonts/SpaceMono';
 import { TextBeat } from './TextBeat';
-
-loadSyne();
-loadSpaceMono();
 
 const ORANGE = '#FF6B1A';
 const CHARCOAL = '#1A1A1A';
@@ -137,7 +132,7 @@ const AIBadge: React.FC<{ startFrame: number }> = ({ startFrame }) => {
         background: ORANGE,
         borderRadius: 100,
         padding: '12px 36px',
-        fontFamily: '"Syne", sans-serif',
+        fontFamily: '"Arial Black", "Helvetica Neue", sans-serif',
         fontWeight: 800,
         fontSize: 28,
         letterSpacing: '0.12em',
@@ -195,7 +190,7 @@ const Beat2Text: React.FC<{ startFrame: number }> = ({ startFrame }) => {
       style={{
         opacity,
         transform: `translateY(${slideY}px)`,
-        fontFamily: '"Syne", sans-serif',
+        fontFamily: '"Arial Black", "Helvetica Neue", sans-serif',
         fontSize: 72,
         fontWeight: 700,
         color: ORANGE,
@@ -236,7 +231,7 @@ const Beat4Text: React.FC<{ startFrame: number }> = ({ startFrame }) => {
       style={{
         opacity,
         transform: `scale(${scale})`,
-        fontFamily: '"Syne", sans-serif',
+        fontFamily: '"Arial Black", "Helvetica Neue", sans-serif',
         fontSize: 88,
         fontWeight: 800,
         color: CHARCOAL,

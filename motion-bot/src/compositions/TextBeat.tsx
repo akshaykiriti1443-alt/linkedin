@@ -68,8 +68,8 @@ export const TextBeat: React.FC<TextBeatProps> = ({
 
   const fontFamily =
     beatStyle === 'mono'
-      ? '"Space Mono", monospace'
-      : '"Syne", sans-serif';
+      ? '"Courier New", "Courier", monospace'
+      : '"Arial Black", "Arial Bold", "Helvetica Neue", sans-serif';
 
   const renderText = () => {
     if (!highlight) {
