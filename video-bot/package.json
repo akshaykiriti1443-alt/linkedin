@@ -11,7 +11,8 @@
     "finalize": "tsx src/finalize.ts",
     "preview": "npx remotion preview src/index.ts",
     "render-top": "npx remotion render src/index.ts TopHalf out/top_animations.mov --codec=prores --prores-profile=4444",
-    "render-overlay": "npx remotion render src/index.ts Overlay out/overlay.mov --codec=prores --prores-profile=4444"
+    "render-overlay": "npx remotion render src/index.ts Overlay out/overlay.mov --codec=prores --prores-profile=4444",
+    "build-timeline": "tsx src/build-timeline.ts"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.0",

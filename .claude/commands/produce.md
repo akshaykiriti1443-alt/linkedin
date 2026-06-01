@@ -1,42 +1,34 @@
-# /produce — Rough cut: silence removal, retake removal, 9:16 reformat
+# /produce — Rough cut via FCP XML (imports into Premiere Pro)
 
-You are an expert FFmpeg video editor. Use the transcript at `video-bot/workspace/transcript.json`.
+You are an expert editor. Use `video-bot/workspace/transcript.json` from the /transcribe step.
 
 ## Steps
 
-1. Run the produce script:
+1. Run the XML generator:
    ```bash
    cd video-bot
-   tsx src/produce.ts
+   python src/generate_xml.py \
+     --video "$(cat workspace/meta.json | python -c 'import sys,json; print(json.load(sys.stdin)["videoPath"])')" \
+     --transcript workspace/transcript.json \
+     --output workspace/timeline_cut.xml \
+     --silence-threshold 0.4
    ```
 
-2. This script:
-   - Reads `workspace/transcript.json`
-   - Detects silences > 0.5s between words
-   - Detects retakes (Claude analyzes repeated phrases in transcript)
-   - Generates an FFmpeg concat filter that splices them all out
-   - Reformats from 16:9 → 9:16 (1080x1920):
-     - Crops speaker face into bottom 50% (y: 960–1920)
-     - Top 50% (y: 0–960) = black, ready for animations
-   - Outputs `workspace/rough_cut.mp4`
+2. Print the edit summary:
+   - How many silence gaps were removed
+   - How many keep segments remain
+   - Final duration vs original
 
-3. After the script runs, read and print the edit report from `workspace/edit_report.json`:
-   - How many silences were cut
-   - How many retakes were removed
-   - Final duration vs original duration
-   - Time saved
+3. Tell the user:
+   - **Premiere action**: `File > Import > workspace/timeline_cut.xml`
+   - This creates a sequence on V1 with all silences already cut
+   - Next: apply the `Shorts_Bottom_Half` preset to all V1 clips:
+     - Scale: ~180% | Position Y: 1440 | Sequence: 1080×1920
 
-4. Tell the user: "Run /new-series to generate top-half animations from your transcript."
-
-## Key FFmpeg filter logic
-```
-# Crop face to bottom half of 9:16 frame
-[0:v]crop=ih*(9/16):ih,scale=1080:1920,pad=1080:1920:0:960:black[bottom]
-# Combine with black top half
-color=black:1080x960[top]
-[top][bottom]vstack[out]
-```
+4. Then run /new-series to generate V2 motion graphics.
 
 ## Notes
-- Always preview the edit report before claiming done
-- If a retake detection looks wrong, show the user the flagged phrases and ask to confirm before cutting
+- Python 3.8+ required. The script uses only stdlib (no pip dependencies).
+- The XML uses relative file paths — keep your video in the same location.
+- If retakes need removing, tell the user to flag the timestamps manually in Premiere
+  (drag rolling edit tool) rather than auto-cutting — preserves syllables.
