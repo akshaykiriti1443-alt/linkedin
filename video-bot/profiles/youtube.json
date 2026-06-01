@@ -1,0 +1,10 @@
+{
+  "layout": "youtube",
+  "whisper_model": "small",
+  "silence_threshold": 0.5,
+  "sfx": false,
+  "overlays": true,
+  "style": "ali",
+  "accent_color": "#4fc3f7",
+  "description": "16:9 YouTube essay — full frame, Ali Abdaal lower-thirds style"
+}

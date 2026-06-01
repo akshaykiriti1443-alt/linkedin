@@ -11,8 +11,16 @@ You are an expert editor. Use `video-bot/workspace/transcript.json` from the /tr
      --video "$(cat workspace/meta.json | python -c 'import sys,json; print(json.load(sys.stdin)["videoPath"])')" \
      --transcript workspace/transcript.json \
      --output workspace/timeline_cut.xml \
-     --silence-threshold 0.4
+     --silence-threshold 0.4 \
+     --layout auto
    ```
+
+   **Layout options** (pass as `--layout <value>`):
+   - omit / `auto`   → ffprobe detects your video dimensions and picks automatically
+   - `shorts`        → 9:16, face bottom 50% (Scale 180%, Y 1440) — Reels/TikTok
+   - `youtube`       → 16:9 full frame, no crop — YouTube essays
+   - `center-split`  → face centered, graphics left/right
+   - `floating-cam`  → face as small PiP bottom-right, b-roll fills frame
 
 2. Print the edit summary:
    - How many silence gaps were removed
@@ -22,8 +30,8 @@ You are an expert editor. Use `video-bot/workspace/transcript.json` from the /tr
 3. Tell the user:
    - **Premiere action**: `File > Import > workspace/timeline_cut.xml`
    - This creates a sequence on V1 with all silences already cut
-   - Next: apply the `Shorts_Bottom_Half` preset to all V1 clips:
-     - Scale: ~180% | Position Y: 1440 | Sequence: 1080×1920
+   - For `shorts` layout: motion parameters (Scale 180%, Y 1440) are already embedded in
+     the XML — no manual preset needed. For other layouts, no crop is applied.
 
 4. Then run /new-series to generate V2 motion graphics.
 
