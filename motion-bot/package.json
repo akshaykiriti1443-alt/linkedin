@@ -4,14 +4,15 @@
   "description": "AI motion graphics bot powered by Claude + Remotion",
   "type": "module",
   "scripts": {
-    "render": "npx remotion render src/index.ts Scene out/video.mp4",
+    "render": "npx remotion render src/index.ts AIAutomation out/AIAutomation.mp4",
     "preview": "npx remotion preview src/index.ts"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.0",
-    "remotion": "^4.0.0",
+    "@remotion/google-fonts": "^4.0.470",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "remotion": "^4.0.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",
