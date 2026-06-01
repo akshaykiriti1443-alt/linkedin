@@ -1,42 +1,61 @@
 #!/usr/bin/env python3
 """
-generate_xml.py — Builds FCP7 XML from Whisper transcript for Premiere Pro import.
+generate_xml.py — Smart dual-mode FCP7 XML builder.
+
+Modes auto-assigned per segment:
+  MODE A  (no screen recording for this range)
+          V1 = talking head bottom half  |  V2 = Vox 3D animations
+  MODE B  (screen recording covers this range)
+          V1 = screen recording full frame  |  V2 = talking head PiP (bottom-right)
 
 Usage:
-  python generate_xml.py --video raw.mp4 --transcript workspace/transcript.json
-                         --output workspace/timeline_cut.xml
-                         [--silence-threshold 0.4]
-                         [--layout shorts|youtube|center-split|floating-cam]
-
-Layouts:
-  shorts        Face anchored to bottom 50% (1080x1920, Position Y 1440). Default.
-  youtube       Full 16:9 frame, no crop. Sequence 1920x1080.
-  center-split  Face centered vertically; graphics left/right quadrants.
-  floating-cam  Face as circular PiP in bottom-right corner over full frame.
+  python generate_xml.py
+    --video workspace/raw.mp4
+    --transcript workspace/transcript.json
+    --output workspace/timeline_cut.xml
+    [--screen workspace/screen.mp4]
+    [--screen-offset 0.0]          # seconds: when screen recording started vs talking head
+    [--silence-threshold 0.4]
+    [--layout shorts|youtube|center-split|floating-cam]
 """
 
 import json, argparse, os, subprocess, shutil
 from xml.etree.ElementTree import Element, SubElement, ElementTree, indent
 
-LAYOUTS = {
-    "shorts":       {"width": 1080, "height": 1920, "desc": "9:16 Shorts — face bottom 50%"},
-    "youtube":      {"width": 1920, "height": 1080, "desc": "16:9 YouTube — full frame"},
-    "center-split": {"width": 1080, "height": 1920, "desc": "Center split — face centered"},
-    "floating-cam": {"width": 1080, "height": 1920, "desc": "Floating cam — PiP bottom-right"},
-}
+# PiP position for talking head when screen recording is active
+PIP = {"scale": "30", "positionX": "870", "positionY": "1750"}
 
-def detect_aspect_ratio(video_path):
-    """Use ffprobe to detect video dimensions. Returns (width, height) or None."""
+# Talking head bottom-half params (MODE A, shorts layout)
+SHORTS_MOTION = {"scale": "180", "positionY": "1440"}
+
+def ticks(sec, tb=30):
+    return int(round(sec * tb))
+
+def get_video_duration(path):
+    """Return duration in seconds via ffprobe. Returns None if unavailable."""
     if not shutil.which("ffprobe"):
         return None
     try:
-        result = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=width,height",
-             "-of", "csv=p=0", video_path],
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", path],
             capture_output=True, text=True, timeout=10
         )
-        parts = result.stdout.strip().split(",")
+        return float(r.stdout.strip())
+    except Exception:
+        return None
+
+def get_video_dims(path):
+    """Return (width, height) via ffprobe."""
+    if not shutil.which("ffprobe"):
+        return None
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=10
+        )
+        parts = r.stdout.strip().split(",")
         if len(parts) == 2:
             return int(parts[0]), int(parts[1])
     except Exception:
@@ -44,33 +63,19 @@ def detect_aspect_ratio(video_path):
     return None
 
 def auto_detect_layout(video_path):
-    """Pick layout based on video aspect ratio."""
-    dims = detect_aspect_ratio(video_path)
+    dims = get_video_dims(video_path)
     if dims is None:
         return "shorts"
     w, h = dims
     ratio = w / h
-    if ratio > 1.5:
-        return "youtube"   # 16:9 or wider
-    if ratio < 0.7:
-        return "shorts"    # 9:16 portrait
-    return "center-split"  # square-ish
+    if ratio > 1.5: return "youtube"
+    if ratio < 0.7: return "shorts"
+    return "center-split"
 
-def ticks(sec, tb=30):
-    return int(round(sec * tb))
-
-def build_xml(video_path, segments, silence_threshold=0.4, timebase=30, layout="shorts"):
-    abs_path = os.path.abspath(video_path)
-    file_url = "file://localhost" + abs_path.replace("\\", "/")
-    if not abs_path.startswith("/"):
-        file_url = "file://localhost/" + abs_path.replace("\\", "/")
-
-    lyt = LAYOUTS.get(layout, LAYOUTS["shorts"])
-    seq_w, seq_h = lyt["width"], lyt["height"]
-
-    # Build keep segments from word-level silence detection
+def build_keep_segments(whisper_segments, silence_threshold):
+    """Detect silence gaps and return list of {start, end} keep windows."""
     keep = []
-    for seg in segments:
+    for seg in whisper_segments:
         words = seg.get("words", [])
         if not words:
             keep.append({"start": seg["start"], "end": seg["end"]})
@@ -83,21 +88,68 @@ def build_xml(video_path, segments, silence_threshold=0.4, timebase=30, layout="
                 chunk_start = words[i]["start"]
         keep.append({"start": chunk_start, "end": words[-1]["end"]})
 
-    # Merge adjacent segments (gap < 0.05s rounding noise)
+    # Merge segments with sub-50ms gap (rounding noise)
     merged = []
     for seg in keep:
         if merged and seg["start"] - merged[-1]["end"] < 0.05:
             merged[-1]["end"] = seg["end"]
         else:
             merged.append(dict(seg))
+    return merged
 
+def motion_filter(params: dict) -> Element:
+    """Build a <filters><filter> element with motion params."""
+    filters = Element("filters")
+    filt = SubElement(filters, "filter")
+    SubElement(filt, "name").text = "Motion"
+    for pname, pval in params.items():
+        param = SubElement(filt, "parameter")
+        SubElement(param, "name").text = pname
+        SubElement(param, "value").text = pval
+    return filters
+
+def build_xml(
+    video_path, segments, silence_threshold, timebase, layout,
+    screen_path=None, screen_offset=0.0
+):
+    abs_cam = os.path.abspath(video_path)
+    url_cam = "file://localhost" + (abs_cam if abs_cam.startswith("/") else "/" + abs_cam).replace("\\", "/")
+
+    abs_scr = os.path.abspath(screen_path) if screen_path else None
+    url_scr = None
+    screen_duration = None
+    if abs_scr:
+        url_scr = "file://localhost" + (abs_scr if abs_scr.startswith("/") else "/" + abs_scr).replace("\\", "/")
+        screen_duration = get_video_duration(abs_scr)
+
+    keep = build_keep_segments(segments, silence_threshold)
+
+    # Determine MODE per segment
+    seg_modes = []
+    for seg in keep:
+        mode = "vox"  # default: Vox animations
+        if screen_duration is not None:
+            # Screen recording covers this segment if it overlaps [start-offset, end-offset]
+            scr_start = seg["start"] - screen_offset
+            scr_end   = seg["end"]   - screen_offset
+            if scr_start >= 0 and scr_end <= screen_duration:
+                mode = "screen"
+        seg_modes.append(mode)
+
+    # Sequence dimensions
+    seq_w, seq_h = (1080, 1920)  # always output in 9:16 container
+    if layout == "youtube":
+        seq_w, seq_h = (1920, 1080)
+
+    # Root XML
     xmeml = Element("xmeml", version="4")
     seq = SubElement(xmeml, "sequence")
-    SubElement(seq, "name").text = f"AI Rough Cut — V1 [{layout}]"
+    SubElement(seq, "name").text = "AI Smart Cut — V1/V2 dual-mode"
     rate_el = SubElement(seq, "rate")
     SubElement(rate_el, "timebase").text = str(timebase)
     SubElement(rate_el, "ntsc").text = "FALSE"
-    total_ticks = sum(ticks(s["end"] - s["start"], timebase) for s in merged)
+
+    total_ticks = sum(ticks(s["end"] - s["start"], timebase) for s in keep)
     SubElement(seq, "duration").text = str(total_ticks)
 
     media = SubElement(seq, "media")
@@ -110,75 +162,123 @@ def build_xml(video_path, segments, silence_threshold=0.4, timebase=30, layout="
     SubElement(r2, "timebase").text = str(timebase)
     SubElement(r2, "ntsc").text = "FALSE"
 
-    vtk = SubElement(video, "track")
+    # V1 track: talking head (MODE A) OR screen recording (MODE B)
+    v1_track = SubElement(video, "track")
+    # V2 track: Vox placeholder (MODE A) OR talking head PiP (MODE B)
+    v2_track = SubElement(video, "track")
+
     audio = SubElement(media, "audio")
-    atk = SubElement(audio, "track")
+    a1_track = SubElement(audio, "track")  # voice always from talking head
 
     tl_pos = 0
-    for i, seg in enumerate(merged):
-        in_t  = ticks(seg["start"], timebase)
-        out_t = ticks(seg["end"], timebase)
-        dur_t = out_t - in_t
+    segments_meta = []
 
-        for is_audio in (False, True):
-            clip = SubElement(atk if is_audio else vtk, "clipitem",
-                              id=f"{'a' if is_audio else 'v'}{i}")
-            SubElement(clip, "name").text = os.path.basename(abs_path)
-            SubElement(clip, "start").text = str(tl_pos)
-            SubElement(clip, "end").text = str(tl_pos + dur_t)
-            SubElement(clip, "in").text = str(in_t)
-            SubElement(clip, "out").text = str(out_t)
-            fe = SubElement(clip, "file", id=f"f{i}")
-            SubElement(fe, "pathurl").text = file_url
+    for i, (seg, mode) in enumerate(zip(keep, seg_modes)):
+        in_t  = ticks(seg["start"], timebase)
+        out_t = ticks(seg["end"],   timebase)
+        dur_t = out_t - in_t
+        duration_sec = seg["end"] - seg["start"]
+
+        # ── V1 clip ──────────────────────────────────────────────────────────
+        v1_clip = SubElement(v1_track, "clipitem", id=f"v1_{i}")
+        if mode == "screen":
+            SubElement(v1_clip, "name").text = os.path.basename(abs_scr)
+            scr_in  = ticks(max(0, seg["start"] - screen_offset), timebase)
+            scr_out = ticks(max(0, seg["end"]   - screen_offset), timebase)
+            SubElement(v1_clip, "start").text = str(tl_pos)
+            SubElement(v1_clip, "end").text   = str(tl_pos + dur_t)
+            SubElement(v1_clip, "in").text    = str(scr_in)
+            SubElement(v1_clip, "out").text   = str(scr_out)
+            fe = SubElement(v1_clip, "file", id=f"scrf{i}")
+            SubElement(fe, "pathurl").text = url_scr
             r3 = SubElement(fe, "rate")
             SubElement(r3, "timebase").text = str(timebase)
             SubElement(r3, "ntsc").text = "FALSE"
+            # Full frame — no motion filter
+        else:
+            # MODE A: talking head, bottom half
+            SubElement(v1_clip, "name").text = os.path.basename(abs_cam)
+            SubElement(v1_clip, "start").text = str(tl_pos)
+            SubElement(v1_clip, "end").text   = str(tl_pos + dur_t)
+            SubElement(v1_clip, "in").text    = str(in_t)
+            SubElement(v1_clip, "out").text   = str(out_t)
+            fe = SubElement(v1_clip, "file", id=f"camf{i}")
+            SubElement(fe, "pathurl").text = url_cam
+            r3 = SubElement(fe, "rate")
+            SubElement(r3, "timebase").text = str(timebase)
+            SubElement(r3, "ntsc").text = "FALSE"
+            if layout != "youtube":
+                v1_clip.append(motion_filter(SHORTS_MOTION))
 
-            # Layout-specific motion filters on V1 clip
-            if not is_audio and layout != "youtube":
-                filters = SubElement(clip, "filters")
-                filt = SubElement(filters, "filter")
-                SubElement(filt, "name").text = "Motion"
-                param_list = []
-                if layout == "shorts":
-                    param_list = [("scale", "180"), ("positionY", "1440")]
-                elif layout == "center-split":
-                    param_list = [("scale", "90"), ("positionY", "960")]
-                elif layout == "floating-cam":
-                    param_list = [("scale", "35"), ("positionX", "810"), ("positionY", "1700")]
-                for pname, pval in param_list:
-                    param = SubElement(filt, "parameter")
-                    SubElement(param, "name").text = pname
-                    SubElement(param, "value").text = pval
+        # ── V2 clip ──────────────────────────────────────────────────────────
+        if mode == "screen":
+            # Talking head PiP over the screen recording
+            v2_clip = SubElement(v2_track, "clipitem", id=f"v2pip_{i}")
+            SubElement(v2_clip, "name").text = f"PiP_{os.path.basename(abs_cam)}"
+            SubElement(v2_clip, "start").text = str(tl_pos)
+            SubElement(v2_clip, "end").text   = str(tl_pos + dur_t)
+            SubElement(v2_clip, "in").text    = str(in_t)
+            SubElement(v2_clip, "out").text   = str(out_t)
+            fe2 = SubElement(v2_clip, "file", id=f"pipf{i}")
+            SubElement(fe2, "pathurl").text = url_cam
+            r4 = SubElement(fe2, "rate")
+            SubElement(r4, "timebase").text = str(timebase)
+            SubElement(r4, "ntsc").text = "FALSE"
+            v2_clip.append(motion_filter(PIP))
+        # MODE A: V2 left empty — build-timeline.ts will place Vox .mov here
 
-            if is_audio:
-                SubElement(clip, "channelcount").text = "2"
+        # ── A1 audio: always from talking head ───────────────────────────────
+        a1_clip = SubElement(a1_track, "clipitem", id=f"a1_{i}")
+        SubElement(a1_clip, "name").text = os.path.basename(abs_cam)
+        SubElement(a1_clip, "start").text = str(tl_pos)
+        SubElement(a1_clip, "end").text   = str(tl_pos + dur_t)
+        SubElement(a1_clip, "in").text    = str(in_t)
+        SubElement(a1_clip, "out").text   = str(out_t)
+        afe = SubElement(a1_clip, "file", id=f"af{i}")
+        SubElement(afe, "pathurl").text = url_cam
+        ar = SubElement(afe, "rate")
+        SubElement(ar, "timebase").text = str(timebase)
+        SubElement(ar, "ntsc").text = "FALSE"
+        SubElement(a1_clip, "channelcount").text = "2"
 
+        segments_meta.append({
+            "tl_start": tl_pos / timebase,
+            "tl_end":   (tl_pos + dur_t) / timebase,
+            "src_start": seg["start"],
+            "src_end":   seg["end"],
+            "mode": mode,
+        })
         tl_pos += dur_t
 
-    return xmeml, merged
+    return xmeml, keep, seg_modes, segments_meta
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--video", required=True)
+    p.add_argument("--video",      required=True)
     p.add_argument("--transcript", required=True)
-    p.add_argument("--output", default="workspace/timeline_cut.xml")
+    p.add_argument("--output",     default="workspace/timeline_cut.xml")
+    p.add_argument("--screen",     default=None, help="Screen recording file (optional)")
+    p.add_argument("--screen-offset", type=float, default=0.0,
+                   help="Seconds into talking head when screen recording started")
     p.add_argument("--silence-threshold", type=float, default=0.4)
-    p.add_argument("--timebase", type=int, default=30)
-    p.add_argument("--layout", choices=list(LAYOUTS.keys()), default=None,
-                   help="Force a layout. Omit to auto-detect from video dimensions.")
+    p.add_argument("--timebase",   type=int, default=30)
+    p.add_argument("--layout",     default=None,
+                   choices=["shorts","youtube","center-split","floating-cam"])
     args = p.parse_args()
 
-    # Auto-detect layout if not specified
     layout = args.layout or auto_detect_layout(args.video)
-    lyt = LAYOUTS[layout]
-    print(f"\n🎬 Layout: {layout} — {lyt['desc']}")
+    print(f"\n🎬 Layout : {layout}")
+    if args.screen:
+        print(f"📺 Screen : {args.screen}  (offset {args.screen_offset}s)")
 
     with open(args.transcript) as f:
         data = json.load(f)
 
-    xmeml, kept = build_xml(args.video, data.get("segments", []),
-                            args.silence_threshold, args.timebase, layout)
+    xmeml, kept, modes, seg_meta = build_xml(
+        args.video, data.get("segments", []),
+        args.silence_threshold, args.timebase, layout,
+        args.screen, args.screen_offset
+    )
 
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     tree = ElementTree(xmeml)
@@ -187,15 +287,21 @@ def main():
         out.write(b'<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE xmeml>\n')
         tree.write(out, encoding="utf-8", xml_declaration=False)
 
-    total = sum(s["end"] - s["start"] for s in kept)
+    # Write segments_meta.json for build-timeline.ts
+    meta_path = os.path.join(os.path.dirname(args.output), "segments_meta.json")
+    with open(meta_path, "w") as f:
+        json.dump(seg_meta, f, indent=2)
+
+    vox_count    = modes.count("vox")
+    screen_count = modes.count("screen")
+    total_dur    = sum(s["end"] - s["start"] for s in kept)
+
     print(f"✅ XML written → {args.output}")
-    print(f"   Segments kept : {len(kept)}  |  Duration: {total:.1f}s")
-    print(f"   Sequence size : {lyt['width']}×{lyt['height']}")
+    print(f"   Segments   : {len(kept)} total")
+    print(f"   MODE A Vox : {vox_count} segments  (talking head + 3D animations)")
+    print(f"   MODE B Scr : {screen_count} segments  (screen recording + face PiP)")
+    print(f"   Duration   : {total_dur:.1f}s")
     print(f"\n▶  Premiere: File > Import > {args.output}")
-    if layout == "shorts":
-        print("   V1 clips already have Scale=180%, PositionY=1440 baked in.")
-    elif layout == "floating-cam":
-        print("   V1 clip is a PiP in bottom-right. Drag your b-roll to V0.")
 
 if __name__ == "__main__":
     main()

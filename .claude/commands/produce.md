@@ -35,6 +35,17 @@ You are an expert editor. Use `video-bot/workspace/transcript.json` from the /tr
 
 4. Then run /new-series to generate V2 motion graphics.
 
+## Screen recording (optional)
+If the user also has a screen recording, add:
+```bash
+--screen "$(cat workspace/meta.json | python -c 'import sys,json; print(json.load(sys.stdin).get("screenPath",""))')" \
+--screen-offset 0
+```
+Or just pass the path directly: `--screen workspace/screen.mp4`
+
+Segments where the screen recording is active → MODE B (screen full frame + face PiP).
+Segments with no screen recording → MODE A (face bottom half + Vox 3D animations).
+
 ## Notes
 - Python 3.8+ required. The script uses only stdlib (no pip dependencies).
 - The XML uses relative file paths — keep your video in the same location.

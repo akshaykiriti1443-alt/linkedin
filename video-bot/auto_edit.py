@@ -65,6 +65,11 @@ def detect_layout(video_path, profile):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("video", help="Path to raw video (e.g. workspace/raw.mp4)")
+    p.add_argument("--screen", default=None,
+                   help="Screen recording file (optional). When provided, segments where "
+                        "the screen recording is active switch to Screen+PiP mode.")
+    p.add_argument("--screen-offset", type=float, default=0.0,
+                   help="Seconds into the talking head when the screen recording started")
     p.add_argument("--profile", default="shorts", help="Profile name from profiles/ dir")
     p.add_argument("--silence-threshold", type=float, default=None)
     args = p.parse_args()
@@ -79,12 +84,17 @@ def main():
     silence_threshold = args.silence_threshold or profile.get("silence_threshold", 0.4)
     whisper_model = profile.get("whisper_model", "base")
 
+    screen = args.screen
+    screen_offset = args.screen_offset
+
     print(f"\n{'═'*60}")
     print(f"  AUTO-EDIT PIPELINE")
-    print(f"  Video   : {video}")
-    print(f"  Profile : {args.profile}")
-    print(f"  Layout  : {layout}")
-    print(f"  Silence : {silence_threshold}s threshold")
+    print(f"  Video        : {video}")
+    if screen:
+        print(f"  Screen rec   : {screen}  (offset {screen_offset}s)")
+    print(f"  Profile      : {args.profile}")
+    print(f"  Layout       : {layout}")
+    print(f"  Silence      : {silence_threshold}s threshold")
     print(f"{'═'*60}\n")
 
     os.makedirs("workspace", exist_ok=True)
@@ -109,15 +119,19 @@ def main():
         shutil.copy(whisper_out, "workspace/transcript.json")
         print(f"   Renamed {whisper_out} → workspace/transcript.json")
 
-    # STEP 2 — Cut silences → XML
+    # STEP 2 — Cut silences → XML (smart mode switching)
+    screen_args = ""
+    if screen:
+        screen_args = f'--screen "{screen}" --screen-offset {screen_offset}'
     run(
         f'python src/generate_xml.py '
         f'--video "{video}" '
         f'--transcript workspace/transcript.json '
         f'--output workspace/timeline_cut.xml '
         f'--silence-threshold {silence_threshold} '
-        f'--layout {layout}',
-        "Silence-cut XML (V1)"
+        f'--layout {layout} '
+        f'{screen_args}',
+        "Smart silence-cut XML (Vox/Screen auto-mode)"
     )
 
     # STEP 3 — Print transcript for Claude scene planning
