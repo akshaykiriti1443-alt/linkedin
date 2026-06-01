@@ -1,6 +1,6 @@
 import React from 'react';
 import { Composition } from 'remotion';
-import AIAutomation from './compositions/AIAutomation.js';
+import AIAutomation from './compositions/AIAutomation';
 
 export const RemotionRoot: React.FC = () => (
   <Composition

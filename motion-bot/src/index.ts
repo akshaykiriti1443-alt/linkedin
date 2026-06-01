@@ -1,1 +1,1 @@
-export { RemotionRoot as registerRoot } from './Root.js';
+export { RemotionRoot as registerRoot } from './Root';

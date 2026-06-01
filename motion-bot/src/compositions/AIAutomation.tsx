@@ -9,7 +9,7 @@ import {
 } from 'remotion';
 import { loadFont as loadSyne } from '@remotion/google-fonts/Syne';
 import { loadFont as loadSpaceMono } from '@remotion/google-fonts/SpaceMono';
-import { TextBeat } from './TextBeat.js';
+import { TextBeat } from './TextBeat';
 
 loadSyne();
 loadSpaceMono();
