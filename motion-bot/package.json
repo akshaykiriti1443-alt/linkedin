@@ -4,12 +4,10 @@
   "description": "AI motion graphics bot powered by Claude + Remotion",
   "type": "module",
   "scripts": {
-    "bot": "tsx src/bot.ts",
-    "preview": "npx remotion preview src/index.ts",
-    "render": "npx remotion render src/index.ts Scene out/video.mp4"
+    "render": "npx remotion render src/index.ts Scene out/video.mp4",
+    "preview": "npx remotion preview src/index.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.30.0",
     "@remotion/cli": "^4.0.0",
     "remotion": "^4.0.0",
     "react": "^18.2.0",
