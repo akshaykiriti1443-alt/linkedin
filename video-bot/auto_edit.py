@@ -189,7 +189,55 @@ def main():
         print("\n⚠️  Node.js not found — skipping Remotion render.")
         print("   Run manually: npm run render-top && npm run render-overlay")
 
-    # STEP 5 — Assemble final XML
+    # STEP 5 — Write SFX events draft (Claude fills this in via /soundeffects)
+    # The draft is written by build-timeline.ts if sfx_events.json is missing.
+    # For auto mode, we generate a basic keyword-timed draft here.
+    sfx_events_path = "workspace/sfx_events.json"
+    sfx_draft_path  = "workspace/sfx_events_draft.json"
+    if not os.path.exists(sfx_events_path) and all_words:
+        import re as _re
+        events = []
+        last_any = -2000
+        last_per = {}
+        SFX_PATTERNS = [
+            (r'\b\d+[\.,]?\d*[%$BMK]?\b', 'digital_readout', 7000),
+            (r'\b(next|now|moving on|first|second|third|finally)\b', 'whoosh', 5000),
+            (r'\b(actually|but here|key|important|critical)\b', 'impact', 6000),
+            (r'\b(click|open|tap|select|press)\b', 'mouse_click', 3000),
+            (r'\b(type|code|command|install|run)\b', 'keyboard', 3000),
+            (r'\b(done|success|complete|finished)\b', 'ding', 5000),
+        ]
+        for w in all_words:
+            at_ms = int(w.get("start", 0) * 1000)
+            if at_ms - last_any < 1500:
+                continue
+            for pat, sfx, min_gap in SFX_PATTERNS:
+                last_sfx = last_per.get(sfx, -min_gap)
+                if at_ms - last_sfx < min_gap:
+                    continue
+                if _re.search(pat, w.get("word", ""), _re.IGNORECASE):
+                    events.append({"sfx": sfx, "at_ms": at_ms})
+                    last_any = at_ms
+                    last_per[sfx] = at_ms
+                    break
+        with open(sfx_events_path, "w") as f:
+            json.dump(events, f, indent=2)
+        print(f"\n🎵 Auto SFX events: {len(events)} placements → workspace/sfx_events.json")
+        print(f"   Run /soundeffects in Claude for smarter, context-aware placements.")
+
+    # Build SFX WAV if pydub is available
+    if os.path.exists(sfx_events_path) and shutil.which("python"):
+        try:
+            import importlib.util
+            if importlib.util.find_spec("pydub"):
+                run("python engine/build_sfx_track.py", "Mix SFX track → workspace/sfx_track.wav")
+            else:
+                print("\n⚠️  pydub not installed — skipping SFX mix.")
+                print("   Run: pip install pydub && python engine/build_sfx_track.py")
+        except Exception:
+            pass
+
+    # STEP 6 — Assemble final XML
     run("npx tsx src/build-timeline.ts", "Assemble final_timeline.xml")
 
     print(f"\n{'═'*60}")
@@ -198,6 +246,7 @@ def main():
     print(f"\n  V1 XML  : workspace/timeline_cut.xml")
     print(f"  V2 .mov : premiere_imports/graphics/top_animations.mov")
     print(f"  V3 .mov : premiere_imports/overlays/overlay.mov")
+    print(f"  SFX WAV : workspace/sfx_track.wav")
     print(f"  FINAL   : workspace/final_timeline.xml")
     print(f"\n▶  Premiere: File > Import > workspace/final_timeline.xml")
     print(f"   Layout applied: {layout}")

@@ -12,8 +12,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { parseWhisper } from './utils/parse-whisper.js';
-import { matchSFX } from './utils/sfx-matcher.js';
+import { loadSFXEvents } from './utils/sfx-matcher.js';
 
 const TIMEBASE = 30;
 const ticks = (sec: number) => Math.round(sec * TIMEBASE);
@@ -109,11 +108,21 @@ function findMovFiles(dir: string): string[] {
 const graphicsFiles = findMovFiles(graphicsDir);
 const overlayFiles  = findMovFiles(overlaysDir);
 
-// ── SFX ───────────────────────────────────────────────────────────────────
-let sfxCues: { time: number; file: string }[] = [];
-if (fs.existsSync(jsonPath)) {
+// ── SFX — single mixed WAV from engine/build_sfx_track.py ────────────────
+const sfxWavPath   = path.join(workspace, 'sfx_track.wav');
+const sfxEventsPath = path.join(workspace, 'sfx_events.json');
+const hasSFXWav    = fs.existsSync(sfxWavPath);
+
+// If sfx_events.json missing, write a draft from transcript for Claude to fill
+const sfxDraftPath = path.join(workspace, 'sfx_events_draft.json');
+if (!fs.existsSync(sfxEventsPath) && fs.existsSync(jsonPath) && !fs.existsSync(sfxDraftPath)) {
+  const { parseWhisper } = await import('./utils/parse-whisper.js');
+  const { writeSFXDraft } = await import('./utils/sfx-matcher.js');
   const words = parseWhisper(JSON.parse(fs.readFileSync(jsonPath, 'utf8')));
-  sfxCues = matchSFX(words).filter(c => fs.existsSync(c.file));
+  writeSFXDraft(words, sfxDraftPath);
+  console.log('📋 SFX draft written → workspace/sfx_events_draft.json');
+  console.log('   Ask Claude to fill the events array, save as sfx_events.json, then:');
+  console.log('   python engine/build_sfx_track.py');
 }
 
 // ── V2: Vox 3D .mov placed at MODE A segment timecodes ───────────────────
@@ -160,14 +169,13 @@ if (overlayFiles.length > 0 && voxSegs.length > 0) {
   });
 }
 
-// ── A2: SFX ───────────────────────────────────────────────────────────────
+// ── A2: Single mixed SFX WAV (built by engine/build_sfx_track.py) ─────────
 let sfxTrack = '';
 let sfxFiles = '';
-sfxCues.forEach((c, i) => {
-  const dur = 0.5;
-  sfxFiles += fileEl(`sfxf${i}`, c.file) + '\n';
-  sfxTrack += clipItem(`sfx_${i}`, path.basename(c.file), c.time, c.time + dur, 0, dur, `sfxf${i}`, true) + '\n';
-});
+if (hasSFXWav) {
+  sfxFiles = fileEl('sfxf0', sfxWavPath);
+  sfxTrack = clipItem('sfx_0', 'sfx_track.wav', 0, totalDuration, 0, totalDuration, 'sfxf0', true);
+}
 
 // ── Extract V1 track + A1 audio from timeline_cut.xml ────────────────────
 const v1Xml = fs.readFileSync(v1XmlPath, 'utf8');
@@ -253,7 +261,7 @@ Tracks:
   V2  Vox 3D graphics (MODE A only)     ${graphicsFiles.length} file(s)
   V3  Text overlays  (MODE A only)      ${overlayFiles.length} file(s)
   A1  Voice audio
-  A2  SFX                               ${sfxCues.length} cue(s)
+  A2  SFX track                          ${hasSFXWav ? 'workspace/sfx_track.wav' : 'not built yet — run: python engine/build_sfx_track.py'}
 
 ▶  Premiere: File > Import > workspace/final_timeline.xml
 `);

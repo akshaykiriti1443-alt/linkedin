@@ -1,54 +1,63 @@
+import fs from 'fs';
 import path from 'path';
 import type { WhisperWord } from './parse-whisper.js';
 
-export interface SFXCue {
-  time: number;   // seconds in the final timeline
-  file: string;   // path to SFX file
-  volume: number; // dB, e.g. -18
+export interface SFXEvent {
+  sfx: string;    // filename stem e.g. "digital_readout"
+  at_ms: number;  // milliseconds into final timeline
+  reason?: string;
 }
 
-const TRANSITION_WORDS = ['next', 'now', 'so', 'alright', 'okay', 'moving', 'finally', 'first', 'second', 'third', 'last', 'here'];
-const CLICK_WORDS = ['click', 'clicking', 'tap', 'open', 'launch', 'select', 'choose', 'press', 'hit', 'button'];
-const TYPING_WORDS = ['type', 'typing', 'write', 'code', 'command', 'terminal', 'run', 'install', 'npm', 'git'];
+// Available SFX stems (must match sfx/*.wav)
+export const SFX_LIBRARY = [
+  'whoosh',          // transitions, scene changes
+  'swoosh_down',     // endings, dismissals
+  'impact',          // big reveals, dramatic moments
+  'ding',            // success, key points confirmed
+  'keyboard',        // typing, code, commands
+  'mouse_click',     // UI clicks, selecting items
+  'double_click',    // section starts, new topics
+  'notification',    // tool names, alerts, pings
+  'camera_shutter',  // screenshots, results shown
+  'riser',           // build-up before a reveal
+  'air_hit',         // punchy intros, action verbs
+  'digital_readout', // stats, numbers, tech terms (primary)
+];
 
-const SFX_DIR = path.resolve('assets/sfx');
+/**
+ * Writes workspace/sfx_events_draft.json with word-level context for Claude to fill in.
+ * Claude reads this draft, picks 35–50 placements, and writes sfx_events.json.
+ * build_sfx_track.py then reads sfx_events.json and mixes the WAV.
+ */
+export function writeSFXDraft(words: WhisperWord[], outputPath: string): void {
+  const draft = {
+    instructions: [
+      'Fill the events array with 35–50 SFX placements.',
+      'Use digital_readout for numbers, stats, and tech terms (max 1 per 7s).',
+      'Use whoosh for transitions between topics.',
+      'Use impact for dramatic reveals or strong claims.',
+      'Min 1.5s gap between any two events.',
+      'at_ms = word.start * 1000 (milliseconds).',
+      `Available SFX: ${SFX_LIBRARY.join(', ')}`,
+    ],
+    transcript_words: words.map(w => ({
+      word: w.word,
+      start_ms: Math.round(w.start * 1000),
+      end_ms:   Math.round(w.end   * 1000),
+    })),
+    events: [] as SFXEvent[],
+  };
 
-export function matchSFX(words: WhisperWord[]): SFXCue[] {
-  const cues: SFXCue[] = [];
-  const lastCueTime: Record<string, number> = {};
-  const MIN_GAP = 3; // minimum seconds between same SFX type
-
-  for (const word of words) {
-    const w = word.word.toLowerCase().replace(/[^a-z]/g, '');
-
-    const check = (keywords: string[], sfxFile: string) => {
-      if (!keywords.includes(w)) return;
-      const last = lastCueTime[sfxFile] ?? -999;
-      if (word.start - last < MIN_GAP) return;
-      cues.push({ time: word.start, file: path.join(SFX_DIR, sfxFile), volume: -18 });
-      lastCueTime[sfxFile] = word.start;
-    };
-
-    check(TRANSITION_WORDS, 'whoosh.mp3');
-    check(CLICK_WORDS, 'click.mp3');
-    check(TYPING_WORDS, 'typing.mp3');
-  }
-
-  return cues;
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, JSON.stringify(draft, null, 2));
 }
 
-// Builds FFmpeg adelay+amix filter for SFX cues
-export function buildSFXFilter(cues: SFXCue[], inputOffset = 1): string {
-  if (cues.length === 0) return '';
-
-  const parts = cues.map((cue, i) => {
-    const idx = inputOffset + i;
-    const delayMs = Math.round(cue.time * 1000);
-    return `[${idx}:a]volume=${cue.volume}dB,adelay=${delayMs}|${delayMs}[sfx${i}]`;
-  });
-
-  const sfxLabels = cues.map((_, i) => `[sfx${i}]`).join('');
-  const mix = `[0:a]${sfxLabels}amix=inputs=${cues.length + 1}:duration=first:dropout_transition=0[aout]`;
-
-  return [...parts, mix].join(';\n');
+/**
+ * Reads workspace/sfx_events.json (Claude-filled). Returns events for build-timeline.
+ */
+export function loadSFXEvents(eventsPath: string): SFXEvent[] {
+  if (!fs.existsSync(eventsPath)) return [];
+  const data = JSON.parse(fs.readFileSync(eventsPath, 'utf8'));
+  // Support both raw array and {events:[...]} shape
+  return Array.isArray(data) ? data : (data.events ?? []);
 }

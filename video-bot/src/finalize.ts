@@ -2,8 +2,7 @@
 import fs from 'fs';
 import path from 'path';
 import { checkFFmpeg, run } from './utils/ffmpeg.js';
-import { parseWhisper } from './utils/parse-whisper.js';
-import { matchSFX, buildSFXFilter } from './utils/sfx-matcher.js';
+import { loadSFXEvents } from './utils/sfx-matcher.js';
 
 if (!checkFFmpeg()) {
   console.error('FFmpeg not found. Install from https://ffmpeg.org/download.html');
@@ -39,16 +38,15 @@ console.log(`  Top anim:   ${hasTopAnim ? '✅' : '⚠️  missing (skipping)'}`
 console.log(`  Overlay:    ${hasOverlay ? '✅' : '⚠️  missing (skipping)'}`);
 console.log(`  Captions:   ✅ transcript.srt\n`);
 
-// Build SFX cues from transcript
-const whisperOutput = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-const words = parseWhisper(whisperOutput);
-const sfxCues = matchSFX(words).filter(c => fs.existsSync(c.file));
+// SFX: use pre-mixed WAV from engine/build_sfx_track.py
+const sfxWav = path.join(workspace, 'sfx_track.wav');
+const hasSFXWav = fs.existsSync(sfxWav);
 
 // Build FFmpeg command dynamically
 const inputs = [`-i "${roughCut}"`];
 if (hasTopAnim) inputs.push(`-i "${topAnim}"`);
-if (hasOverlay) inputs.push(`-i "${overlay}"`);
-sfxCues.forEach(c => inputs.push(`-i "${c.file}"`));
+if (hasOverlay)  inputs.push(`-i "${overlay}"`);
+if (hasSFXWav)   inputs.push(`-i "${sfxWav}"`);
 
 const filters: string[] = [];
 let currentVideo = '0:v';
@@ -66,8 +64,11 @@ if (hasOverlay) {
   inputOffset++;
 }
 
-const sfxFilter = sfxCues.length > 0 ? buildSFXFilter(sfxCues, inputOffset) : '';
-const audioOut = sfxCues.length > 0 ? '[aout]' : '0:a';
+// Mix voice + SFX WAV if present
+const sfxFilter = hasSFXWav
+  ? `[0:a][${inputOffset}:a]amix=inputs=2:duration=first:dropout_transition=0[aout]`
+  : '';
+const audioOut = hasSFXWav ? '[aout]' : '0:a';
 
 const filterParts = [...filters];
 if (sfxFilter) filterParts.push(sfxFilter);
