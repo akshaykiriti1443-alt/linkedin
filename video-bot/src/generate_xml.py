@@ -292,6 +292,23 @@ def main():
     with open(meta_path, "w") as f:
         json.dump(seg_meta, f, indent=2)
 
+    # Write edl.json — structured edit decision list for render.py
+    edl = {
+        "video": os.path.abspath(args.video),
+        "screen": os.path.abspath(args.screen) if args.screen else None,
+        "layout": layout,
+        "keep_segments": [{"start": s["src_start"], "end": s["src_end"]} for s in seg_meta],
+        "cut_points_sec": [],  # populated below
+    }
+    tl = 0.0
+    for s in seg_meta[:-1]:
+        tl += s["src_end"] - s["src_start"]
+        edl["cut_points_sec"].append(round(tl, 4))
+    edl_path = os.path.join(os.path.dirname(args.output), "edl.json")
+    with open(edl_path, "w") as f:
+        json.dump(edl, f, indent=2)
+    print(f"   EDL written → {edl_path}")
+
     vox_count    = modes.count("vox")
     screen_count = modes.count("screen")
     total_dur    = sum(s["end"] - s["start"] for s in kept)

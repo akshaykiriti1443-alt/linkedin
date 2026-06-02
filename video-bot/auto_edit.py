@@ -3,37 +3,45 @@
 auto_edit.py — Single-command autonomous pipeline.
 
 Usage:
-  python auto_edit.py workspace/raw.mp4 [--profile shorts|youtube|floating-cam]
+  python auto_edit.py workspace/raw.mp4 [options]
 
-Runs the full chain unattended:
-  1. Whisper transcription → workspace/transcript.json
-  2. Silence detection + XML cut → workspace/timeline_cut.xml
-  3. Prints scene plan for Claude to write Remotion compositions
-  4. Renders top_animations.mov + overlay.mov (if renderers are available)
-  5. Assembles workspace/final_timeline.xml
+Options:
+  --screen workspace/screen.mp4   Screen recording (optional)
+  --screen-offset 0.0             Seconds offset between talking head + screen
+  --profile shorts|youtube|...    Layout profile (default: talking-head)
+  --quality draft|preview|final   Output quality (default: draft)
+  --grade auto|warm_cinematic|... Color grade preset (default: warm_cinematic)
+  --reset                         Clear session and re-run from scratch
+  --reset-step <step>             Reset a specific step only
 
-Requirements: whisper, ffprobe, node/tsx all on PATH.
+Session persistence: completed steps are saved to workspace/project.md.
+Re-running auto_edit.py skips already-completed steps automatically.
+
+Steps: transcribe → timeline_preview → cut_xml → color_grade → sfx → render_graphics → build_timeline
 """
 
-import sys, os, json, subprocess, shutil, argparse, time
+import sys, os, json, subprocess, shutil, argparse, time, re as _re
+from pathlib import Path
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
+ROOT = Path(__file__).parent
 
-def run(cmd, label):
-    print(f"\n{'─'*60}")
+# ── Import engine modules ─────────────────────────────────────────────────
+sys.path.insert(0, str(ROOT))
+from engine.session import is_done, mark_done, status as session_status, reset as session_reset
+
+def run(cmd, label, cwd=None):
+    print(f"\n{'─'*58}")
     print(f"▶  {label}")
-    print(f"   {cmd}")
-    print('─'*60)
-    result = subprocess.run(cmd, shell=True, cwd=ROOT)
+    print('─'*58)
+    result = subprocess.run(cmd, shell=True, cwd=cwd or ROOT)
     if result.returncode != 0:
         print(f"\n❌ FAILED: {label}")
         sys.exit(result.returncode)
-    print(f"✅ Done: {label}")
+    print(f"✅ {label}")
 
 def load_profile(name):
-    path = os.path.join(ROOT, "profiles", f"{name}.json")
-    if not os.path.exists(path):
-        print(f"⚠️  Profile '{name}' not found. Using defaults.")
+    path = ROOT / "profiles" / f"{name}.json"
+    if not path.exists():
         return {}
     with open(path) as f:
         return json.load(f)
@@ -41,7 +49,6 @@ def load_profile(name):
 def detect_layout(video_path, profile):
     if "layout" in profile:
         return profile["layout"]
-    # ffprobe auto-detect
     if shutil.which("ffprobe"):
         try:
             r = subprocess.run(
@@ -53,209 +60,291 @@ def detect_layout(video_path, profile):
             if len(parts) == 2:
                 w, h = int(parts[0]), int(parts[1])
                 ratio = w / h
-                if ratio > 1.5:
-                    return "youtube"
-                if ratio < 0.7:
-                    return "shorts"
+                if ratio > 1.5: return "youtube"
+                if ratio < 0.7: return "shorts"
                 return "center-split"
         except Exception:
             pass
     return "shorts"
 
+def get_video_duration(video_path):
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", video_path],
+            capture_output=True, text=True, timeout=10
+        )
+        return float(r.stdout.strip())
+    except Exception:
+        return None
+
+def open_file(path):
+    """Open a file with the default system viewer (cross-platform)."""
+    if sys.platform == "win32":
+        os.startfile(path)
+    elif sys.platform == "darwin":
+        subprocess.run(["open", path])
+    else:
+        subprocess.run(["xdg-open", path])
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("video", help="Path to raw video (e.g. workspace/raw.mp4)")
-    p.add_argument("--screen", default=None,
-                   help="Screen recording file (optional). When provided, segments where "
-                        "the screen recording is active switch to Screen+PiP mode.")
-    p.add_argument("--screen-offset", type=float, default=0.0,
-                   help="Seconds into the talking head when the screen recording started")
-    p.add_argument("--profile", default="shorts", help="Profile name from profiles/ dir")
-    p.add_argument("--silence-threshold", type=float, default=None)
+    p.add_argument("video", help="Path to raw video")
+    p.add_argument("--screen",        default=None)
+    p.add_argument("--screen-offset", type=float, default=0.0)
+    p.add_argument("--profile",       default="talking-head")
+    p.add_argument("--quality",       choices=["draft","preview","final"], default="draft")
+    p.add_argument("--grade",         default="warm_cinematic",
+                   help="Color grade preset: auto|warm_cinematic|neutral_punch|subtle|none")
+    p.add_argument("--reset",         action="store_true", help="Clear session, re-run all")
+    p.add_argument("--reset-step",    default=None, help="Reset one specific step")
+    p.add_argument("--status",        action="store_true", help="Show session status and exit")
     args = p.parse_args()
+
+    os.chdir(ROOT)
+
+    if args.status:
+        session_status()
+        return
+
+    if args.reset:
+        session_reset()
+    elif args.reset_step:
+        session_reset(args.reset_step)
 
     video = args.video
     if not os.path.exists(video):
         print(f"❌ Video not found: {video}")
         sys.exit(1)
 
-    profile = load_profile(args.profile)
-    layout = detect_layout(video, profile)
-    silence_threshold = args.silence_threshold or profile.get("silence_threshold", 0.4)
-    whisper_model = profile.get("whisper_model", "base")
-
-    screen = args.screen
-    screen_offset = args.screen_offset
-
-    print(f"\n{'═'*60}")
-    print(f"  AUTO-EDIT PIPELINE")
-    print(f"  Video        : {video}")
-    if screen:
-        print(f"  Screen rec   : {screen}  (offset {screen_offset}s)")
-    print(f"  Profile      : {args.profile}")
-    print(f"  Layout       : {layout}")
-    print(f"  Silence      : {silence_threshold}s threshold")
-    print(f"{'═'*60}\n")
+    profile          = load_profile(args.profile)
+    layout           = detect_layout(video, profile)
+    silence_threshold = profile.get("silence_threshold", 0.4)
+    whisper_model    = profile.get("whisper_model", "base")
+    screen           = args.screen
+    screen_offset    = args.screen_offset
 
     os.makedirs("workspace", exist_ok=True)
     os.makedirs("premiere_imports/graphics", exist_ok=True)
-    os.makedirs("premiere_imports/overlays", exist_ok=True)
+    os.makedirs("premiere_imports/overlays",  exist_ok=True)
+    os.makedirs("out", exist_ok=True)
 
-    # Write meta.json
+    # Write/update meta.json
+    dur = get_video_duration(video)
+    meta = {
+        "videoPath":    os.path.abspath(video),
+        "screenPath":   os.path.abspath(screen) if screen else None,
+        "layout":       layout,
+        "profile":      args.profile,
+        "quality":      args.quality,
+        "grade":        args.grade,
+        "duration_s":   dur,
+    }
     with open("workspace/meta.json", "w") as f:
-        json.dump({"videoPath": os.path.abspath(video), "layout": layout, "profile": args.profile}, f, indent=2)
+        json.dump(meta, f, indent=2)
 
-    # STEP 1 — Transcribe
-    run(
-        f'whisper "{video}" --model {whisper_model} --word_timestamps True '
-        f'--output_format json --output_dir workspace --task transcribe',
-        "Whisper transcription"
-    )
-
-    # Whisper names output after the input file — rename to transcript.json
-    base = os.path.splitext(os.path.basename(video))[0]
-    whisper_out = os.path.join("workspace", f"{base}.json")
-    if os.path.exists(whisper_out) and whisper_out != "workspace/transcript.json":
-        shutil.copy(whisper_out, "workspace/transcript.json")
-        print(f"   Renamed {whisper_out} → workspace/transcript.json")
-
-    # STEP 2 — Cut silences → XML (smart mode switching)
-    screen_args = ""
+    print(f"\n{'═'*58}")
+    print(f"  VIDEO BOT — AUTO EDIT")
+    print(f"  Video    : {video}")
     if screen:
-        screen_args = f'--screen "{screen}" --screen-offset {screen_offset}'
-    run(
-        f'python src/generate_xml.py '
-        f'--video "{video}" '
-        f'--transcript workspace/transcript.json '
-        f'--output workspace/timeline_cut.xml '
-        f'--silence-threshold {silence_threshold} '
-        f'--layout {layout} '
-        f'{screen_args}',
-        "Smart silence-cut XML (Vox/Screen auto-mode)"
-    )
+        print(f"  Screen   : {screen}  (offset {screen_offset}s)")
+    print(f"  Layout   : {layout}  |  Quality: {args.quality}  |  Grade: {args.grade}")
+    print(f"{'═'*58}")
 
-    # STEP 3 — Print transcript for Claude scene planning
-    with open("workspace/transcript.json") as f:
-        data = json.load(f)
+    # ── STEP 1: TRANSCRIBE ────────────────────────────────────────────────
+    if is_done("transcribe"):
+        print("\n⏭  transcribe — already done (project.md). Skipping.")
+    else:
+        run(
+            f'whisper "{video}" --model {whisper_model} --word_timestamps True '
+            f'--output_format json --output_dir workspace --task transcribe',
+            "Whisper transcription"
+        )
+        # Rename to transcript.json
+        base = os.path.splitext(os.path.basename(video))[0]
+        whisper_out = f"workspace/{base}.json"
+        if os.path.exists(whisper_out) and whisper_out != "workspace/transcript.json":
+            shutil.copy(whisper_out, "workspace/transcript.json")
 
-    print(f"\n{'─'*60}")
-    print("📋 TRANSCRIPT (for Claude scene planning)")
-    print('─'*60)
-    all_words = []
-    for seg in data.get("segments", []):
-        for w in seg.get("words", []):
-            all_words.append(w)
-        print(f"  [{seg['start']:6.2f}s → {seg['end']:6.2f}s]  {seg['text'].strip()}")
+        # Load transcript and print summary
+        with open("workspace/transcript.json") as f:
+            data = json.load(f)
+        all_words = [w for seg in data.get("segments", []) for w in seg.get("words", [])]
+        print(f"\n📝 Transcript: {len(all_words)} words, {dur:.1f}s")
+        for seg in data.get("segments", []):
+            print(f"  [{seg['start']:6.2f}s]  {seg['text'].strip()}")
 
-    # Semantic keyword extraction — top nouns/numbers for V2 scene triggers
-    import re
-    keywords = []
-    TRIGGER_PATTERNS = [
-        r'\b\d+[\.,]?\d*[%$BMK]?\b',          # numbers/stats
-        r'\b[A-Z][a-z]+ [A-Z][a-z]+\b',        # proper nouns
-        r'\b(because|here\'s why|the key|so what|turns out|actually|but here)\b',  # hooks
-    ]
-    full_text = " ".join(s["text"] for s in data.get("segments", []))
-    for pat in TRIGGER_PATTERNS:
-        for m in re.finditer(pat, full_text, re.IGNORECASE):
-            keywords.append(m.group(0))
-    if keywords:
-        print(f"\n🎯 Auto-detected scene triggers: {', '.join(set(keywords[:10]))}")
+        mark_done("transcribe", {"words": len(all_words), "duration_s": dur})
 
-    # STEP 4 — Render Remotion compositions (non-blocking if tsx not available)
-    node_ok = shutil.which("node") is not None
-    tsx_ok = shutil.which("tsx") is not None or node_ok
+    # ── STEP 2: TIMELINE PREVIEW ──────────────────────────────────────────
+    preview_png = "workspace/timeline_preview.png"
+    if is_done("timeline_preview") and os.path.exists(preview_png):
+        print(f"\n⏭  timeline_preview — already done. Skipping.")
+    else:
+        print(f"\n{'─'*58}")
+        print(f"▶  Generating timeline preview PNG")
+        print('─'*58)
+        try:
+            from engine.timeline_view import generate_preview
+            generate_preview(video, "workspace/transcript.json", preview_png)
+            mark_done("timeline_preview")
+            # Open the preview so user can see it
+            if os.path.exists(preview_png):
+                try:
+                    open_file(preview_png)
+                    print(f"  👁  Opened: {preview_png}")
+                except Exception:
+                    print(f"  💡 View manually: {preview_png}")
+        except Exception as e:
+            print(f"  ⚠️  Timeline preview failed: {e} — continuing.")
 
-    if node_ok:
+    # ── STEP 3: CUT XML + EDL ─────────────────────────────────────────────
+    if is_done("cut_xml"):
+        print(f"\n⏭  cut_xml — already done. Skipping.")
+    else:
+        screen_args = ""
+        if screen:
+            screen_args = f'--screen "{screen}" --screen-offset {screen_offset}'
+        run(
+            f'python src/generate_xml.py '
+            f'--video "{video}" '
+            f'--transcript workspace/transcript.json '
+            f'--output workspace/timeline_cut.xml '
+            f'--silence-threshold {silence_threshold} '
+            f'--layout {layout} '
+            f'{screen_args}',
+            "Smart silence-cut → XML + EDL"
+        )
+        # Also build rough_cut.mp4 via lossless render pipeline
+        if os.path.exists("workspace/edl.json") and shutil.which("ffmpeg"):
+            try:
+                from engine.render import build_rough_cut
+                with open("workspace/edl.json") as f:
+                    edl = json.load(f)
+                build_rough_cut(
+                    edl["video"], edl["keep_segments"],
+                    "workspace/rough_cut.mp4", args.quality
+                )
+            except Exception as e:
+                print(f"  ⚠️  Lossless render failed: {e}")
+        mark_done("cut_xml")
+
+    # ── STEP 4: COLOR GRADE ───────────────────────────────────────────────
+    if args.grade == "none":
+        print(f"\n⏭  color_grade — skipped (--grade none).")
+    elif is_done("color_grade"):
+        print(f"\n⏭  color_grade — already done. Skipping.")
+    elif not os.path.exists("workspace/rough_cut.mp4"):
+        print(f"\n⚠️  color_grade — rough_cut.mp4 not found, skipping.")
+    else:
+        print(f"\n{'─'*58}")
+        print(f"▶  Color grading ({args.grade})")
+        print('─'*58)
+        try:
+            from engine.grade import apply_grade
+            apply_grade("workspace/rough_cut.mp4", "workspace/graded.mp4", args.grade)
+            shutil.copy("workspace/graded.mp4", "workspace/rough_cut.mp4")
+            mark_done("color_grade", {"preset": args.grade})
+        except Exception as e:
+            print(f"  ⚠️  Color grade failed: {e} — continuing with ungraded.")
+
+    # ── STEP 5: SFX ───────────────────────────────────────────────────────
+    sfx_events_path = "workspace/sfx_events.json"
+    sfx_draft_path  = "workspace/sfx_events_draft.json"
+
+    if is_done("sfx") and os.path.exists("workspace/sfx_track.wav"):
+        print(f"\n⏭  sfx — already done. Skipping.")
+    else:
+        # Auto-generate basic events from keyword patterns
+        if not os.path.exists(sfx_events_path) and os.path.exists("workspace/transcript.json"):
+            with open("workspace/transcript.json") as f:
+                data = json.load(f)
+            all_words = [w for seg in data.get("segments", []) for w in seg.get("words", [])]
+            events = []
+            last_any, last_per = -2000, {}
+            SFX_PATTERNS = [
+                (r'\b\d+[\.,]?\d*[%$BMK]?\b', 'digital_readout', 7000),
+                (r'\b(next|now|moving on|first|second|third|finally)\b', 'whoosh', 5000),
+                (r'\b(actually|but here|key|important|critical)\b', 'impact', 6000),
+                (r'\b(click|open|tap|select|press)\b', 'mouse_click', 3000),
+                (r'\b(type|code|command|install|run)\b', 'keyboard', 3000),
+                (r'\b(done|success|complete|finished)\b', 'ding', 5000),
+            ]
+            for w in all_words:
+                at_ms = int(w.get("start", 0) * 1000)
+                if at_ms - last_any < 1500:
+                    continue
+                for pat, sfx, min_gap in SFX_PATTERNS:
+                    if at_ms - last_per.get(sfx, -min_gap) < min_gap:
+                        continue
+                    if _re.search(pat, w.get("word", ""), _re.IGNORECASE):
+                        events.append({"sfx": sfx, "at_ms": at_ms})
+                        last_any = at_ms
+                        last_per[sfx] = at_ms
+                        break
+            with open(sfx_events_path, "w") as f:
+                json.dump(events, f, indent=2)
+            print(f"\n🎵 Auto SFX: {len(events)} events → workspace/sfx_events.json")
+            print(f"   Run /soundeffects in Claude for smarter placements.")
+
+        # Build SFX WAV
+        try:
+            import importlib.util
+            if importlib.util.find_spec("pydub") and os.path.exists(sfx_events_path):
+                run("python engine/build_sfx_track.py", "Mix SFX WAV")
+                mark_done("sfx")
+            else:
+                if not importlib.util.find_spec("pydub"):
+                    print("\n⚠️  pydub not installed — skipping SFX mix.")
+                    print("   Install: pip install pydub && python engine/build_sfx_track.py")
+        except Exception as e:
+            print(f"  ⚠️  SFX mix failed: {e}")
+
+    # ── STEP 6: RENDER GRAPHICS ───────────────────────────────────────────
+    if is_done("render_graphics"):
+        print(f"\n⏭  render_graphics — already done. Skipping.")
+    elif shutil.which("node"):
         run("npm install --silent", "Install npm deps")
         run(
             'npx remotion render src/index.ts TopHalf out/top_animations.mov '
             '--codec=prores --prores-profile=4444',
-            "Render V2 motion graphics (TopHalf)"
+            "Render V2 Vox 3D graphics"
         )
         if os.path.exists("out/top_animations.mov"):
             shutil.copy("out/top_animations.mov", "premiere_imports/graphics/top_animations.mov")
-            print("   Copied → premiere_imports/graphics/top_animations.mov")
-
         run(
             'npx remotion render src/index.ts Overlay out/overlay.mov '
             '--codec=prores --prores-profile=4444',
-            "Render V3 overlays (Overlay)"
+            "Render V3 overlays"
         )
         if os.path.exists("out/overlay.mov"):
             shutil.copy("out/overlay.mov", "premiere_imports/overlays/overlay.mov")
-            print("   Copied → premiere_imports/overlays/overlay.mov")
+        mark_done("render_graphics")
     else:
         print("\n⚠️  Node.js not found — skipping Remotion render.")
         print("   Run manually: npm run render-top && npm run render-overlay")
 
-    # STEP 5 — Write SFX events draft (Claude fills this in via /soundeffects)
-    # The draft is written by build-timeline.ts if sfx_events.json is missing.
-    # For auto mode, we generate a basic keyword-timed draft here.
-    sfx_events_path = "workspace/sfx_events.json"
-    sfx_draft_path  = "workspace/sfx_events_draft.json"
-    if not os.path.exists(sfx_events_path) and all_words:
-        import re as _re
-        events = []
-        last_any = -2000
-        last_per = {}
-        SFX_PATTERNS = [
-            (r'\b\d+[\.,]?\d*[%$BMK]?\b', 'digital_readout', 7000),
-            (r'\b(next|now|moving on|first|second|third|finally)\b', 'whoosh', 5000),
-            (r'\b(actually|but here|key|important|critical)\b', 'impact', 6000),
-            (r'\b(click|open|tap|select|press)\b', 'mouse_click', 3000),
-            (r'\b(type|code|command|install|run)\b', 'keyboard', 3000),
-            (r'\b(done|success|complete|finished)\b', 'ding', 5000),
-        ]
-        for w in all_words:
-            at_ms = int(w.get("start", 0) * 1000)
-            if at_ms - last_any < 1500:
-                continue
-            for pat, sfx, min_gap in SFX_PATTERNS:
-                last_sfx = last_per.get(sfx, -min_gap)
-                if at_ms - last_sfx < min_gap:
-                    continue
-                if _re.search(pat, w.get("word", ""), _re.IGNORECASE):
-                    events.append({"sfx": sfx, "at_ms": at_ms})
-                    last_any = at_ms
-                    last_per[sfx] = at_ms
-                    break
-        with open(sfx_events_path, "w") as f:
-            json.dump(events, f, indent=2)
-        print(f"\n🎵 Auto SFX events: {len(events)} placements → workspace/sfx_events.json")
-        print(f"   Run /soundeffects in Claude for smarter, context-aware placements.")
+    # ── STEP 7: BUILD TIMELINE XML ────────────────────────────────────────
+    if is_done("build_timeline"):
+        print(f"\n⏭  build_timeline — already done. Skipping.")
+    else:
+        run("npx tsx src/build-timeline.ts", "Assemble final_timeline.xml")
+        mark_done("build_timeline")
 
-    # Build SFX WAV if pydub is available
-    if os.path.exists(sfx_events_path) and shutil.which("python"):
-        try:
-            import importlib.util
-            if importlib.util.find_spec("pydub"):
-                run("python engine/build_sfx_track.py", "Mix SFX track → workspace/sfx_track.wav")
-            else:
-                print("\n⚠️  pydub not installed — skipping SFX mix.")
-                print("   Run: pip install pydub && python engine/build_sfx_track.py")
-        except Exception:
-            pass
-
-    # STEP 6 — Assemble final XML
-    run("npx tsx src/build-timeline.ts", "Assemble final_timeline.xml")
-
-    print(f"\n{'═'*60}")
+    # ── DONE ──────────────────────────────────────────────────────────────
+    print(f"\n{'═'*58}")
     print("🎉  PIPELINE COMPLETE")
-    print(f"{'═'*60}")
-    print(f"\n  V1 XML  : workspace/timeline_cut.xml")
-    print(f"  V2 .mov : premiere_imports/graphics/top_animations.mov")
-    print(f"  V3 .mov : premiere_imports/overlays/overlay.mov")
-    print(f"  SFX WAV : workspace/sfx_track.wav")
-    print(f"  FINAL   : workspace/final_timeline.xml")
+    print(f"{'═'*58}")
+    print(f"\n  Timeline PNG : workspace/timeline_preview.png")
+    print(f"  Rough cut    : workspace/rough_cut.mp4  (lossless, normalized)")
+    print(f"  V2 graphics  : premiere_imports/graphics/top_animations.mov")
+    print(f"  V3 overlays  : premiere_imports/overlays/overlay.mov")
+    print(f"  SFX track    : workspace/sfx_track.wav")
+    print(f"  Premiere XML : workspace/final_timeline.xml")
     print(f"\n▶  Premiere: File > Import > workspace/final_timeline.xml")
-    print(f"   Layout applied: {layout}")
-    if layout == "shorts":
-        print("   V1 clips: Scale 180%, Position Y 1440 (already set in XML)")
-    elif layout == "youtube":
-        print("   V1 clips: Full 1920×1080 frame — no crop needed")
-    elif layout == "floating-cam":
-        print("   V1 = PiP bottom-right. Drop your b-roll onto V0 track.")
+    print(f"\n💡 To re-run a step:  python auto_edit.py ... --reset-step transcribe")
+    print(f"   To re-run all:     python auto_edit.py ... --reset")
+    print(f"   Session status:    python auto_edit.py ... --status")
     print()
 
 if __name__ == "__main__":

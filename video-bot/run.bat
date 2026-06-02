@@ -10,18 +10,32 @@ echo   VIDEO BOT — AI Video Editor
 echo  ============================================================
 echo.
 
-:: ── Check install was done ────────────────────────────────────────────────
+:: ── Check install ────────────────────────────────────────────────────────
 if not exist node_modules (
     echo  ERROR: Please run install.bat first!
     pause & exit /b 1
 )
 
-:: ── Choose profile ────────────────────────────────────────────────────────
-echo  What type of video are you editing?
+:: ── Session status ────────────────────────────────────────────────────────
+if exist workspace\project.md (
+    echo  Existing session found in workspace\project.md
+    echo.
+    python auto_edit.py --status 2>nul
+    echo.
+    echo    [1] Continue from where I left off
+    echo    [2] Start fresh (re-run everything)
+    echo.
+    set /p SESSION_CHOICE="Enter number (1-2): "
+    if "!SESSION_CHOICE!"=="2" set RESET_FLAG=--reset
+)
+
+:: ── Video type ────────────────────────────────────────────────────────────
 echo.
-echo    [1] Talking head (+ auto Vox animations when not showing screen)
+echo  What type of video?
+echo.
+echo    [1] Talking head  (face + auto Vox 3D when talking, screen PiP when showing)
 echo    [2] YouTube essay (16:9 full frame)
-echo    [3] Shorts / Reels only (9:16, no screen recording)
+echo    [3] Shorts / Reels only
 echo    [4] B-roll + floating face cam
 echo.
 set /p PROFILE_CHOICE="Enter number (1-4): "
@@ -32,91 +46,76 @@ if "%PROFILE_CHOICE%"=="3" set PROFILE=shorts
 if "%PROFILE_CHOICE%"=="4" set PROFILE=floating-cam
 if not defined PROFILE set PROFILE=talking-head
 
-echo  Profile selected: %PROFILE%
+:: ── Quality ───────────────────────────────────────────────────────────────
 echo.
+echo  Output quality?
+echo.
+echo    [1] Draft   — fast, 720p  (good for checking the edit)
+echo    [2] Preview — 1080p       (good for review)
+echo    [3] Final   — 1080p max   (for publishing)
+echo.
+set /p QUALITY_CHOICE="Enter number (1-3, default=1): "
+
+if "%QUALITY_CHOICE%"=="2" set QUALITY=preview
+if "%QUALITY_CHOICE%"=="3" set QUALITY=final
+if not defined QUALITY set QUALITY=draft
 
 :: ── Talking head video ────────────────────────────────────────────────────
-echo  ── TALKING HEAD VIDEO ──────────────────────────────────────
-echo  Drag your talking head .mp4 into this window and press Enter.
-echo  (Or type the full path manually)
 echo.
-set /p RAW_VIDEO="Video path: "
-
-:: Strip quotes if drag-dropped
+echo  Drag your talking head .mp4 here and press Enter:
+set /p RAW_VIDEO="Video: "
 set RAW_VIDEO=!RAW_VIDEO:"=!
 
 if not exist "!RAW_VIDEO!" (
-    echo  ERROR: File not found: !RAW_VIDEO!
+    echo  ERROR: File not found.
     pause & exit /b 1
 )
-
-:: Copy to workspace
-echo  Copying to workspace...
 copy /Y "!RAW_VIDEO!" workspace\raw.mp4 >nul
-echo  OK.
+echo  Copied to workspace\raw.mp4
 
-:: ── Screen recording (optional) ───────────────────────────────────────────
+:: ── Screen recording ─────────────────────────────────────────────────────
 set SCREEN_ARGS=
 if "%PROFILE%"=="talking-head" (
     echo.
-    echo  ── SCREEN RECORDING (optional) ─────────────────────────────
     echo  Did you also record your screen? (y/n)
     set /p HAS_SCREEN="Answer: "
-
     if /i "!HAS_SCREEN!"=="y" (
-        echo  Drag your screen recording .mp4 into this window and press Enter.
-        set /p SCREEN_VIDEO="Screen recording path: "
+        echo  Drag your screen recording here:
+        set /p SCREEN_VIDEO="Screen: "
         set SCREEN_VIDEO=!SCREEN_VIDEO:"=!
-
         if exist "!SCREEN_VIDEO!" (
             copy /Y "!SCREEN_VIDEO!" workspace\screen.mp4 >nul
-            echo  OK: Screen recording copied.
-
-            echo.
-            echo  How many seconds into your talking head did you start the screen recording?
-            echo  (If you started both at the same time, enter 0)
-            set /p SCREEN_OFFSET="Seconds offset (default 0): "
-            if "!SCREEN_OFFSET!"=="" set SCREEN_OFFSET=0
-
-            set SCREEN_ARGS=--screen workspace/screen.mp4 --screen-offset !SCREEN_OFFSET!
-        ) else (
-            echo  WARNING: Screen recording not found, continuing without it.
+            echo  How many seconds into your talking head did the screen recording start? (0 if same time)
+            set /p SCR_OFF="Offset (default 0): "
+            if "!SCR_OFF!"=="" set SCR_OFF=0
+            set SCREEN_ARGS=--screen workspace/screen.mp4 --screen-offset !SCR_OFF!
         )
     )
 )
 
-:: ── Run the pipeline ──────────────────────────────────────────────────────
+:: ── Run ──────────────────────────────────────────────────────────────────
 echo.
 echo  ============================================================
-echo   RUNNING PIPELINE — this may take several minutes
+echo   RUNNING  (a timeline preview will open automatically)
 echo  ============================================================
 echo.
 
-python auto_edit.py workspace/raw.mp4 --profile %PROFILE% %SCREEN_ARGS%
+python auto_edit.py workspace/raw.mp4 --profile %PROFILE% --quality %QUALITY% %SCREEN_ARGS% %RESET_FLAG%
 
 if %errorlevel% neq 0 (
     echo.
-    echo  ERROR: Pipeline failed. Check the output above for details.
+    echo  ERROR: Pipeline failed. See output above.
     pause & exit /b 1
 )
 
-:: ── Done ─────────────────────────────────────────────────────────────────
+:: ── Open outputs ─────────────────────────────────────────────────────────
 echo.
-echo  ============================================================
-echo   DONE!
-echo  ============================================================
-echo.
-echo  Your files are ready:
-echo.
-echo    workspace\final_timeline.xml   ^<-- import this into Premiere
-echo    workspace\timeline_cut.xml     ^<-- V1 rough cut only (if needed)
-echo.
-echo  In Premiere Pro:
-echo    File ^> Import ^> workspace\final_timeline.xml
-echo    Export: File ^> Export ^> Media ^> H.264 ^> Instagram Reels
-echo.
-
-:: Open workspace folder for convenience
+echo  Opening workspace folder...
 explorer workspace
 
+echo.
+echo  ============================================================
+echo   DONE! Import workspace\final_timeline.xml into Premiere.
+echo  ============================================================
+echo.
 pause
