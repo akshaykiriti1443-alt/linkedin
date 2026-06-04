@@ -1,0 +1,10 @@
+{
+  "layout": "shorts",
+  "whisper_model": "tiny",
+  "silence_threshold": 0.4,
+  "sfx": true,
+  "overlays": true,
+  "style": "vox-3d",
+  "accent_color": "#ff6b00",
+  "description": "Talking head + optional screen recording. Vox 3D when just talking, screen+PiP when showing screen."
+}

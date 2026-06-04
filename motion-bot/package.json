@@ -1,0 +1,28 @@
+{
+  "name": "motion-graphics-bot",
+  "version": "1.0.0",
+  "description": "AI motion graphics bot powered by Claude Code + Remotion + Premiere MCP",
+  "type": "module",
+  "scripts": {
+    "produce": "tsx src/pipeline/produce.ts",
+    "render-cues": "tsx src/pipeline/produce.ts render-cues",
+    "place-in-premiere": "tsx src/pipeline/produce.ts place-in-premiere",
+    "render": "npx remotion render src/index.ts AIAutomation out/AIAutomation.mp4",
+    "preview": "npx remotion preview src/index.ts"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.0",
+    "remotion": "^4.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "uuid": "^10.0.0",
+    "dotenv": "^16.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@types/uuid": "^10.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}
