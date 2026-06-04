@@ -25,10 +25,17 @@ echo  OK: Git found.
 echo [2/6] Checking Node.js...
 where node >nul 2>&1
 if %errorlevel% neq 0 (
-    echo  ERROR: Node.js is not installed.
-    echo  Please install it from: https://nodejs.org  (download LTS)
-    echo  Then re-run this installer.
-    pause & exit /b 1
+    :: Try common install paths directly
+    if exist "%ProgramFiles%\nodejs\node.exe" (
+        set PATH=%PATH%;%ProgramFiles%\nodejs
+    ) else if exist "%APPDATA%\nvm\current\node.exe" (
+        set PATH=%PATH%;%APPDATA%\nvm\current
+    ) else (
+        echo  ERROR: Node.js is not installed.
+        echo  Please install it from: https://nodejs.org  (download LTS)
+        echo  Then re-run this installer.
+        pause & exit /b 1
+    )
 )
 for /f "tokens=*" %%v in ('node -v') do set NODE_VER=%%v
 echo  OK: Node.js %NODE_VER% found.
