@@ -1,6 +1,6 @@
 {
   "layout": "shorts",
-  "whisper_model": "base",
+  "whisper_model": "tiny",
   "silence_threshold": 0.4,
   "sfx": true,
   "overlays": true,
