@@ -300,29 +300,69 @@ def main():
         except Exception as e:
             print(f"  ⚠️  SFX mix failed: {e}")
 
-    # ── STEP 6: RENDER GRAPHICS ───────────────────────────────────────────
+    # ── STEP 6: CLAUDE PAUSE — write motion graphics ─────────────────────
+    # Claude reads the transcript here and writes the Remotion/HyperFrames
+    # scene files. No API key needed — user pastes one block into Claude Code.
     if is_done("render_graphics"):
         print(f"\n⏭  render_graphics — already done. Skipping.")
-    elif shutil.which("node"):
-        run("npm install --silent", "Install npm deps")
-        run(
-            'npx remotion render src/index.ts TopHalf out/top_animations.mov '
-            '--codec=prores --prores-profile=4444',
-            "Render V2 Vox 3D graphics"
-        )
-        if os.path.exists("out/top_animations.mov"):
-            shutil.copy("out/top_animations.mov", "premiere_imports/graphics/top_animations.mov")
-        run(
-            'npx remotion render src/index.ts Overlay out/overlay.mov '
-            '--codec=prores --prores-profile=4444',
-            "Render V3 overlays"
-        )
-        if os.path.exists("out/overlay.mov"):
-            shutil.copy("out/overlay.mov", "premiere_imports/overlays/overlay.mov")
-        mark_done("render_graphics")
     else:
-        print("\n⚠️  Node.js not found — skipping Remotion render.")
-        print("   Run manually: npm run render-top && npm run render-overlay")
+        # Build the paste block from transcript
+        transcript_lines = []
+        if os.path.exists("workspace/transcript.json"):
+            with open("workspace/transcript.json") as f:
+                data = json.load(f)
+            for seg in data.get("segments", []):
+                transcript_lines.append(f"[{seg['start']:.1f}s]  {seg['text'].strip()}")
+
+        # Detect scene triggers for context
+        keywords = []
+        full_text = " ".join(seg.get("text","") for seg in data.get("segments",[]))
+        for m in _re.finditer(r'\b\d+[\.,]?\d*[%$BMK]?\b|\b[A-Z][a-z]+ [A-Z][a-z]+\b', full_text):
+            keywords.append(m.group(0))
+        keyword_hint = ", ".join(list(dict.fromkeys(keywords))[:8]) if keywords else "none detected"
+
+        print(f"\n{'═'*58}")
+        print("  ⏸  PASTE THIS INTO CLAUDE CODE — then come back")
+        print(f"{'═'*58}")
+        print()
+        print("/new-series")
+        print()
+        print("Transcript:")
+        for line in transcript_lines:
+            print(f"  {line}")
+        print()
+        print(f"Key terms/stats: {keyword_hint}")
+        print(f"Layout: {layout}  |  Accent color: #ff6b00")
+        print(f"Duration: {dur:.1f}s")
+        print()
+        print("Write VoxThreeScene compositions in src/compositions/TopHalf.tsx")
+        print("timed to the transcript above. Run npm run render-top when done.")
+        print(f"{'═'*58}")
+        print()
+        input("  Press Enter here after Claude finishes and render-top completes...")
+        print()
+
+        # ── Now render ────────────────────────────────────────────────────
+        if shutil.which("node"):
+            run("npm install --silent", "Install npm deps")
+            run(
+                'npx remotion render src/index.ts TopHalf out/top_animations.mov '
+                '--codec=prores --prores-profile=4444',
+                "Render V2 Vox 3D graphics"
+            )
+            if os.path.exists("out/top_animations.mov"):
+                shutil.copy("out/top_animations.mov", "premiere_imports/graphics/top_animations.mov")
+            run(
+                'npx remotion render src/index.ts Overlay out/overlay.mov '
+                '--codec=prores --prores-profile=4444',
+                "Render V3 overlays"
+            )
+            if os.path.exists("out/overlay.mov"):
+                shutil.copy("out/overlay.mov", "premiere_imports/overlays/overlay.mov")
+            mark_done("render_graphics")
+        else:
+            print("\n⚠️  Node.js not found — skipping Remotion render.")
+            print("   Run manually: npm run render-top && npm run render-overlay")
 
     # ── STEP 7: BUILD TIMELINE XML ────────────────────────────────────────
     if is_done("build_timeline"):
