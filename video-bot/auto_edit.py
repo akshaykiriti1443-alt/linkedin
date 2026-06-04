@@ -154,26 +154,63 @@ def main():
     # ── STEP 1: TRANSCRIBE ────────────────────────────────────────────────
     if is_done("transcribe"):
         print("\n⏭  transcribe — already done (project.md). Skipping.")
-    else:
-        run(
-            f'whisper "{video}" --model {whisper_model} --word_timestamps True '
-            f'--output_format json --output_dir workspace --task transcribe',
-            "Whisper transcription"
-        )
-        # Rename to transcript.json
-        base = os.path.splitext(os.path.basename(video))[0]
-        whisper_out = f"workspace/{base}.json"
-        if os.path.exists(whisper_out) and whisper_out != "workspace/transcript.json":
-            shutil.copy(whisper_out, "workspace/transcript.json")
-
-        # Load transcript and print summary
+    elif os.path.exists("workspace/transcript.json"):
+        # Transcript already present (e.g. from /transcribe-premiere)
+        print("\n✅  transcript.json found — using existing transcript.")
         with open("workspace/transcript.json") as f:
             data = json.load(f)
         all_words = [w for seg in data.get("segments", []) for w in seg.get("words", [])]
-        print(f"\n📝 Transcript: {len(all_words)} words, {dur:.1f}s")
+        print(f"   {len(all_words)} words  |  {dur:.1f}s")
+        mark_done("transcribe", {"words": len(all_words), "duration_s": dur})
+    else:
+        # Try faster-whisper
+        try:
+            import importlib.util
+            if importlib.util.find_spec("faster_whisper"):
+                run(
+                    f'python engine/transcribe.py --video "{video}" '
+                    f'--model {whisper_model} --output workspace/transcript.json',
+                    "Transcribe with faster-whisper"
+                )
+            else:
+                print("\n" + "═"*58)
+                print("  ⏸  TRANSCRIPTION NEEDED")
+                print("═"*58)
+                print()
+                print("  faster-whisper is not installed.")
+                print()
+                print("  Option A — install it (recommended):")
+                print("    pip install faster-whisper")
+                print("    Then re-run this script.")
+                print()
+                print("  Option B — use Premiere Pro (zero install):")
+                print("    1. Open Claude Code in VS Code")
+                print("    2. Type: /transcribe-premiere")
+                print("    3. Follow the steps (takes ~1 min)")
+                print("    4. Come back here and re-run this script")
+                print()
+                choice = input("  Install faster-whisper now? (y/n): ").strip().lower()
+                if choice == "y":
+                    run("pip install faster-whisper", "Installing faster-whisper")
+                    run(
+                        f'python engine/transcribe.py --video "{video}" '
+                        f'--model {whisper_model} --output workspace/transcript.json',
+                        "Transcribe with faster-whisper"
+                    )
+                else:
+                    print("\n  Run /transcribe-premiere in Claude Code, then re-run this script.")
+                    sys.exit(0)
+        except Exception as e:
+            print(f"\n❌ Transcription failed: {e}")
+            print("   Try: /transcribe-premiere in Claude Code")
+            sys.exit(1)
+
+        with open("workspace/transcript.json") as f:
+            data = json.load(f)
+        all_words = [w for seg in data.get("segments", []) for w in seg.get("words", [])]
+        print(f"\n📝 {len(all_words)} words  |  {dur:.1f}s")
         for seg in data.get("segments", []):
             print(f"  [{seg['start']:6.2f}s]  {seg['text'].strip()}")
-
         mark_done("transcribe", {"words": len(all_words), "duration_s": dur})
 
     # ── STEP 2: TIMELINE PREVIEW ──────────────────────────────────────────

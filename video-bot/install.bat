@@ -66,19 +66,22 @@ if %errorlevel% neq 0 (
     echo  OK: FFmpeg found.
 )
 
-:: ── Install Whisper ───────────────────────────────────────────────────────
-echo [5/6] Installing Whisper (AI transcription)...
-pip show openai-whisper >nul 2>&1
+:: ── Install faster-whisper + audio tools ─────────────────────────────────
+echo [5/6] Installing transcription + audio tools...
+pip show faster-whisper >nul 2>&1
 if %errorlevel% neq 0 (
-    echo  Installing openai-whisper...
-    pip install openai-whisper
+    echo  Installing faster-whisper...
+    pip install faster-whisper
     if %errorlevel% neq 0 (
-        echo  ERROR: Failed to install Whisper. Check your internet connection.
-        pause & exit /b 1
+        echo  WARNING: faster-whisper install failed.
+        echo  No problem - you can use Premiere Pro transcription instead.
+        echo  In Claude Code type: /transcribe-premiere
     )
 ) else (
-    echo  OK: Whisper already installed.
+    echo  OK: faster-whisper already installed.
 )
+pip install pydub Pillow --quiet
+echo  OK: pydub + Pillow installed.
 
 :: ── npm install ───────────────────────────────────────────────────────────
 echo [6/6] Installing project dependencies...
