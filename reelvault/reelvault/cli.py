@@ -105,6 +105,21 @@ def cmd_site(args, cfg, lib):
     from .site import build
 
     print(f"Dashboard: {build(lib).resolve()}")
+    print(f"Portable dashboard (host anywhere): {build(lib, standalone=True).resolve()}")
+
+
+def cmd_add(args, cfg, lib):
+    from .manual import add_record
+
+    dest = add_record(cfg, lib, Path(args.record), Path(args.cover) if args.cover else None,
+                      Path(args.walkthrough) if args.walkthrough else None)
+    print(f"Filed: {dest}")
+
+
+def cmd_restore(args, cfg, lib):
+    from .manual import restore_from_dashboard
+
+    print(f"Restored {restore_from_dashboard(cfg, lib, Path(args.page))} reel(s).")
 
 
 def cmd_kb(args, cfg, lib):
@@ -173,7 +188,13 @@ def main(argv=None):
     sp.add_argument("--limit", type=int)
     sp = sub.add_parser("run", help="fetch + process + site + kb")
     fetch_opts(sp)
-    sub.add_parser("site", help="rebuild vault/index.html")
+    sub.add_parser("site", help="rebuild vault/index.html and vault/dashboard.html")
+    sp = sub.add_parser("add", help="file a breakdown written in a Claude Code session (no API key)")
+    sp.add_argument("record", help="record JSON (see reelvault/manual.py)")
+    sp.add_argument("--cover", help="cover image")
+    sp.add_argument("--walkthrough", help="scene-by-scene walkthrough markdown")
+    sp = sub.add_parser("restore", help="rebuild the vault from a saved dashboard page")
+    sp.add_argument("page", help="dashboard.html or artifact.html")
     sub.add_parser("kb", help="rebuild vault/knowledge-base/")
     sub.add_parser("notes", help="rewrite every note.md from analysis.json")
     sub.add_parser("status", help="show counts")
@@ -196,7 +217,7 @@ def main(argv=None):
         return cmd_login(args, cfg)
     lib = Library(cfg.vault_dir)
     handlers = {"fetch": cmd_fetch, "process": cmd_process, "run": cmd_run, "site": cmd_site, "kb": cmd_kb,
-                "search": cmd_search, "remix": cmd_remix, "status": cmd_status, "notes": cmd_notes}
+                "search": cmd_search, "remix": cmd_remix, "add": cmd_add, "restore": cmd_restore, "status": cmd_status, "notes": cmd_notes}
     handlers[args.cmd](args, cfg, lib)
 
 

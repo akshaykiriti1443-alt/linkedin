@@ -18,6 +18,16 @@ For every saved video it:
 
 Then `reelvault remix` writes new scripts from any mix of saved skeletons.
 
+## No command line? Use it through Claude Code
+
+You don't need a terminal or an API key. In a Claude Code session (your Claude subscription):
+
+1. Paste your saved reel links into the chat (Instagram → Saved → open a reel → Share → Copy link).
+2. Claude watches each reel through your vidIQ connector, writes the breakdown, and files it.
+3. You get one private dashboard link that updates as the library grows.
+
+Claude follows [PLAYBOOK.md](PLAYBOOK.md) for this.
+
 ## What you get on disk
 
 ```

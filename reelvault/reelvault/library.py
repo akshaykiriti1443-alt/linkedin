@@ -190,12 +190,18 @@ def render_note(rec: dict) -> str:
         for x in a["script_ideas"]
     )
     link = f"[Open on Instagram]({meta['url']})" if meta.get("url") else ""
+    if rec.get("video", "video.mp4"):
+        media = f"![[{rec.get('video', 'video.mp4')}]]"
+    elif rec.get("cover"):
+        media = f"![cover]({rec['cover']})"
+    else:
+        media = ""
     return f"""{front}
 # {a['title']}
 
 {link} · @{meta.get('owner', '')} · {a['category']} › {a['subcategory']}
 
-![[video.mp4]]
+{media}
 
 ## Summary
 {a['summary']}

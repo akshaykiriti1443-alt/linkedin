@@ -122,6 +122,7 @@ class Analyzer:
             "duration": round(info.duration, 1),
             "transcript": tr,
             "frames": [{"t": t, "file": f"frames/{p.name}"} for t, p in frames],
+            "video": "video.mp4",
             "analysis": analysis.model_dump(),
             "model": self.cfg.model,
         }

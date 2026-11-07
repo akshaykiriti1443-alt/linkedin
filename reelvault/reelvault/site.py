@@ -2,82 +2,132 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
 from .library import Library
 
 
-def _slim(rec: dict) -> dict:
+def _thumb(rec: dict) -> str | None:
+    if rec.get("cover"):
+        return rec["cover"]
+    if rec.get("frames"):
+        return rec["frames"][min(1, len(rec["frames"]) - 1)]["file"]
+    return None
+
+
+def _slim(rec: dict, root: Path, standalone: bool) -> dict:
     """Drop bulky fields the page does not need."""
     tr = rec.get("transcript", {})
+    folder = rec["folder"].replace("\\", "/")
+    thumb = _thumb(rec)
+    video = rec.get("video", "video.mp4")
+    if standalone:
+        # One portable file: inline the cover image, drop links to local files.
+        p = root / folder / thumb if thumb else None
+        thumb = ("data:image/jpeg;base64," + base64.b64encode(p.read_bytes()).decode()) if p and p.exists() else None
+        video = None
     return {
         "id": rec["shortcode"],
-        "folder": rec["folder"].replace("\\", "/"),
+        "folder": folder,
         "meta": {k: rec["meta"].get(k) for k in ("owner", "url", "caption", "likes", "views")},
         "duration": rec.get("duration"),
-        "thumb": rec["frames"][min(1, len(rec["frames"]) - 1)]["file"] if rec.get("frames") else None,
+        "thumb": thumb,
+        "video": video,
+        "local": not standalone,
         "transcript": tr.get("text", ""),
         "segments": tr.get("segments", []),
         "a": rec["analysis"],
     }
 
 
-def build(lib: Library) -> Path:
-    data = [_slim(r) for r in lib.all_done()]
+def build(lib: Library, standalone: bool = False, out: Path | None = None, fragment: bool = False) -> Path:
+    """standalone=True: one portable file (covers inlined, no local videos), e.g. for your website.
+    fragment=True: same, without the <html>/<head>/<body> wrapper (for a claude.ai Artifact)."""
+    data = [_slim(r, lib.root, standalone or fragment) for r in lib.all_done()]
     blob = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
-    out = lib.root / "index.html"
-    out.write_text(PAGE.replace("/*__DATA__*/[]", blob), encoding="utf-8")
+    body = BODY.replace("/*__DATA__*/[]", blob)
+    page = HEAD + body if fragment else (
+        '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
+        + HEAD + "</head>\n<body>\n" + body + "</body>\n</html>\n"
+    )
+    name = "artifact.html" if fragment else ("dashboard.html" if standalone else "index.html")
+    out = out or lib.root / name
+    out.write_text(page, encoding="utf-8")
     return out
 
 
-PAGE = r"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Reel Vault</title>
+HEAD = r"""<title>Reel Vault</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400&display=swap">
 <style>
-:root{--bg:#f6f5f2;--panel:#fff;--ink:#1d1d1f;--muted:#6b6b70;--line:#e3e1dc;--accent:#d6336c;--hook:#e8590c;--meat:#2f9e44;--cta:#1c7ed6;--chip:#efeee9}
-@media (prefers-color-scheme:dark){:root{--bg:#141416;--panel:#1d1d20;--ink:#ececef;--muted:#9a9aa2;--line:#2c2c31;--chip:#26262b}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:12px 16px}
-h1{font-size:18px;margin:0 0 8px}h1 small{color:var(--muted);font-weight:400}
+/* Layout: sticky filter bar over a grid of reel covers; a reel opens into video + tabbed breakdown. */
+:root{
+  --bg:#f2f3f6;--panel:#ffffff;--ink:#151a2b;--muted:#5f6577;--line:#dfe1e8;--chip:#e9ebf1;
+  --accent:#3d3fd1;--hook:#c2410c;--meat:#15803d;--cta:#1d4ed8;--shade:rgba(15,18,30,.55);
+  --display:"Familjen Grotesk","Helvetica Neue",Arial,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#10121a;--panel:#191c27;--ink:#e8eaf2;--muted:#9aa0b4;--line:#2a2e3d;--chip:#232737;
+  --accent:#8f91ff;--hook:#fb923c;--meat:#4ade80;--cta:#7aa2ff;--shade:rgba(0,0,0,.7);color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#10121a;--panel:#191c27;--ink:#e8eaf2;--muted:#9aa0b4;--line:#2a2e3d;--chip:#232737;
+  --accent:#8f91ff;--hook:#fb923c;--meat:#4ade80;--cta:#7aa2ff;--shade:rgba(0,0,0,.7);color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 var(--body)}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
+.wrap{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+header{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding-block:12px}
+h1{font:700 22px/1.2 var(--display);margin:0 0 10px;letter-spacing:-.01em;text-wrap:balance}
+h1 small{font:400 14px var(--body);color:var(--muted);margin-left:6px}
 .bar{display:flex;flex-wrap:wrap;gap:8px}
-input,select{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+input,select{font:inherit;font-size:14px;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 10px;min-width:0;max-width:100%}
 input[type=search]{flex:1 1 220px}
-main{padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;cursor:pointer;display:flex;flex-direction:column}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+main{padding-block:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;cursor:pointer;display:flex;flex-direction:column;text-align:left;font:inherit;color:inherit;padding:0}
 .card:hover{border-color:var(--accent)}
-.thumb{aspect-ratio:9/12;background:#000 center/cover no-repeat}
-.body{padding:10px 12px;display:flex;flex-direction:column;gap:6px}
-.title{font-weight:600;line-height:1.3}.sub{color:var(--muted);font-size:13px}
+.thumb{aspect-ratio:9/12;max-width:100%;background:var(--chip) center/cover no-repeat}
+.body{padding:10px 12px 12px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.title{font:600 16px/1.25 var(--display)}.sub{color:var(--muted);font-size:13px}
 .hookline{font-size:13px;border-left:3px solid var(--hook);padding-left:8px}
 .chips{display:flex;flex-wrap:wrap;gap:4px}.chip{background:var(--chip);border-radius:99px;padding:1px 8px;font-size:12px;color:var(--muted)}
 .empty{grid-column:1/-1;text-align:center;color:var(--muted);padding:60px 0}
-dialog{width:min(1100px,96vw);max-height:92vh;border:1px solid var(--line);border-radius:14px;padding:0;background:var(--panel);color:var(--ink)}
-dialog::backdrop{background:#0008}
-.dlg{display:grid;grid-template-columns:320px 1fr;min-height:0}
-@media (max-width:760px){.dlg{grid-template-columns:1fr}}
-.left{padding:16px;border-right:1px solid var(--line)}
-video{width:100%;border-radius:10px;background:#000;max-height:60vh}
-.right{padding:16px 20px;overflow:auto;max-height:90vh}
-.tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px;position:sticky;top:-16px;background:var(--panel);padding:8px 0}
-.tabs button{font:inherit;border:1px solid var(--line);background:var(--chip);color:var(--ink);border-radius:8px;padding:5px 10px;cursor:pointer}
-.tabs button.on{background:var(--ink);color:var(--panel)}
-.sec{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:12px}
-.sec h3{margin:0 0 6px;font-size:14px;text-transform:uppercase;letter-spacing:.04em}
-.hook h3{color:var(--hook)}.meat h3{color:var(--meat)}.cta h3{color:var(--cta)}
-.beat{display:grid;grid-template-columns:52px 1fr;gap:8px;padding:6px 0;border-top:1px dashed var(--line)}
-.beat:first-of-type{border-top:0}.ts{color:var(--muted);font-variant-numeric:tabular-nums;cursor:pointer}
-pre{white-space:pre-wrap;background:var(--chip);padding:10px;border-radius:8px;font:13px/1.5 ui-monospace,Menlo,monospace}
-.copy{float:right;font-size:12px;border:1px solid var(--line);background:none;color:var(--muted);border-radius:6px;cursor:pointer;padding:2px 8px}
+dialog{width:min(1100px,96vw);max-height:92vh;border:1px solid var(--line);border-radius:12px;padding:0;background:var(--panel);color:var(--ink)}
+dialog::backdrop{background:var(--shade)}
+.dlg{display:grid;grid-template-columns:300px minmax(0,1fr)}
+@media (max-width:760px){.dlg{grid-template-columns:minmax(0,1fr)}.left img,video{max-height:38vh;width:auto;margin-inline:auto}.left{border-right:0!important;border-bottom:1px solid var(--line)}}
+.left{padding:16px;border-right:1px solid var(--line);min-width:0}
+.left img,video{width:100%;max-width:100%;border-radius:8px;background:var(--chip);max-height:60vh;object-fit:cover;display:block}
+.left h2{font:700 19px/1.25 var(--display);margin:12px 0 4px;text-wrap:balance}
+.right{padding:16px 20px;overflow:auto;max-height:90vh;min-width:0}
+.tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px;position:sticky;top:-16px;background:var(--panel);padding:8px 0;z-index:1}
+.tabs button{font:inherit;font-size:14px;border:1px solid var(--line);background:var(--chip);color:var(--ink);border-radius:8px;padding:5px 10px;cursor:pointer}
+.tabs button.on{background:var(--ink);color:var(--panel);border-color:var(--ink)}
+.sec{border-top:1px solid var(--line);padding:12px 0}
+.sec:first-of-type{border-top:0}
+.sec h3,.part h3{margin:0 0 6px;font:600 12px/1.3 var(--body);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);display:flex;justify-content:space-between;gap:8px;align-items:center}
+.part{border:1px solid var(--line);border-left-width:4px;border-radius:8px;padding:12px 14px;margin-bottom:12px}
+.part.hook{border-left-color:var(--hook)}.part.meat{border-left-color:var(--meat)}.part.cta{border-left-color:var(--cta)}
+.part.hook h3{color:var(--hook)}.part.meat h3{color:var(--meat)}.part.cta h3{color:var(--cta)}
+.beat{display:grid;grid-template-columns:48px minmax(0,1fr);gap:8px;padding:7px 0;border-top:1px dashed var(--line)}
+.beat:first-of-type{border-top:0}
+.ts{color:var(--muted);font:13px var(--mono);font-variant-numeric:tabular-nums;cursor:pointer;background:none;border:0;padding:0;text-align:left}
+pre{white-space:pre-wrap;overflow-x:auto;background:var(--chip);padding:12px;border-radius:8px;font:13px/1.6 var(--mono);margin:0}
+.copy{font:500 12px var(--body);text-transform:none;letter-spacing:0;border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:6px;cursor:pointer;padding:2px 8px}
 .x{position:absolute;right:10px;top:10px;z-index:3;width:32px;height:32px;line-height:1;font-size:20px;background:var(--chip);border:1px solid var(--line);border-radius:50%;color:var(--ink);cursor:pointer}
-ul,ol{margin:4px 0;padding-left:20px}a{color:var(--accent)}
+ul,ol{margin:4px 0;padding-left:20px}a{color:var(--accent)}p{margin:4px 0}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
 </style>
-</head>
-<body>
-<header>
+"""
+
+BODY = r"""<header class="wrap">
   <h1>Reel Vault <small id="count"></small></h1>
   <div class="bar">
     <input type="search" id="q" placeholder="Search titles, transcripts, hooks, tags…">
@@ -88,13 +138,13 @@ ul,ol{margin:4px 0;padding-left:20px}a{color:var(--accent)}
     <select id="f-st"><option value="">All structures</option></select>
   </div>
 </header>
-<main id="grid"></main>
-<dialog id="dlg"><button class="x" onclick="dlg.close()" aria-label="Close">×</button><div class="dlg" id="dlgbody"></div></dialog>
+<main id="grid" class="wrap"></main>
+<dialog id="dlg"><button type="button" class="x" onclick="document.getElementById('dlg').close()" aria-label="Close">×</button><div class="dlg" id="dlgbody"></div></dialog>
 <script>
 const DATA = /*__DATA__*/[];
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const src = (r, f) => encodeURI(r.folder + "/" + f);
+const src = (r, f) => f.startsWith("data:") ? f : encodeURI(r.folder + "/" + f);
 const filters = [["#f-cat", r => r.a.category], ["#f-hook", r => r.a.skeleton.hook.hook_type],
   ["#f-fmt", r => r.a.content_format], ["#f-cta", r => r.a.skeleton.cta.cta_type], ["#f-st", r => r.a.skeleton.structure_name]];
 for (const [sel, get] of filters) {
@@ -110,28 +160,34 @@ function render() {
   const rows = DATA.filter(r => filters.every(([sel, get]) => !$(sel).value || get(r) === $(sel).value) && q.every(w => hay(r).includes(w)));
   $("#count").textContent = `${rows.length} of ${DATA.length} reels`;
   $("#grid").innerHTML = rows.length ? rows.map(r => `
-    <article class="card" onclick="openReel('${r.id}')">
+    <button type="button" class="card" onclick="openReel('${r.id}')">
       <div class="thumb" style="background-image:url('${r.thumb ? src(r, r.thumb) : ""}')"></div>
       <div class="body">
         <div class="title">${esc(r.a.title)}</div>
         <div class="sub">@${esc(r.meta.owner)} · ${esc(r.a.category)}</div>
         <div class="hookline">${esc(r.a.skeleton.hook.spoken || r.a.skeleton.hook.on_screen_text)}</div>
         <div class="chips"><span class="chip">${esc(r.a.skeleton.hook.hook_type)}</span><span class="chip">${esc(r.a.content_format)}</span><span class="chip">${esc(r.a.skeleton.cta.cta_type)}</span></div>
-      </div></article>`).join("") : `<div class="empty">No reels match. ${DATA.length ? "Clear a filter." : "Run <code>reelvault run</code> to fill the vault."}</div>`;
+      </div></button>`).join("") : `<div class="empty">No reels match. ${DATA.length ? "Clear a filter." : "Run <code>reelvault run</code> to fill the vault."}</div>`;
 }
 const list = xs => xs && xs.length ? `<ul>${xs.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : "<p>—</p>";
-const copyBtn = t => `<button class="copy" data-t="${esc(t)}" onclick="navigator.clipboard.writeText(this.dataset.t);this.textContent='Copied'">Copy</button>`;
-const seek = t => `onclick="document.querySelector('#vid').currentTime=${t};document.querySelector('#vid').play()"`;
+const copyBtn = t => `<button type="button" class="copy" data-t="${esc(t)}" onclick="copyText(this)">Copy</button>`;
+function copyText(btn) {
+  const t = btn.dataset.t, done = () => { btn.textContent = "Copied"; };
+  const fallback = () => { const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); done(); } catch (e) { btn.textContent = "Select text to copy"; } ta.remove(); };
+  try { navigator.clipboard.writeText(t).then(done, fallback); } catch (e) { fallback(); }
+}
+const seek = t => `onclick="const v=document.querySelector('#vid');if(v){v.currentTime=${t};v.play()}"`;
 const TABS = {
   Skeleton: r => { const s = r.a.skeleton, h = s.hook, c = s.cta; return `
     <p><b>Structure:</b> ${esc(s.structure_name)} · <b>Pacing:</b> ${esc(s.pacing)}</p>
-    <div class="sec hook"><h3>Hook · ${esc(h.hook_type)} · 0–${h.ends_at_seconds}s ${copyBtn(h.spoken || h.on_screen_text)}</h3>
+    <div class="part hook"><h3>Hook · ${esc(h.hook_type)} · 0–${h.ends_at_seconds}s ${copyBtn(h.spoken || h.on_screen_text)}</h3>
       <p><b>Said:</b> ${esc(h.spoken || "—")}<br><b>On screen:</b> ${esc(h.on_screen_text || "—")}<br><b>Visual:</b> ${esc(h.visual)}</p>
       <p><i>${esc(h.why_it_works)}</i></p></div>
-    <div class="sec meat"><h3>Meat · ${s.meat.length} beats</h3>${s.meat.map(b => `
-      <div class="beat"><span class="ts" ${seek(b.start_seconds)}>${b.start_seconds.toFixed(0)}s</span>
+    <div class="part meat"><h3>Meat · ${s.meat.length} beats</h3>${s.meat.map(b => `
+      <div class="beat"><button type="button" class="ts" ${seek(b.start_seconds)}>${b.start_seconds.toFixed(0)}s</button>
       <div><b>${esc(b.purpose)}:</b> ${esc(b.point)}<br><span class="sub">Visual: ${esc(b.visual)}</span></div></div>`).join("")}</div>
-    <div class="sec cta"><h3>CTA · ${esc(c.cta_type)} · ${esc(c.placement)} ${copyBtn(c.text)}</h3><p>${esc(c.text || "—")}${c.keyword ? ` <span class="chip">keyword: ${esc(c.keyword)}</span>` : ""}</p></div>
+    <div class="part cta"><h3>CTA · ${esc(c.cta_type)} · ${esc(c.placement)} ${copyBtn(c.text)}</h3><p>${esc(c.text || "—")}${c.keyword ? ` <span class="chip">keyword: ${esc(c.keyword)}</span>` : ""}</p></div>
     <div class="sec"><h3>Retention devices</h3>${list(s.retention_devices)}</div>
     <div class="sec"><h3>Why it performed</h3><p>${esc(r.a.why_it_performed)}</p></div>`; },
   "Summary & plan": r => `
@@ -150,17 +206,18 @@ const TABS = {
     ${r.a.script_ideas.map(x => `<div class="sec"><h3>Idea: ${esc(x.title)}</h3><p><b>Hook:</b> ${esc(x.hook)}</p>${list(x.outline)}<p><b>CTA:</b> ${esc(x.cta)}</p></div>`).join("")}
     <div class="sec"><h3>Ready-to-shoot script ${copyBtn(r.a.ready_script)}</h3><pre>${esc(r.a.ready_script)}</pre></div>`,
   Transcript: r => `
-    <div class="sec"><h3>Transcript ${copyBtn(r.transcript)}</h3>${r.segments.length ? r.segments.map(s => `<div class="beat"><span class="ts" ${seek(s.start)}>${s.start.toFixed(0)}s</span><div>${esc(s.text)}</div></div>`).join("") : "<p>No speech.</p>"}</div>
+    <div class="sec"><h3>Transcript ${copyBtn(r.transcript)}</h3>${r.segments.length ? r.segments.map(s => `<div class="beat"><button type="button" class="ts" ${seek(s.start)}>${s.start.toFixed(0)}s</button><div>${esc(s.text)}</div></div>`).join("") : "<p>No speech.</p>"}</div>
     <div class="sec"><h3>Original caption</h3><p style="white-space:pre-wrap">${esc(r.meta.caption || "—")}</p></div>`,
 };
 function openReel(id) {
   const r = DATA.find(x => x.id === id);
   $("#dlgbody").innerHTML = `
-    <div class="left"><video id="vid" controls playsinline src="${src(r, "video.mp4")}" poster="${r.thumb ? src(r, r.thumb) : ""}"></video>
-      <h2 style="font-size:17px;margin:10px 0 4px">${esc(r.a.title)}</h2>
+    <div class="left">${r.video ? `<video id="vid" controls playsinline src="${src(r, r.video)}" poster="${r.thumb ? src(r, r.thumb) : ""}"></video>`
+      : `<a href="${esc(r.meta.url)}" target="_blank" rel="noopener"><img alt="Reel cover" src="${r.thumb ? src(r, r.thumb) : ""}"></a>`}
+      <h2>${esc(r.a.title)}</h2>
       <div class="sub">@${esc(r.meta.owner)} · ${r.duration ?? "?"}s<br>${esc(r.a.category)} › ${esc(r.a.subcategory)}</div>
       <div class="chips" style="margin:8px 0">${r.a.tags.map(t => `<span class="chip">#${esc(t)}</span>`).join("")}</div>
-      ${r.meta.url ? `<a href="${esc(r.meta.url)}" target="_blank" rel="noopener">Open on Instagram ↗</a> · ` : ""}<a href="${src(r, "note.md")}">note.md</a></div>
+      ${r.meta.url ? `<a href="${esc(r.meta.url)}" target="_blank" rel="noopener">Watch on Instagram ↗</a>` : ""}${r.local ? ` · <a href="${src(r, "note.md")}">note.md</a>` : ""}</div>
     <div class="right"><div class="tabs">${Object.keys(TABS).map((t, i) => `<button class="${i ? "" : "on"}" data-tab="${t}">${t}</button>`).join("")}</div><div id="tab"></div></div>`;
   const show = t => { $("#tab").innerHTML = TABS[t](r); document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === t)); };
   document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => show(b.dataset.tab));
@@ -170,6 +227,4 @@ function openReel(id) {
 $("#dlg").addEventListener("close", () => { const v = $("#vid"); if (v) v.pause(); });
 render();
 </script>
-</body>
-</html>
 """
