@@ -18,15 +18,24 @@ For every saved video it:
 
 Then `reelvault remix` writes new scripts from any mix of saved skeletons.
 
-## No command line? Use it through Claude Code
+## Windows app (no command line, no API key)
 
-You don't need a terminal or an API key. In a Claude Code session (your Claude subscription):
+1. Open the Start menu, type **PowerShell**, and open it.
+2. Paste this one line and press Enter:
 
-1. Paste your saved reel links into the chat (Instagram → Saved → open a reel → Share → Copy link).
-2. Claude watches each reel through your vidIQ connector, writes the breakdown, and files it.
-3. You get one private dashboard link that updates as the library grows.
+   ```powershell
+   irm https://raw.githubusercontent.com/akshaykiriti1443-alt/linkedin/claude/kind-dijkstra-0o03in/reelvault/install.ps1 | iex
+   ```
 
-Claude follows [PLAYBOOK.md](PLAYBOOK.md) for this.
+3. Wait for "All done" (5-10 minutes the first time). ReelVault opens in your browser,
+   and a **ReelVault** icon appears on your desktop.
+4. In the app: **Sign in to Claude** (uses your Claude Pro/Max subscription),
+   **Connect Instagram**, fill in **About you**, then click **Get new saved reels**.
+5. Turn on **Run every day** and it keeps your library up to date by itself.
+
+The app runs on your computer. Breakdowns use the Claude Code app signed in to your
+subscription (`brain = "claude-code"`), so there is no API key and no per-reel bill.
+Everything is stored in `C:\Users\<you>\ReelVault`.
 
 ## What you get on disk
 
@@ -45,7 +54,7 @@ vault/
   index.sqlite                    search index
 ```
 
-## Setup
+## Command line setup (advanced)
 
 You need Python 3.11+, [ffmpeg](https://ffmpeg.org/download.html) and a [Claude API key](https://console.anthropic.com).
 
