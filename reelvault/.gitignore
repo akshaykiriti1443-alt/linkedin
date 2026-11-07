@@ -1,0 +1,7 @@
+vault/
+.env
+reelvault.toml
+profile.md
+__pycache__/
+*.egg-info/
+.venv/

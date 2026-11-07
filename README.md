@@ -54,3 +54,9 @@ REPLY_TEMPLATE=Hey! Drop me a DM and I'll send you the free resource 🎁
 
 Any platform that can run a Python ASGI server works: Railway, Render, Fly.io, etc.
 Set the four env vars (`VERIFY_TOKEN`, `APP_SECRET`, `PAGE_ACCESS_TOKEN`, `REPLY_TEMPLATE`) in the platform's settings.
+
+---
+
+# ReelVault (saved-reels analyzer)
+
+The [`reelvault/`](reelvault/) folder holds a separate tool. It downloads your saved Instagram reels, transcribes them, breaks each one into hook / meat / CTA with Claude, and builds a searchable dashboard and knowledge base. See [reelvault/README.md](reelvault/README.md).
