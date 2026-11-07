@@ -277,7 +277,11 @@ def status() -> dict:
 # Instagram login (password + 2FA; only the session is saved)
 # --------------------------------------------------------------------------
 
-_pending_ig = {"L": None, "user": None}
+_pending_ig = {"L": None, "user": None, "info": {}}
+IG_SMS_URLS = (
+    "https://www.instagram.com/api/v1/web/accounts/send_two_factor_login_sms/",
+    "https://www.instagram.com/accounts/send_two_factor_login_sms/",
+)
 
 
 def _ig_save(L, user: str) -> None:
@@ -287,27 +291,96 @@ def _ig_save(L, user: str) -> None:
     log(f"Instagram connected as @{user}.")
 
 
+def _capture_login_reply():
+    """Instaloader drops Instagram's 2FA details (SMS on? authenticator app? which phone?).
+    Watch the login reply so the panel can show how the code is sent."""
+    import requests
+
+    seen = {}
+    real_post = requests.Session.post
+
+    def post(self, url, *a, **kw):
+        resp = real_post(self, url, *a, **kw)
+        if "login/ajax" in url:
+            try:
+                seen.update(resp.json().get("two_factor_info") or {})
+            except ValueError:
+                pass
+        return resp
+
+    return seen, real_post, post
+
+
+def _two_factor_hint(info: dict) -> dict:
+    phone = info.get("obfuscated_phone_number") or ""
+    return {
+        "sms": bool(info.get("sms_two_factor_on")),
+        "app": bool(info.get("totp_two_factor_on")),
+        "whatsapp": bool(info.get("whatsapp_two_factor_on")),
+        "phone": phone,
+    }
+
+
 def ig_login(user: str, password: str) -> dict:
     import instaloader
+    import requests
     from instaloader.exceptions import (BadCredentialsException, ConnectionException,
                                         TwoFactorAuthRequiredException)
 
     user = user.strip().lstrip("@")
     L = instaloader.Instaloader(quiet=True)
+    seen, real_post, spy = _capture_login_reply()
+    requests.Session.post = spy
     try:
         L.login(user, password)
     except TwoFactorAuthRequiredException:
-        _pending_ig.update(L=L, user=user)
-        return {"need2fa": True}
+        _pending_ig.update(L=L, user=user, info=dict(seen))
+        return {"need2fa": True, **_two_factor_hint(seen)}
     except BadCredentialsException:
         return {"error": "Wrong username or password."}
     except ConnectionException as e:
         if "checkpoint" in str(e).lower() or "challenge" in str(e).lower():
             return {"error": "Instagram wants to confirm it's you. Open the Instagram app, tap 'This was me', "
-                             "then try again."}
+                             "then try again. Or use 'Connect with my browser' below."}
         return {"error": f"Instagram refused the login: {e}"}
+    finally:
+        requests.Session.post = real_post
     _ig_save(L, user)
     return {"ok": True}
+
+
+def ig_resend_sms() -> dict:
+    """Ask Instagram to text a fresh login code."""
+    L, user = _pending_ig["L"], _pending_ig["user"]
+    pending = L.context.two_factor_auth_pending if L else None
+    if not pending:
+        return {"error": "Start the login again: type your password and click Connect."}
+    session, _, identifier = pending
+    last = ""
+    for url in IG_SMS_URLS:
+        try:
+            r = session.post(url, data={"username": user, "identifier": identifier})
+        except Exception as e:  # network trouble
+            last = str(e)
+            continue
+        if r.status_code == 404:
+            last = "not found"
+            continue
+        try:
+            body = r.json()
+        except ValueError:
+            body = {}
+        if r.ok and body.get("status", "ok") == "ok":
+            info = body.get("two_factor_info") or {}
+            # Instagram may issue a new login id with the new code; keep it in step.
+            if info.get("two_factor_identifier"):
+                L.context.two_factor_auth_pending = (session, user, info["two_factor_identifier"])
+            phone = info.get("obfuscated_phone_number") or _pending_ig["info"].get("obfuscated_phone_number") or ""
+            return {"ok": True, "phone": phone}
+        last = body.get("message") or f"HTTP {r.status_code}"
+    if "wait" in str(last).lower() or "few minutes" in str(last).lower():
+        return {"error": "Instagram says to wait a few minutes before asking for another code."}
+    return {"error": f"Instagram did not send a new code ({last}). Use 'Connect with my browser' instead."}
 
 
 def ig_2fa(code: str) -> dict:
@@ -316,13 +389,42 @@ def ig_2fa(code: str) -> dict:
     L, user = _pending_ig["L"], _pending_ig["user"]
     if not L:
         return {"error": "Start the login again."}
+    code = re.sub(r"\s+", "", code)
     try:
-        L.two_factor_login(code.strip())
+        L.two_factor_login(code)
     except BadCredentialsException:
-        return {"error": "That code didn't work. Try the newest code."}
+        return {"error": "That code didn't work. Use the newest code, or click 'Text me a new code'."}
     _ig_save(L, user)
-    _pending_ig.update(L=None, user=None)
+    _pending_ig.update(L=None, user=None, info={})
     return {"ok": True}
+
+
+def ig_from_browser(browser: str) -> dict:
+    """Reuse the Instagram login already in your web browser: no password, no code."""
+    import instaloader
+
+    try:
+        from instaloader.__main__ import get_cookies_from_instagram
+    except ImportError:
+        return {"error": "This option needs an update. Run the installer again."}
+    if browser not in ("chrome", "edge", "firefox", "brave", "opera"):
+        return {"error": "Pick a browser."}
+    try:
+        cookies = get_cookies_from_instagram("instagram", browser, None)
+    except Exception as e:
+        hint = (" Close every Chrome/Edge window and try again, or log in to instagram.com in Firefox and "
+                "pick Firefox." if browser in ("chrome", "edge", "brave", "opera") else "")
+        return {"error": f"Couldn't read the Instagram login from {browser}: {e}.{hint}"}
+    if not cookies or not cookies.get("sessionid"):
+        return {"error": f"You're not logged in to instagram.com in {browser.title()}. Log in there first."}
+    L = instaloader.Instaloader(quiet=True)
+    L.context.update_cookies(cookies)
+    user = L.test_login()
+    if not user:
+        return {"error": f"The {browser.title()} login didn't work. Log in to instagram.com there again, then retry."}
+    L.context.username = user
+    _ig_save(L, user)
+    return {"ok": True, "username": user}
 
 
 # --------------------------------------------------------------------------
@@ -502,6 +604,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(ig_login(b.get("username", ""), b.get("password", "")))
         elif path == "/api/ig/2fa":
             self._json(ig_2fa(b.get("code", "")))
+        elif path == "/api/ig/resend":
+            self._json(ig_resend_sms())
+        elif path == "/api/ig/browser":
+            self._json(ig_from_browser(b.get("browser", "")))
         elif path == "/api/claude/signin":
             self._json(claude_signin())
         elif path == "/api/schedule":
@@ -584,8 +690,15 @@ pre{margin:0;background:var(--bg);border:1px solid var(--line);border-radius:8px
 <div id="ig-form" class="steps">
  <p>Your password goes straight to Instagram. ReelVault keeps only the login session on this computer.</p>
  <div class="row"><input id="ig-u" placeholder="Instagram username" autocomplete="username"><input id="ig-p" type="password" placeholder="Password" autocomplete="current-password"><button id="ig-go">Connect</button></div>
- <div class="row" id="ig-2fa" hidden><input id="ig-code" placeholder="6-digit code from your authenticator or SMS" inputmode="numeric"><button id="ig-code-go">Confirm</button></div>
+ <div id="ig-2fa" class="steps" hidden>
+  <p id="ig-2fa-how">Enter the login code Instagram sent you.</p>
+  <div class="row"><input id="ig-code" placeholder="Login code (6 digits) or a backup code" inputmode="numeric" autocomplete="one-time-code"><button id="ig-code-go">Confirm</button></div>
+  <div class="row"><button class="ghost" id="ig-resend">Text me a new code</button><span class="msg" id="ig-resend-msg"></span></div>
+  <p>No code coming? If you use an authenticator app (Google Authenticator, Duo...), the code is in that app, not in SMS. You can also type one of your 8-digit Instagram backup codes. Or skip codes with the browser option below.</p>
+ </div>
  <div class="msg" id="ig-msg"></div>
+ <p><b>Or skip the password and code:</b> if you're logged in to instagram.com in a web browser on this computer, ReelVault can reuse that login.</p>
+ <div class="row"><select id="ig-browser" aria-label="Browser"><option value="chrome">Chrome</option><option value="edge">Edge</option><option value="firefox">Firefox</option><option value="brave">Brave</option><option value="opera">Opera</option></select><button class="ghost" id="ig-browser-go">Connect with my browser</button></div>
 </div>
 </section>
 
@@ -668,8 +781,29 @@ $("#ig-go").onclick = async () => {
   $("#ig-msg").textContent = "Connecting...";
   const r = await post("/api/ig/login", {username: $("#ig-u").value, password: $("#ig-p").value});
   $("#ig-p").value = "";
-  if (r.need2fa) { $("#ig-2fa").hidden = false; $("#ig-msg").textContent = "Enter the code Instagram sent you."; return; }
+  if (r.need2fa) {
+    $("#ig-2fa").hidden = false; $("#ig-msg").textContent = "";
+    const ways = [];
+    if (r.sms) ways.push("a text message" + (r.phone ? " to " + r.phone : ""));
+    if (r.whatsapp) ways.push("WhatsApp");
+    if (r.app) ways.push("your authenticator app");
+    $("#ig-2fa-how").textContent = ways.length ? "Enter the login code from " + ways.join(" or ") + "." : "Enter the login code Instagram sent you.";
+    $("#ig-resend").hidden = r.app && !r.sms;
+    $("#ig-code").focus(); return;
+  }
   say("#ig-msg", r, "Connected."); refresh();
+};
+$("#ig-resend").onclick = async () => {
+  const b = $("#ig-resend"); b.disabled = true; $("#ig-resend-msg").textContent = "Asking Instagram...";
+  const r = await post("/api/ig/resend");
+  $("#ig-resend-msg").className = "msg " + (r.error ? "err" : "good");
+  $("#ig-resend-msg").textContent = r.error || ("New code sent" + (r.phone ? " to " + r.phone : "") + ". Use only the newest code.");
+  setTimeout(() => { b.disabled = false; }, 60000);  // Instagram blocks rapid repeats
+};
+$("#ig-browser-go").onclick = async () => {
+  $("#ig-msg").className = "msg"; $("#ig-msg").textContent = "Reading your browser's Instagram login...";
+  const r = await post("/api/ig/browser", {browser: $("#ig-browser").value});
+  say("#ig-msg", r, "Connected as @" + (r.username || "")); refresh();
 };
 $("#ig-code-go").onclick = async () => { const r = await post("/api/ig/2fa", {code: $("#ig-code").value}); say("#ig-msg", r, "Connected."); refresh(); };
 $("#claude-signin").onclick = async () => { const r = await post("/api/claude/signin"); say("#run-msg", r, "A sign-in page opens in your browser. Finish there, then come back."); };
