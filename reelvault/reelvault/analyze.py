@@ -11,8 +11,7 @@ import json
 import traceback
 from pathlib import Path
 
-import anthropic
-
+from . import brain
 from .config import Config
 from .library import Library
 from .media import extract_frames, frame_times, probe, timed_transcript, transcribe
@@ -56,9 +55,30 @@ def build_content(frames: list[tuple[float, Path]], transcript: dict, meta: dict
     return content
 
 
+def build_text_prompt(frames: list[tuple[float, Path]], transcript: dict, meta: dict, duration: float,
+                      has_audio: bool) -> str:
+    """Same input as build_content, for Claude Code: frames are files it opens with Read."""
+    frame_list = "\n".join(f"- {t:.1f}s: frames/{p.name}" for t, p in frames)
+    audio_note = "" if has_audio else "\nNOTE: this video has no audio track."
+    return (
+        f"Reel by @{meta.get('owner', 'unknown')} · length {duration:.1f}s{audio_note}\n\n"
+        f"Still frames (open every one with the Read tool before answering):\n{frame_list}\n\n"
+        f"<caption>\n{meta.get('caption') or '(none)'}\n</caption>\n\n"
+        f"<transcript language=\"{transcript.get('language', '?')}\">\n{timed_transcript(transcript)}\n</transcript>\n"
+    )
+
+
 class Analyzer:
     def __init__(self, cfg: Config):
         self.cfg = cfg
+        self.context = (
+            "<allowed_categories>\n" + "\n".join(cfg.categories) + "\n</allowed_categories>\n\n"
+            "<creator_profile>\n" + cfg.profile_text() + "\n</creator_profile>"
+        )
+        if cfg.brain != "api":
+            return
+        import anthropic
+
         self.client = anthropic.Anthropic()
         # The system prompt + profile is identical for every reel, so cache it.
         self.system = [
@@ -72,6 +92,16 @@ class Analyzer:
                 "cache_control": {"type": "ephemeral"},
             },
         ]
+
+    def ask(self, folder: Path, frames, tr: dict, meta: dict, duration: float, has_audio: bool) -> ReelAnalysis:
+        if self.cfg.brain == "api":
+            return self.ask_claude(build_content(frames, tr, meta, duration, has_audio))
+        return brain.structured(
+            build_text_prompt(frames, tr, meta, duration, has_audio),
+            "Read every frame listed below, then break this reel down. Answer only with the structured output.",
+            SYSTEM + "\n\n" + self.context,
+            folder, ReelAnalysis, read_files=True, model=self.cfg.model, effort=self.cfg.effort,
+        )
 
     def ask_claude(self, content: list[dict]) -> ReelAnalysis:
         resp = self.client.beta.messages.parse(
@@ -114,7 +144,7 @@ class Analyzer:
         (folder / "transcript_timed.txt").write_text(timed_transcript(tr), encoding="utf-8")
 
         print(f"  asking Claude ({len(frames)} frames, {len(tr['segments'])} speech segments)...")
-        analysis = self.ask_claude(build_content(frames, tr, meta, info.duration, info.has_audio))
+        analysis = self.ask(folder, frames, tr, meta, info.duration, info.has_audio)
 
         record = {
             "shortcode": code,
@@ -143,14 +173,23 @@ def process_pending(cfg: Config, lib: Library, retry_failed: bool = False, limit
             dest = analyzer.process(lib, code, Path(row["folder"]))
             print(f"  -> {dest}")
             ok += 1
-        except anthropic.AuthenticationError:
-            raise SystemExit("Claude API key is missing or wrong. Set ANTHROPIC_API_KEY.")
-        except anthropic.RateLimitError:
-            lib.mark_failed(code, "rate limited")
-            print("  rate limited; stopping. Run again later to continue.")
+        except brain.BrainError as e:
+            lib.mark_failed(code, str(e))
+            print(f"  {e}")
             bad += 1
-            break
-        except Exception as e:  # keep going; one bad reel should not stop the batch
+            msg = str(e).lower()
+            if "not signed in" in msg or "not installed" in msg or "usage limit" in msg:
+                print("  stopping this run; it will continue next time.")
+                break
+        except Exception as e:
+            name = type(e).__name__
+            if name == "AuthenticationError":
+                raise SystemExit("Claude API key is missing or wrong. Set ANTHROPIC_API_KEY.")
+            if name == "RateLimitError":
+                lib.mark_failed(code, "rate limited")
+                print("  rate limited; stopping. Run again later to continue.")
+                bad += 1
+                break
             lib.mark_failed(code, f"{e}\n{traceback.format_exc()}")
             print(f"  failed: {e}")
             bad += 1

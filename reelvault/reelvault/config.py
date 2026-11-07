@@ -29,6 +29,7 @@ class Config:
     vault_dir: Path = Path("vault")
     instagram_username: str = ""
     session_file: str = ""
+    brain: str = "claude-code"          # "claude-code" (your subscription) or "api" (API key)
     model: str = "claude-opus-5-5"
     effort: str = "medium"
     whisper_model: str = "small"

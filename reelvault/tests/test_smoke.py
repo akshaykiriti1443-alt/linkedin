@@ -109,7 +109,7 @@ def env(tmp_path, monkeypatch):
         src.mkdir()
         make_video(src / "reel_a.mp4")
         make_video(src / "reel_silent.mp4", audio=False)
-    (tmp_path / "reelvault.toml").write_text('vault_dir = "vault"\nwhisper_model = "tiny"\nmax_frames = 6\n')
+    (tmp_path / "reelvault.toml").write_text('vault_dir = "vault"\nbrain = "api"\nwhisper_model = "tiny"\nmax_frames = 6\n')
     yield tmp_path, src
     srv.shutdown()
 

@@ -6,8 +6,7 @@ import json
 from datetime import date
 from pathlib import Path
 
-import anthropic
-
+from . import brain
 from .config import Config
 from .library import Library, slugify
 
@@ -64,7 +63,6 @@ def remix(cfg: Config, lib: Library, topic: str, codes: list[str], category: str
           hook_type: str | None = None, count: int = 3, sources: int = 5) -> Path:
     recs = pick_sources(lib, codes, category, hook_type, sources)
     briefs = [_skeleton_brief(r) for r in recs]
-    client = anthropic.Anthropic()
     prompt = (
         f"<creator_profile>\n{cfg.profile_text()}\n</creator_profile>\n\n"
         f"<skeletons>\n{json.dumps(briefs, indent=2, ensure_ascii=False)}\n</skeletons>\n\n"
@@ -72,19 +70,26 @@ def remix(cfg: Config, lib: Library, topic: str, codes: list[str], category: str
         "Use a different skeleton for each script where you can. Output Markdown."
     )
     print(f"Writing {count} script(s) from {len(briefs)} skeleton(s)...")
-    with client.beta.messages.stream(
-        model=cfg.model,
-        max_tokens=32000,
-        system=REMIX_SYSTEM,
-        messages=[{"role": "user", "content": prompt}],
-        output_config={"effort": cfg.effort},
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
-    ) as stream:
-        msg = stream.get_final_message()
-    if msg.stop_reason == "refusal":
-        raise SystemExit("Claude declined this request.")
-    text = "".join(b.text for b in msg.content if b.type == "text")
+    if cfg.brain != "api":
+        text = brain.text(prompt, f"Write {count} scripts about: {topic}", REMIX_SYSTEM, cfg.vault_dir,
+                          cfg.model, cfg.effort)
+    else:
+        import anthropic
+
+        client = anthropic.Anthropic()
+        with client.beta.messages.stream(
+            model=cfg.model,
+            max_tokens=32000,
+            system=REMIX_SYSTEM,
+            messages=[{"role": "user", "content": prompt}],
+            output_config={"effort": cfg.effort},
+            betas=["server-side-fallback-2026-07-01"],
+            fallbacks="default",
+        ) as stream:
+            msg = stream.get_final_message()
+        if msg.stop_reason == "refusal":
+            raise SystemExit("Claude declined this request.")
+        text = "".join(b.text for b in msg.content if b.type == "text")
     out_dir = cfg.vault_dir / "scripts"
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"{date.today()}_{slugify(topic)}.md"

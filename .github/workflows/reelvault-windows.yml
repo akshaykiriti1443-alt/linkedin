@@ -1,0 +1,54 @@
+name: ReelVault on Windows
+
+on:
+  push:
+    paths:
+      - "reelvault/**"
+      - ".github/workflows/reelvault-windows.yml"
+  workflow_dispatch:
+
+jobs:
+  install-and-run:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the one-paste installer (from this checkout)
+        shell: powershell
+        run: .\reelvault\install.ps1 -Source .\reelvault -NoLaunch
+
+      - name: Check what got installed
+        shell: powershell
+        run: |
+          $rv = "$env:USERPROFILE\ReelVault"
+          & "$rv\tools\ffmpeg\bin\ffmpeg.exe" -version | Select-Object -First 1
+          & "$rv\app-env\Scripts\python.exe" -c "import reelvault.app, faster_whisper, instaloader, yt_dlp; print('imports ok')"
+          if (-not (Test-Path "$env:USERPROFILE\Desktop\ReelVault.lnk")) { throw "desktop icon missing" }
+          & "$env:USERPROFILE\.local\bin\claude.exe" --version
+
+      - name: Run the test suite
+        shell: powershell
+        run: |
+          $rv = "$env:USERPROFILE\ReelVault"
+          $env:PATH = "$rv\tools\ffmpeg\bin;$env:PATH"
+          & "$rv\app-env\Scripts\python.exe" -m pip install pytest --quiet
+          & "$rv\app-env\Scripts\python.exe" -m pytest -q reelvault\tests
+          if ($LASTEXITCODE -ne 0) { throw "tests failed" }
+
+      - name: Start the app the way the desktop icon does, and use it
+        shell: powershell
+        run: |
+          $rv = "$env:USERPROFILE\ReelVault"
+          Start-Process "$rv\app-env\Scripts\pythonw.exe" -ArgumentList "-m reelvault.app --no-browser" -WorkingDirectory $rv
+          Start-Sleep -Seconds 15
+          $s = Invoke-RestMethod http://127.0.0.1:8765/api/status
+          $s | Select-Object home, ffmpeg, claude, instagram, counts | ConvertTo-Json
+          if (-not $s.ffmpeg) { throw "app cannot find ffmpeg" }
+          if (-not $s.claude.installed) { throw "app cannot find Claude Code" }
+          $r = Invoke-RestMethod -Method Post -ContentType "application/json" -Body '{"time":"20:00"}' http://127.0.0.1:8765/api/schedule
+          $r | ConvertTo-Json
+          if ($r.error) { throw "schedule failed: $($r.error)" }
+          schtasks /Query /TN "ReelVault daily" /FO LIST
+          Invoke-RestMethod -Method Post -ContentType "application/json" -Body '{"time":null}' http://127.0.0.1:8765/api/schedule | Out-Null
+          Invoke-RestMethod -Method Post -ContentType "application/json" -Body '{}' http://127.0.0.1:8765/api/quit | Out-Null

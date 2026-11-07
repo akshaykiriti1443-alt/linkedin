@@ -59,19 +59,45 @@ def _login(cfg: Config):
     )
     user = cfg.instagram_username
     if not user:
-        raise SystemExit("Set instagram_username in reelvault.toml (or IG_USERNAME).")
+        raise SystemExit("Connect your Instagram account first (step 3 in ReelVault).")
     try:
         L.load_session_from_file(user, cfg.session_file or None)
     except FileNotFoundError:
-        raise SystemExit(
-            "No saved Instagram session found.\n"
-            f"Create one once with:   instaloader --login {user}\n"
-            "or import it from your browser:   instaloader --load-cookies chrome\n"
-            "Then run this command again."
-        )
+        raise SystemExit("Connect your Instagram account first (step 3 in ReelVault).")
     if L.test_login() != user:
-        raise SystemExit("The saved session has expired. Log in again with: instaloader --login " + user)
+        raise SystemExit("Your Instagram login has expired. Connect Instagram again (step 3 in ReelVault).")
     return L
+
+
+def _save_post(cfg: Config, lib: Library, L, post) -> bool:
+    code = post.shortcode
+    folder = cfg.inbox / code
+    folder.mkdir(parents=True, exist_ok=True)
+    L.download_post(post, target=code)
+    video = _first_video(folder)
+    if not video:
+        print(f"  {code} has no video, skipping")
+        shutil.rmtree(folder, ignore_errors=True)
+        return False
+    if video.name != "video.mp4":
+        video.rename(folder / "video.mp4")
+    _write_meta(
+        folder,
+        {
+            "shortcode": code,
+            "url": f"https://www.instagram.com/reel/{code}/",
+            "owner": post.owner_username,
+            "caption": post.caption or "",
+            "posted_at": post.date_utc.isoformat(),
+            "likes": post.likes,
+            "views": post.video_view_count if post.is_video else None,
+            "duration": post.video_duration if post.is_video else None,
+            "source": "instaloader",
+        },
+    )
+    lib.add_pending(code, folder)
+    print(f"  saved {code} by @{post.owner_username}")
+    return True
 
 
 def from_saved(cfg: Config, lib: Library, limit: int | None = None, pause: float = 4.0) -> int:
@@ -91,30 +117,31 @@ def from_saved(cfg: Config, lib: Library, limit: int | None = None, pause: float
             # Carousels may still hold videos
             if post.typename != "GraphSidecar" or not any(n.is_video for n in post.get_sidecar_nodes()):
                 continue
-        folder = cfg.inbox / code
-        folder.mkdir(parents=True, exist_ok=True)
-        L.download_post(post, target=code)
-        video = _first_video(folder)
-        if video and video.name != "video.mp4":
-            video.rename(folder / "video.mp4")
-        _write_meta(
-            folder,
-            {
-                "shortcode": code,
-                "url": f"https://www.instagram.com/p/{code}/",
-                "owner": post.owner_username,
-                "caption": post.caption or "",
-                "posted_at": post.date_utc.isoformat(),
-                "likes": post.likes,
-                "views": post.video_view_count if post.is_video else None,
-                "duration": post.video_duration if post.is_video else None,
-                "source": "instaloader",
-            },
-        )
-        lib.add_pending(code, folder)
-        added += 1
-        print(f"  saved {code} by @{post.owner_username}")
+        if _save_post(cfg, lib, L, post):
+            added += 1
         time.sleep(pause)  # be gentle; Instagram rate-limits hard
+    return added
+
+
+def from_links(cfg: Config, lib: Library, urls: list[str], pause: float = 4.0) -> int:
+    """Download specific reels by link through your logged-in session."""
+    import instaloader
+
+    L = _login(cfg)
+    added = 0
+    for url in urls:
+        m = SHORTCODE_RE.search(url)
+        if not m or lib.has(m.group(1)):
+            continue
+        code = m.group(1)
+        try:
+            post = instaloader.Post.from_shortcode(L.context, code)
+        except Exception as e:  # deleted, private, or rate limited
+            print(f"  could not open {code}: {e}")
+            continue
+        if _save_post(cfg, lib, L, post):
+            added += 1
+        time.sleep(pause)
     return added
 
 
