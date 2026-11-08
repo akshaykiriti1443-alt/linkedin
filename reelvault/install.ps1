@@ -93,6 +93,12 @@ if ((Test-Path $ClaudeExe) -or (Get-Command claude -ErrorAction SilentlyContinue
 
 # ---------------------------------------------------------------- ReelVault
 Step "Installing ReelVault"
+# Close a ReelVault that is still running, so the new version really starts.
+try { Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8765/api/quit -ContentType "application/json" -Body "{}" -TimeoutSec 5 | Out-Null } catch {}
+Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like "*reelvault.app*" } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Seconds 1
 if (-not (Test-Path (Join-Path $Env_ "Scripts\python.exe"))) {
     & $Py -m venv $Env_
 }
@@ -115,7 +121,11 @@ if ($Source) {
 Write-Host "    Installing packages (a few minutes the first time)..."
 & $VPy -m pip install --upgrade $Pkg --quiet --disable-pip-version-check
 if ($LASTEXITCODE -ne 0) { throw "Package install failed. Run this installer again." }
-Ok "ReelVault installed"
+# Always replace ReelVault's own files, even when the version number looks the same.
+& $VPy -m pip install --force-reinstall --no-deps $Pkg --quiet --disable-pip-version-check
+if ($LASTEXITCODE -ne 0) { throw "Package install failed. Run this installer again." }
+$Ver = & $VPy -c "import reelvault; print(reelvault.__version__)"
+Ok "ReelVault $Ver installed"
 
 # ---------------------------------------------------------------- Shortcuts
 Step "Adding the ReelVault icon"
@@ -135,6 +145,6 @@ foreach ($t in $targets) {
 Ok "Icon added to your desktop and Start menu"
 
 Write-Host ""
-Write-Host "All done. ReelVault is opening in your browser." -ForegroundColor Green
+Write-Host "All done. ReelVault $Ver is opening in your browser." -ForegroundColor Green
 Write-Host "Next time, just double-click the ReelVault icon on your desktop."
 if (-not $NoLaunch) { Start-Process $VPyw -ArgumentList "-m reelvault.app" -WorkingDirectory $RV }

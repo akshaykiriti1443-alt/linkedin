@@ -27,6 +27,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from . import __version__
+
 PORT = int(os.environ.get("REELVAULT_PORT", "8765"))
 HOME = Path(os.environ.get("REELVAULT_HOME", Path.home() / "ReelVault")).resolve()
 TASK_NAME = "ReelVault daily"
@@ -271,6 +273,7 @@ def status() -> dict:
     lib.db.close()
     return {
         "home": str(HOME),
+        "version": __version__,
         "ffmpeg": bool(shutil.which("ffmpeg")),
         "claude": claude_status(),
         "instagram": {"username": cfg.instagram_username, "connected": _ig_connected()},
@@ -502,6 +505,15 @@ def ig_cookies_from_extension(body: dict) -> dict:
         return {"error": str(e)}
     IG_WAIT["until"] = 0.0
     return {"ok": True, "username": user}
+
+
+def show_extension_folder() -> dict:
+    if not (EXT_DIR / "manifest.json").exists():
+        prepare_home()
+    if IS_WIN:
+        os.startfile(str(EXT_DIR))  # opens it in File Explorer
+        return {"ok": True}
+    return {"error": f"Open this folder yourself: {EXT_DIR}"}
 
 
 def open_extensions_page() -> dict:
@@ -763,6 +775,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(ext_hello(b))
         elif path == "/api/ig/cookies":
             self._json(ig_cookies_from_extension(b))
+        elif path == "/api/ext/folder":
+            self._json(show_extension_folder())
         elif path == "/api/ext/open":
             self._json(open_extensions_page())
         elif path == "/api/ig/chrome":
@@ -785,6 +799,31 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "not found"}, 404)
 
 
+def replace_old_copy() -> bool:
+    """If an older ReelVault is still running in the background, close it so this one starts.
+    Returns True when the port is free for us."""
+    import urllib.request
+
+    base = f"http://127.0.0.1:{PORT}"
+    try:
+        running = json.load(urllib.request.urlopen(base + "/api/status", timeout=10)).get("version")
+    except Exception:
+        running = None  # very old copy (no version) or not ReelVault
+    if running == __version__:
+        return False
+    try:
+        req = urllib.request.Request(base + "/api/quit", data=b"{}", method="POST",
+                                     headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=10)
+    except Exception:
+        pass
+    for _ in range(40):
+        if not port_in_use():
+            return True
+        time.sleep(0.25)
+    return False
+
+
 def port_in_use() -> bool:
     with socket.socket() as s:
         return s.connect_ex(("127.0.0.1", PORT)) == 0
@@ -795,9 +834,10 @@ def main(argv=None):
     if "--run-once" in argv:
         return run_once()
     url = f"http://127.0.0.1:{PORT}/"
-    if port_in_use():  # already running: just show it
-        webbrowser.open(url)
-        return
+    if port_in_use():
+        if not replace_old_copy():  # this same version is already running: just show it
+            webbrowser.open(url)
+            return
     prepare_home()
     if sys.stdout is None:  # pythonw has no console
         sys.stdout = sys.stderr = open(HOME / "app.log", "a", encoding="utf-8")
@@ -844,7 +884,7 @@ pre{margin:0;background:var(--bg);border:1px solid var(--line);border-radius:8px
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 </style></head><body>
 <div class="wrap">
-<header><h1>ReelVault <small id="home"></small></h1>
+<header><h1>ReelVault <small id="ver"></small> <small id="home"></small></h1>
 <div class="row"><a class="btn" id="open-lib" href="/vault/index.html" target="_blank">Open my library</a><button class="ghost" id="quit">Close app</button></div></header>
 
 <section>
@@ -860,13 +900,14 @@ pre{margin:0;background:var(--bg);border:1px solid var(--line);border-radius:8px
  <div class="row"><button id="ig-connect">Connect Instagram</button></div>
  <div class="msg" id="ig-connect-msg"></div>
  <div id="ext-setup" class="card" hidden>
-  <p><b>One-time setup:</b> add the small ReelVault Connector to Chrome. It takes about a minute.</p>
+  <p><b>One-time setup:</b> add the small ReelVault Connector to Chrome. It takes about a minute.
+  It isn't in the Chrome Web Store: it comes with ReelVault, in the folder below.</p>
   <ol>
    <li><button class="ghost" id="ext-open">Open Chrome's extensions page</button><br>
      <span class="hint">Nothing opened? Type <code>chrome://extensions</code> in Chrome's address bar.</span></li>
    <li>Turn on <b>Developer mode</b> (the switch at the top right).</li>
    <li>Click <b>Load unpacked</b> and pick this folder:<br>
-     <code id="ext-path"></code> <button class="ghost" id="ext-copy">Copy</button><br>
+     <code id="ext-path"></code> <button class="ghost" id="ext-copy">Copy</button> <button class="ghost" id="ext-folder">Show folder</button><br>
      <span class="hint">Tip: paste it into the address box at the top of the folder window, press Enter, then click <b>Select Folder</b>.</span></li>
    <li>Come back here. When this says <b>Added</b>, click <b>Connect Instagram</b> again.</li>
   </ol>
@@ -948,7 +989,7 @@ let profileLoaded = false, lastResult = null;
 function pill(el, ok, yes, no) { el.className = "pill " + (ok ? "ok" : "no"); el.textContent = ok ? yes : no; }
 async function refresh() {
   let s; try { s = await (await fetch("/api/status")).json(); } catch (e) { $("#job").textContent = "app closed"; return; }
-  $("#home").textContent = s.home;
+  $("#home").textContent = s.home; $("#ver").textContent = "v" + s.version;
   pill($("#s-ffmpeg"), s.ffmpeg, "Ready", "Missing: run the installer again");
   pill($("#s-claude"), s.claude.loggedIn, "Signed in", s.claude.installed ? "Not signed in" : "Not installed");
   $("#claude-signin").hidden = s.claude.loggedIn;
@@ -957,7 +998,7 @@ async function refresh() {
   const ex = s.extension || {};
   $("#ext-path").textContent = ex.folder || "";
   pill($("#ext-status"), ex.seen, "Added", "Not added yet");
-  $("#ext-setup").hidden = !(window.showExt && !s.instagram.connected);
+  $("#ext-setup").hidden = ex.seen || s.instagram.connected;
   $("#ig-connect").disabled = !!s.igWaiting;
   if (s.igWaiting && !window.igMsgSet) { $("#ig-connect-msg").className = "msg"; $("#ig-connect-msg").textContent = "Waiting for your login in the Instagram tab..."; }
   if (s.instagram.connected && $("#ig-connect-msg").textContent.startsWith("Waiting")) { $("#ig-connect-msg").className = "msg good"; $("#ig-connect-msg").textContent = "Connected."; }
@@ -1007,6 +1048,7 @@ $("#ig-connect").onclick = async () => {
   } else { window.igMsgSet = true; say("#ig-connect-msg", r, r.message || ""); setTimeout(() => window.igMsgSet = false, 8000); }
   refresh();
 };
+$("#ext-folder").onclick = async () => { const r = await post("/api/ext/folder"); if (r.error) say("#ig-connect-msg", r, ""); };
 $("#ext-open").onclick = async () => { const r = await post("/api/ext/open"); if (r.error) say("#ig-connect-msg", r, ""); };
 $("#ext-copy").onclick = () => {
   const t = $("#ext-path").textContent, b = $("#ext-copy");

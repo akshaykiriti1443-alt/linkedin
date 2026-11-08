@@ -67,3 +67,20 @@ jobs:
           $env:NODE_PATH = "$env:RUNNER_TEMP\pw\node_modules"
           node reelvault\tests\e2e\extension_e2e.js $tmp
           if ($LASTEXITCODE -ne 0) { Get-Content "$env:RUNNER_TEMP\app.err" -Tail 30; throw "extension e2e failed" }
+
+      - name: Reinstall while the app is running (update path)
+        shell: powershell
+        run: |
+          $rv = "$env:USERPROFILE\ReelVault"
+          Start-Process "$rv\app-env\Scripts\pythonw.exe" -ArgumentList "-m reelvault.app --no-browser" -WorkingDirectory $rv
+          Start-Sleep -Seconds 10
+          .\reelvault\install.ps1 -Source .\reelvault -NoLaunch -SkipClaude
+          $left = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*reelvault.app*" }
+          if ($left) { throw "old app still running after reinstall" }
+          Start-Process "$rv\app-env\Scripts\pythonw.exe" -ArgumentList "-m reelvault.app --no-browser" -WorkingDirectory $rv
+          Start-Sleep -Seconds 10
+          $s = Invoke-RestMethod http://127.0.0.1:8765/api/status
+          "running version: $($s.version)"
+          if (-not $s.version) { throw "new version not running" }
+          if (-not (Test-Path "$rv\chrome-extension\manifest.json")) { throw "extension folder missing" }
+          Invoke-RestMethod -Method Post -ContentType "application/json" -Body '{}' http://127.0.0.1:8765/api/quit | Out-Null
