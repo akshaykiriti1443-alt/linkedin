@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "ReelVault Connector",
+  "version": "1.0.0",
+  "description": "Connects your Instagram login to the ReelVault app on this computer. It only talks to ReelVault at 127.0.0.1, and only after you click Connect in ReelVault.",
+  "permissions": ["cookies"],
+  "host_permissions": ["https://*.instagram.com/*", "http://127.0.0.1:8765/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "ReelVault Connector" }
+}

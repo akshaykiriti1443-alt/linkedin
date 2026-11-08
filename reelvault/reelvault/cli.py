@@ -26,7 +26,7 @@ from .library import Library
 TOML_TEMPLATE = """# reelvault settings
 vault_dir = "vault"                 # where videos, notes and the dashboard live
 instagram_username = ""             # your Instagram handle, no @
-session_file = ""                   # leave empty to use Instaloader's default location
+cookies_file = "instagram.cookies.json"   # your Instagram login (written by the app or `reelvault login`)
 
 model = "claude-opus-5-5"           # Claude model for analysis and scripts
 effort = "medium"                   # low | medium | high | xhigh | max
@@ -73,8 +73,10 @@ def cmd_login(args, cfg):
     user = cfg.instagram_username or input("Instagram username: ").strip()
     L = instaloader.Instaloader()
     L.interactive_login(user)  # asks for password and 2FA code in the terminal
-    L.save_session_to_file(cfg.session_file or None)
-    print(f"Session saved for @{user}. Your password is not stored.")
+    from .igweb import save_cookies
+
+    save_cookies(Path(cfg.cookies_file), L.context._session.cookies.get_dict())
+    print(f"Login saved for @{user} in {cfg.cookies_file}. Your password is not stored.")
 
 
 def cmd_fetch(args, cfg, lib):

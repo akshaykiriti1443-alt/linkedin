@@ -3,8 +3,8 @@
 Instagram's official Graph API has no endpoint for saved posts, so there are
 three ways in:
 
-1. ``from_saved``  - log in with your own session through Instaloader and walk
-   your Saved collection. Fastest, fully automatic.
+1. ``from_saved``  - use your Instagram login (cookies) and read your Saved
+   feed the way instagram.com does. Fastest, fully automatic.
 2. ``from_export`` - read the JSON from Instagram's "Download your information"
    export, then download each link with yt-dlp. Slower, but your login never
    leaves the browser.
@@ -38,109 +38,79 @@ def _first_video(folder: Path) -> Path | None:
 
 
 # --------------------------------------------------------------------------
-# 1. Logged-in session (Instaloader)
+# 1. Your Instagram login (cookies), via instagram.com's own web API
 # --------------------------------------------------------------------------
 
-def _login(cfg: Config):
-    import instaloader
+def _web(cfg: Config):
+    from . import igweb
 
-    L = instaloader.Instaloader(
-        download_pictures=cfg.include_images,
-        download_videos=True,
-        download_video_thumbnails=False,
-        download_geotags=False,
-        download_comments=False,
-        save_metadata=False,
-        compress_json=False,
-        post_metadata_txt_pattern="",
-        dirname_pattern=str(cfg.inbox / "{target}"),
-        filename_pattern="{shortcode}",
-        quiet=True,
-    )
-    user = cfg.instagram_username
-    if not user:
+    cookies = igweb.load_cookies(Path(cfg.cookies_file))
+    if not cookies.get("sessionid"):
         raise SystemExit("Connect your Instagram account first (step 3 in ReelVault).")
-    try:
-        L.load_session_from_file(user, cfg.session_file or None)
-    except FileNotFoundError:
-        raise SystemExit("Connect your Instagram account first (step 3 in ReelVault).")
-    if L.test_login() != user:
-        raise SystemExit("Your Instagram login has expired. Connect Instagram again (step 3 in ReelVault).")
-    return L
+    return igweb, igweb.session(cookies)
 
 
-def _save_post(cfg: Config, lib: Library, L, post) -> bool:
-    code = post.shortcode
+def _save_media(cfg: Config, lib: Library, igweb, s, m: dict) -> bool:
+    meta = igweb.meta_of(m)
+    code = meta["shortcode"]
+    url = igweb.best_video_url(m)
+    if not url:
+        return False  # photo post
     folder = cfg.inbox / code
     folder.mkdir(parents=True, exist_ok=True)
-    L.download_post(post, target=code)
-    video = _first_video(folder)
-    if not video:
-        print(f"  {code} has no video, skipping")
+    try:
+        igweb.download(s, url, folder / "video.mp4")
+    except Exception as e:
+        print(f"  could not download {code}: {e}")
         shutil.rmtree(folder, ignore_errors=True)
         return False
-    if video.name != "video.mp4":
-        video.rename(folder / "video.mp4")
-    _write_meta(
-        folder,
-        {
-            "shortcode": code,
-            "url": f"https://www.instagram.com/reel/{code}/",
-            "owner": post.owner_username,
-            "caption": post.caption or "",
-            "posted_at": post.date_utc.isoformat(),
-            "likes": post.likes,
-            "views": post.video_view_count if post.is_video else None,
-            "duration": post.video_duration if post.is_video else None,
-            "source": "instaloader",
-        },
-    )
+    _write_meta(folder, meta)
     lib.add_pending(code, folder)
-    print(f"  saved {code} by @{post.owner_username}")
+    print(f"  saved {code} by @{meta['owner']}")
     return True
 
 
-def from_saved(cfg: Config, lib: Library, limit: int | None = None, pause: float = 4.0) -> int:
-    """Download saved posts we do not have yet (newest first)."""
-    import instaloader
-
-    L = _login(cfg)
-    me = instaloader.Profile.own_profile(L.context)
-    added = 0
-    for post in me.get_saved_posts():
-        if limit is not None and added >= limit:
-            break
-        code = post.shortcode
-        if lib.has(code):
-            continue
-        if not post.is_video and not cfg.include_images:
-            # Carousels may still hold videos
-            if post.typename != "GraphSidecar" or not any(n.is_video for n in post.get_sidecar_nodes()):
+def from_saved(cfg: Config, lib: Library, limit: int | None = None, pause: float = 3.0) -> int:
+    """Download saved reels we do not have yet (newest first)."""
+    igweb, s = _web(cfg)
+    added = seen = 0
+    try:
+        for m in igweb.saved_media(s):
+            if limit is not None and added >= limit:
+                break
+            seen += 1
+            code = m.get("code")
+            if not code or lib.has(code):
                 continue
-        if _save_post(cfg, lib, L, post):
-            added += 1
-        time.sleep(pause)  # be gentle; Instagram rate-limits hard
+            if _save_media(cfg, lib, igweb, s, m):
+                added += 1
+                time.sleep(pause)  # be gentle; Instagram rate-limits hard
+    except igweb.IGError as e:
+        raise SystemExit(str(e))
+    if seen == 0:
+        print("  Instagram returned no saved posts.")
     return added
 
 
-def from_links(cfg: Config, lib: Library, urls: list[str], pause: float = 4.0) -> int:
-    """Download specific reels by link through your logged-in session."""
-    import instaloader
-
-    L = _login(cfg)
+def from_links(cfg: Config, lib: Library, urls: list[str], pause: float = 3.0) -> int:
+    """Download specific reels by link through your login."""
+    igweb, s = _web(cfg)
     added = 0
     for url in urls:
         m = SHORTCODE_RE.search(url)
         if not m or lib.has(m.group(1)):
             continue
-        code = m.group(1)
         try:
-            post = instaloader.Post.from_shortcode(L.context, code)
-        except Exception as e:  # deleted, private, or rate limited
-            print(f"  could not open {code}: {e}")
+            media = igweb.media_by_shortcode(s, m.group(1))
+        except igweb.IGError as e:
+            print(f"  could not open {m.group(1)}: {e}")
+            if "logged you out" in str(e) or "too many" in str(e):
+                raise SystemExit(str(e))
             continue
-        if _save_post(cfg, lib, L, post):
+        if _save_media(cfg, lib, igweb, s, media):
             added += 1
+        else:
+            print(f"  {m.group(1)} has no video, skipping")
         time.sleep(pause)
     return added
 

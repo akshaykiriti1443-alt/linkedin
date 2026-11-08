@@ -30,6 +30,8 @@ def test_two_factor_with_resend(tmp_path, monkeypatch):
     calls = []
 
     def fake_get(self, url, *a, **kw):
+        if url.endswith("/api/v1/users/42/info/"):
+            return _resp(200, {"user": {"username": "someone"}, "status": "ok"})
         self.cookies.set("csrftoken", "tok")
         return _resp(200, {})
 
@@ -38,6 +40,9 @@ def test_two_factor_with_resend(tmp_path, monkeypatch):
         calls.append((url, dict(data)))
         if "login/ajax/two_factor" in url:
             ok = data.get("verificationCode") == "654321" and data.get("identifier") == "id-2"
+            if ok:  # Instagram sets the login cookies on success
+                self.cookies.set("sessionid", "S", domain=".instagram.com")
+                self.cookies.set("ds_user_id", "42", domain=".instagram.com")
             return _resp(200, {"status": "ok"} if ok else {"status": "fail", "message": "bad code"},
                          {"csrftoken": "tok2"})
         if "login/ajax" in url:
@@ -61,7 +66,8 @@ def test_two_factor_with_resend(tmp_path, monkeypatch):
     r = app.ig_resend_sms()
     assert r["ok"] and r["phone"].endswith("12")     # falls back to the second endpoint
     assert app.ig_2fa("654 321") == {"ok": True}     # spaces ignored, new login id used
-    assert (tmp_path / "instagram.session").exists()
+    saved = json.loads((tmp_path / "instagram.cookies.json").read_text())
+    assert saved["sessionid"] == "S" and saved["ds_user_id"] == "42"
     assert 'instagram_username = "someone"' in (tmp_path / "reelvault.toml").read_text()
     assert requests.Session.post is fake_post        # the login spy was removed
 

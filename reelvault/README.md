@@ -29,8 +29,11 @@ Then `reelvault remix` writes new scripts from any mix of saved skeletons.
 
 3. Wait for "All done" (5-10 minutes the first time). ReelVault opens in your browser,
    and a **ReelVault** icon appears on your desktop.
-4. In the app: **Sign in to Claude** (uses your Claude Pro/Max subscription),
-   **Connect Instagram**, fill in **About you**, then click **Get new saved reels**.
+4. In the app: **Sign in to Claude** (uses your Claude Pro/Max subscription), then
+   **Connect Instagram**. The first time, the app walks you through adding the small
+   ReelVault Connector to Chrome (about a minute). After that, Connect opens a new
+   Instagram tab in your normal Chrome and connects in seconds.
+   Fill in **About you**, then click **Get new saved reels**.
 5. Turn on **Run every day** and it keeps your library up to date by itself.
 
 The app runs on your computer. Breakdowns use the Claude Code app signed in to your

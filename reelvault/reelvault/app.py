@@ -56,16 +56,23 @@ def save_settings(updates: dict) -> None:
     p.write_text("".join(f"{k} = {_toml_value(v)}\n" for k, v in data.items()), encoding="utf-8")
 
 
+EXT_DIR = HOME / "chrome-extension"
+
+
 def prepare_home() -> None:
+    import shutil
+
     HOME.mkdir(parents=True, exist_ok=True)
     os.chdir(HOME)
+    # Keep the Chrome extension folder up to date with this version of the app.
+    shutil.copytree(Path(__file__).parent / "extension", EXT_DIR, dirs_exist_ok=True)
     if not (HOME / "reelvault.toml").exists():
         from .config import DEFAULT_CATEGORIES
 
         save_settings({
             "vault_dir": "vault",
             "instagram_username": "",
-            "session_file": str(HOME / "instagram.session"),
+            "cookies_file": str(HOME / "instagram.cookies.json"),
             "brain": "claude-code",
             "model": "claude-opus-5-5",
             "effort": "medium",
@@ -175,7 +182,7 @@ def job_links(urls: list[str]):
 
     cfg, lib = cfg_lib()
     print(f"Downloading {len(urls)} link(s)...")
-    if (HOME / "instagram.session").exists() or cfg.session_file and Path(cfg.session_file).exists():
+    if _ig_connected():
         n = fetch.from_links(cfg, lib, urls)
     else:
         n = fetch.from_urls(cfg, lib, urls)
@@ -259,7 +266,6 @@ def status() -> dict:
     import shutil
 
     cfg, lib = cfg_lib()
-    session = Path(cfg.session_file) if cfg.session_file else HOME / "instagram.session"
     cats = sorted({r["analysis"]["category"] for r in lib.all_done()})
     counts = lib.stats()
     lib.db.close()
@@ -267,16 +273,18 @@ def status() -> dict:
         "home": str(HOME),
         "ffmpeg": bool(shutil.which("ffmpeg")),
         "claude": claude_status(),
-        "instagram": {"username": cfg.instagram_username, "connected": session.exists()},
+        "instagram": {"username": cfg.instagram_username, "connected": _ig_connected()},
         "counts": counts,
         "categories": cats,
         "job": JOB["name"],
         "result": JOB["result"],
         "log": list(LOG)[-200:],
         "schedule": schedule_status(),
-        "profile": (HOME / "profile.md").read_text(encoding="utf-8"),
+        "profile": (HOME / "profile.md").read_text(encoding="utf-8") if (HOME / "profile.md").exists() else "",
         "library": (cfg.vault_dir / "index.html").exists(),
         "chromeLogin": _chrome_state(),
+        "extension": {"seen": _ext_seen(), "folder": str(EXT_DIR)},
+        "igWaiting": time.time() < IG_WAIT["until"],
     }
 
 
@@ -291,11 +299,41 @@ IG_SMS_URLS = (
 )
 
 
+COOKIES = "instagram.cookies.json"
+
+
+def _ig_connected() -> bool:
+    from . import igweb
+
+    return bool(igweb.load_cookies(HOME / COOKIES).get("sessionid"))
+
+
+def save_ig_cookies(cookies: dict) -> str:
+    """Check a login with Instagram, then keep it. Returns the username."""
+    from . import igweb
+
+    cookies = {k: v for k, v in cookies.items() if v}
+    if not cookies.get("sessionid"):
+        raise RuntimeError("That login has no Instagram session. Log in to Instagram first.")
+    log("Checking the Instagram login...")
+    s = igweb.session(cookies)
+    try:
+        user = igweb.whoami(s, cookies)
+    except igweb.IGError as e:
+        if "logged you out" in str(e) or "refused" in str(e):
+            raise RuntimeError(str(e))
+        user = ""  # Instagram changed something small; the login itself may still work
+        log(f"Couldn't read your username ({e}); saving the login anyway.")
+    igweb.save_cookies(HOME / COOKIES, cookies)
+    save_settings({"instagram_username": user, "cookies_file": str(HOME / COOKIES)})
+    log(f"Instagram connected{' as @' + user if user else ''}.")
+    return user or "you"
+
+
 def _ig_save(L, user: str) -> None:
-    path = HOME / "instagram.session"
-    L.save_session_to_file(str(path))
-    save_settings({"instagram_username": user, "session_file": str(path)})
-    log(f"Instagram connected as @{user}.")
+    """Password login (instaloader) -> keep its cookies like any other login."""
+    cookies = L.context._session.cookies.get_dict()
+    save_ig_cookies(cookies)
 
 
 def _capture_login_reply():
@@ -407,16 +445,74 @@ def ig_2fa(code: str) -> dict:
 
 
 def _use_browser_cookies(cookies: dict) -> str:
-    import instaloader
+    return save_ig_cookies(cookies)
 
-    L = instaloader.Instaloader(quiet=True)
-    L.context.update_cookies(cookies)
-    user = L.test_login()
-    if not user:
-        raise RuntimeError("Instagram didn't accept the login. Try again.")
-    L.context.username = user
-    _ig_save(L, user)
-    return user
+
+IG_WAIT = {"until": 0.0}
+WAIT_SECONDS = 15 * 60
+
+
+def _ext_seen() -> bool:
+    import tomllib
+
+    p = HOME / "reelvault.toml"
+    return bool(p.exists() and tomllib.loads(p.read_text(encoding="utf-8")).get("extension_seen"))
+
+
+def open_instagram_tab() -> str:
+    """Open instagram.com in a NEW TAB of your normal Chrome (Edge if no Chrome)."""
+    from .chrome_login import find_chrome
+
+    exe = find_chrome()
+    url = "https://www.instagram.com/"
+    if exe:
+        subprocess.Popen([exe, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return "Edge" if "msedge" in exe.lower() else "Chrome"
+    webbrowser.open(url, new=2)
+    return "your browser"
+
+
+def ig_connect() -> dict:
+    if not _ext_seen():
+        return {"needExtension": True}
+    IG_WAIT["until"] = time.time() + WAIT_SECONDS
+    name = open_instagram_tab()
+    log("Waiting for your Instagram login from the browser...")
+    return {"ok": True, "message": f"A new Instagram tab opened in {name}. If you're already logged in, "
+                                   "this connects in a few seconds. If not, log in there as usual."}
+
+
+def ext_hello(body: dict) -> dict:
+    if not _ext_seen():
+        save_settings({"extension_seen": True})
+        log("Chrome extension found.")
+    return {"waiting": time.time() < IG_WAIT["until"]}
+
+
+def ig_cookies_from_extension(body: dict) -> dict:
+    if time.time() >= IG_WAIT["until"]:
+        return {"error": "ReelVault isn't waiting for a login. Click Connect Instagram first."}
+    cookies = body.get("cookies") or {}
+    if not isinstance(cookies, dict):
+        return {"error": "bad request"}
+    try:
+        user = save_ig_cookies({str(k): str(v) for k, v in cookies.items()})
+    except Exception as e:
+        log(f"Instagram login failed: {e}")
+        return {"error": str(e)}
+    IG_WAIT["until"] = 0.0
+    return {"ok": True, "username": user}
+
+
+def open_extensions_page() -> dict:
+    from .chrome_login import find_chrome
+
+    exe = find_chrome()
+    if not exe:
+        return {"error": "Couldn't find Chrome or Edge."}
+    page = "edge://extensions/" if "msedge" in exe.lower() else "chrome://extensions/"
+    subprocess.Popen([exe, page], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return {"ok": True, "page": page}
 
 
 def ig_chrome_login() -> dict:
@@ -443,13 +539,10 @@ def ig_from_browser(browser: str) -> dict:
         return {"error": f"Couldn't read the Instagram login from {browser}: {e}.{hint}"}
     if not cookies or not cookies.get("sessionid"):
         return {"error": f"You're not logged in to instagram.com in {browser.title()}. Log in there first."}
-    L = instaloader.Instaloader(quiet=True)
-    L.context.update_cookies(cookies)
-    user = L.test_login()
-    if not user:
-        return {"error": f"The {browser.title()} login didn't work. Log in to instagram.com there again, then retry."}
-    L.context.username = user
-    _ig_save(L, user)
+    try:
+        user = save_ig_cookies(cookies)
+    except RuntimeError as e:
+        return {"error": f"The {browser.title()} login didn't work: {e}"}
     return {"ok": True, "username": user}
 
 
@@ -522,6 +615,8 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False, default=str).encode()
         self.send_response(code)
+        if self._from_extension():
+            self.send_header("Access-Control-Allow-Origin", self.headers["Origin"])
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -531,16 +626,48 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         return json.loads(self.rfile.read(n) or b"{}")
 
+    EXT_PATHS = ("/api/ext/hello", "/api/ig/cookies")
+
+    def _from_extension(self) -> bool:
+        origin = self.headers.get("Origin") or ""
+        return origin.startswith(("chrome-extension://", "extension://")) and urlparse(self.path).path in self.EXT_PATHS
+
     def _local_only(self) -> bool:
         # Block other websites from driving the app from your browser.
+        # Only the ReelVault extension may call its two endpoints.
         host = (self.headers.get("Host") or "").split(":")[0]
         origin = self.headers.get("Origin")
-        ok = host in ("127.0.0.1", "localhost") and (not origin or urlparse(origin).hostname in ("127.0.0.1", "localhost"))
+        ok = host in ("127.0.0.1", "localhost") and (
+            not origin or urlparse(origin).hostname in ("127.0.0.1", "localhost") or self._from_extension())
         if not ok:
             self._json({"error": "forbidden"}, 403)
         return ok
 
+    def do_OPTIONS(self):
+        if not self._from_extension():
+            return self._json({"error": "forbidden"}, 403)
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", self.headers["Origin"])
+        self.send_header("Access-Control-Allow-Methods", "POST")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.end_headers()
+
     def do_GET(self):
+        try:
+            self._get()
+        except (Exception, SystemExit) as e:  # keep the app alive and tell the panel what went wrong
+            LOG.append(f"Error: {e}")
+            self._json({"error": str(e)}, 500)
+
+    def do_POST(self):
+        try:
+            self._post()
+        except (Exception, SystemExit) as e:
+            LOG.append(f"Error: {e}")
+            self._json({"error": str(e)}, 500)
+
+    def _get(self):
         if not self._local_only():
             return
         path = unquote(urlparse(self.path).path)
@@ -602,7 +729,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 left -= len(chunk)
 
-    def do_POST(self):
+    def _post(self):
         if not self._local_only():
             return
         path = urlparse(self.path).path
@@ -630,6 +757,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json(ig_login(b.get("username", ""), b.get("password", "")))
         elif path == "/api/ig/2fa":
             self._json(ig_2fa(b.get("code", "")))
+        elif path == "/api/ig/connect":
+            self._json(ig_connect())
+        elif path == "/api/ext/hello":
+            self._json(ext_hello(b))
+        elif path == "/api/ig/cookies":
+            self._json(ig_cookies_from_extension(b))
+        elif path == "/api/ext/open":
+            self._json(open_extensions_page())
         elif path == "/api/ig/chrome":
             self._json(ig_chrome_login())
         elif path == "/api/ig/resend":
@@ -700,6 +835,9 @@ input,textarea,select{font:inherit;color:var(--ink);background:var(--bg);border:
 textarea{min-height:90px;resize:vertical}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.row>*{flex:1 1 120px}.row>button{flex:0 0 auto}
 details summary{cursor:pointer;color:var(--muted);font-size:14px}
+.card{border:1px solid var(--line);border-radius:8px;padding:12px 14px;background:var(--bg);display:flex;flex-direction:column;gap:6px}
+.card ol{margin:0;padding-left:20px;display:grid;gap:10px}.card .hint{color:var(--muted);font-size:13px}.card .pill{align-self:flex-start}
+code{font:13px var(--mono);background:var(--chip);padding:1px 6px;border-radius:4px;word-break:break-all}
 pre{margin:0;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;max-height:300px;overflow:auto;font:12.5px/1.5 var(--mono);white-space:pre-wrap}
 .counts{display:flex;gap:16px;flex-wrap:wrap}.counts b{font-size:22px;display:block}
 .msg{font-size:14px;min-height:1.2em}.msg.err{color:var(--bad)}.msg.good{color:var(--ok)}
@@ -717,13 +855,29 @@ pre{margin:0;background:var(--bg);border:1px solid var(--line);border-radius:8px
  <div class="step"><span class="name">3. Instagram <span id="ig-user"></span></span><span class="pill" id="s-ig"></span></div>
 </div>
 <div id="ig-form" class="steps">
- <p>Log in on Instagram's own page, exactly like you normally do. "Resend code" and "Try another way" work there.
- The window closes by itself once you're in. ReelVault never sees your password.</p>
- <div class="row"><button id="ig-chrome">Log in to Instagram with Chrome</button></div>
- <div class="msg" id="ig-chrome-msg"></div>
+ <p>Uses your normal Chrome. A new Instagram tab opens there. If you're already logged in, ReelVault connects in a few seconds.
+ If not, log in in that tab as usual ("Resend code" works there). ReelVault never sees your password.</p>
+ <div class="row"><button id="ig-connect">Connect Instagram</button></div>
+ <div class="msg" id="ig-connect-msg"></div>
+ <div id="ext-setup" class="card" hidden>
+  <p><b>One-time setup:</b> add the small ReelVault Connector to Chrome. It takes about a minute.</p>
+  <ol>
+   <li><button class="ghost" id="ext-open">Open Chrome's extensions page</button><br>
+     <span class="hint">Nothing opened? Type <code>chrome://extensions</code> in Chrome's address bar.</span></li>
+   <li>Turn on <b>Developer mode</b> (the switch at the top right).</li>
+   <li>Click <b>Load unpacked</b> and pick this folder:<br>
+     <code id="ext-path"></code> <button class="ghost" id="ext-copy">Copy</button><br>
+     <span class="hint">Tip: paste it into the address box at the top of the folder window, press Enter, then click <b>Select Folder</b>.</span></li>
+   <li>Come back here. When this says <b>Added</b>, click <b>Connect Instagram</b> again.</li>
+  </ol>
+  <span class="pill" id="ext-status"></span>
+ </div>
  <details>
  <summary>Other ways to connect</summary>
  <div class="steps" style="margin-top:10px">
+ <p>Log in inside a separate ReelVault Chrome window:</p>
+ <div class="row"><button class="ghost" id="ig-chrome">Open login window</button></div>
+ <div class="msg" id="ig-chrome-msg"></div>
  <p>Type your password here instead:</p>
  <div class="row"><input id="ig-u" placeholder="Instagram username" autocomplete="username"><input id="ig-p" type="password" placeholder="Password" autocomplete="current-password"><button id="ig-go">Connect</button></div>
  <div id="ig-2fa" class="steps" hidden>
@@ -800,6 +954,13 @@ async function refresh() {
   $("#claude-signin").hidden = s.claude.loggedIn;
   pill($("#s-ig"), s.instagram.connected, "Connected", "Not connected");
   $("#ig-user").textContent = s.instagram.username ? "(@" + s.instagram.username + ")" : "";
+  const ex = s.extension || {};
+  $("#ext-path").textContent = ex.folder || "";
+  pill($("#ext-status"), ex.seen, "Added", "Not added yet");
+  $("#ext-setup").hidden = !(window.showExt && !s.instagram.connected);
+  $("#ig-connect").disabled = !!s.igWaiting;
+  if (s.igWaiting && !window.igMsgSet) { $("#ig-connect-msg").className = "msg"; $("#ig-connect-msg").textContent = "Waiting for your login in the Instagram tab..."; }
+  if (s.instagram.connected && $("#ig-connect-msg").textContent.startsWith("Waiting")) { $("#ig-connect-msg").className = "msg good"; $("#ig-connect-msg").textContent = "Connected."; }
   const cl = s.chromeLogin || {};
   const showForm = !s.instagram.connected || window.igReconnect || cl.status === "waiting";
   $("#ig-form").hidden = !showForm;
@@ -837,6 +998,21 @@ $("#ig-go").onclick = async () => {
     $("#ig-code").focus(); return;
   }
   say("#ig-msg", r, "Connected."); refresh();
+};
+$("#ig-connect").onclick = async () => {
+  const r = await post("/api/ig/connect");
+  if (r.needExtension) {
+    window.showExt = true;
+    $("#ig-connect-msg").className = "msg"; $("#ig-connect-msg").textContent = "First, add the ReelVault Connector to Chrome (one time):";
+  } else { window.igMsgSet = true; say("#ig-connect-msg", r, r.message || ""); setTimeout(() => window.igMsgSet = false, 8000); }
+  refresh();
+};
+$("#ext-open").onclick = async () => { const r = await post("/api/ext/open"); if (r.error) say("#ig-connect-msg", r, ""); };
+$("#ext-copy").onclick = () => {
+  const t = $("#ext-path").textContent, b = $("#ext-copy");
+  navigator.clipboard.writeText(t).then(() => b.textContent = "Copied", () => {
+    const r = document.createRange(); r.selectNodeContents($("#ext-path")); getSelection().removeAllRanges(); getSelection().addRange(r); b.textContent = "Press Ctrl+C";
+  });
 };
 $("#ig-chrome").onclick = async () => {
   const r = await post("/api/ig/chrome");

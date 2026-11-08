@@ -52,3 +52,18 @@ jobs:
           schtasks /Query /TN "ReelVault daily" /FO LIST
           Invoke-RestMethod -Method Post -ContentType "application/json" -Body '{"time":null}' http://127.0.0.1:8765/api/schedule | Out-Null
           Invoke-RestMethod -Method Post -ContentType "application/json" -Body '{}' http://127.0.0.1:8765/api/quit | Out-Null
+          if (-not (Test-Path "$rv\chrome-extension\manifest.json")) { throw "Chrome extension folder missing" }
+
+      - name: Chrome extension login, end to end (real Chromium)
+        shell: powershell
+        run: |
+          $rv = "$env:USERPROFILE\ReelVault"
+          $tmp = "$env:RUNNER_TEMP\rvhome"
+          New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+          npm install --no-save --prefix "$env:RUNNER_TEMP\pw" playwright@1.63.0
+          & "$env:RUNNER_TEMP\pw\node_modules\.bin\playwright.cmd" install chromium
+          Start-Process "$rv\app-env\Scripts\python.exe" -ArgumentList "reelvault\tests\e2e\run_app.py", $tmp -RedirectStandardOutput "$env:RUNNER_TEMP\app.out" -RedirectStandardError "$env:RUNNER_TEMP\app.err"
+          Start-Sleep -Seconds 10
+          $env:NODE_PATH = "$env:RUNNER_TEMP\pw\node_modules"
+          node reelvault\tests\e2e\extension_e2e.js $tmp
+          if ($LASTEXITCODE -ne 0) { Get-Content "$env:RUNNER_TEMP\app.err" -Tail 30; throw "extension e2e failed" }

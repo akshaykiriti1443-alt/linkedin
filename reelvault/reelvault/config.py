@@ -29,6 +29,8 @@ class Config:
     vault_dir: Path = Path("vault")
     instagram_username: str = ""
     session_file: str = ""
+    cookies_file: str = "instagram.cookies.json"   # your Instagram login, saved by the app
+    extension_seen: bool = False                   # the ReelVault Chrome extension has checked in
     brain: str = "claude-code"          # "claude-code" (your subscription) or "api" (API key)
     model: str = "claude-opus-5-5"
     effort: str = "medium"
@@ -65,7 +67,8 @@ def load_config(path: str | os.PathLike = "reelvault.toml") -> Config:
         data = tomllib.loads(p.read_text(encoding="utf-8"))
         for key, value in data.items():
             if not hasattr(cfg, key):
-                raise SystemExit(f"Unknown setting '{key}' in {p}")
+                print(f"Ignoring unknown setting '{key}' in {p}")
+                continue
             if key in ("vault_dir", "profile_file"):
                 value = Path(value)
             setattr(cfg, key, value)
