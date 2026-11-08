@@ -249,6 +249,12 @@ def schedule_status() -> str | None:
     return _sched_cache["v"]
 
 
+def _chrome_state() -> dict:
+    from . import chrome_login
+
+    return dict(chrome_login.STATE)
+
+
 def status() -> dict:
     import shutil
 
@@ -270,6 +276,7 @@ def status() -> dict:
         "schedule": schedule_status(),
         "profile": (HOME / "profile.md").read_text(encoding="utf-8"),
         "library": (cfg.vault_dir / "index.html").exists(),
+        "chromeLogin": _chrome_state(),
     }
 
 
@@ -397,6 +404,25 @@ def ig_2fa(code: str) -> dict:
     _ig_save(L, user)
     _pending_ig.update(L=None, user=None, info={})
     return {"ok": True}
+
+
+def _use_browser_cookies(cookies: dict) -> str:
+    import instaloader
+
+    L = instaloader.Instaloader(quiet=True)
+    L.context.update_cookies(cookies)
+    user = L.test_login()
+    if not user:
+        raise RuntimeError("Instagram didn't accept the login. Try again.")
+    L.context.username = user
+    _ig_save(L, user)
+    return user
+
+
+def ig_chrome_login() -> dict:
+    from . import chrome_login
+
+    return chrome_login.start(HOME / "chrome-profile", _use_browser_cookies)
 
 
 def ig_from_browser(browser: str) -> dict:
@@ -604,6 +630,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(ig_login(b.get("username", ""), b.get("password", "")))
         elif path == "/api/ig/2fa":
             self._json(ig_2fa(b.get("code", "")))
+        elif path == "/api/ig/chrome":
+            self._json(ig_chrome_login())
         elif path == "/api/ig/resend":
             self._json(ig_resend_sms())
         elif path == "/api/ig/browser":
@@ -671,6 +699,7 @@ button:disabled{opacity:.5;cursor:default}
 input,textarea,select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%;min-width:0}
 textarea{min-height:90px;resize:vertical}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.row>*{flex:1 1 120px}.row>button{flex:0 0 auto}
+details summary{cursor:pointer;color:var(--muted);font-size:14px}
 pre{margin:0;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;max-height:300px;overflow:auto;font:12.5px/1.5 var(--mono);white-space:pre-wrap}
 .counts{display:flex;gap:16px;flex-wrap:wrap}.counts b{font-size:22px;display:block}
 .msg{font-size:14px;min-height:1.2em}.msg.err{color:var(--bad)}.msg.good{color:var(--ok)}
@@ -688,18 +717,28 @@ pre{margin:0;background:var(--bg);border:1px solid var(--line);border-radius:8px
  <div class="step"><span class="name">3. Instagram <span id="ig-user"></span></span><span class="pill" id="s-ig"></span></div>
 </div>
 <div id="ig-form" class="steps">
- <p>Your password goes straight to Instagram. ReelVault keeps only the login session on this computer.</p>
+ <p>Log in on Instagram's own page, exactly like you normally do. "Resend code" and "Try another way" work there.
+ The window closes by itself once you're in. ReelVault never sees your password.</p>
+ <div class="row"><button id="ig-chrome">Log in to Instagram with Chrome</button></div>
+ <div class="msg" id="ig-chrome-msg"></div>
+ <details>
+ <summary>Other ways to connect</summary>
+ <div class="steps" style="margin-top:10px">
+ <p>Type your password here instead:</p>
  <div class="row"><input id="ig-u" placeholder="Instagram username" autocomplete="username"><input id="ig-p" type="password" placeholder="Password" autocomplete="current-password"><button id="ig-go">Connect</button></div>
  <div id="ig-2fa" class="steps" hidden>
   <p id="ig-2fa-how">Enter the login code Instagram sent you.</p>
   <div class="row"><input id="ig-code" placeholder="Login code (6 digits) or a backup code" inputmode="numeric" autocomplete="one-time-code"><button id="ig-code-go">Confirm</button></div>
   <div class="row"><button class="ghost" id="ig-resend">Text me a new code</button><span class="msg" id="ig-resend-msg"></span></div>
-  <p>No code coming? If you use an authenticator app (Google Authenticator, Duo...), the code is in that app, not in SMS. You can also type one of your 8-digit Instagram backup codes. Or skip codes with the browser option below.</p>
+  <p>No code coming? If you use an authenticator app (Google Authenticator, Duo...), the code is in that app, not in SMS. You can also type one of your 8-digit Instagram backup codes.</p>
  </div>
  <div class="msg" id="ig-msg"></div>
- <p><b>Or skip the password and code:</b> if you're logged in to instagram.com in a web browser on this computer, ReelVault can reuse that login.</p>
- <div class="row"><select id="ig-browser" aria-label="Browser"><option value="chrome">Chrome</option><option value="edge">Edge</option><option value="firefox">Firefox</option><option value="brave">Brave</option><option value="opera">Opera</option></select><button class="ghost" id="ig-browser-go">Connect with my browser</button></div>
+ <p>Or reuse a login you already have in a browser:</p>
+ <div class="row"><select id="ig-browser" aria-label="Browser"><option value="firefox">Firefox</option><option value="chrome">Chrome</option><option value="edge">Edge</option><option value="brave">Brave</option><option value="opera">Opera</option></select><button class="ghost" id="ig-browser-go">Connect with my browser</button></div>
+ </div>
+ </details>
 </div>
+<div class="row" id="ig-again-row" hidden><button class="ghost" id="ig-again">Reconnect Instagram</button></div>
 </section>
 
 <section>
@@ -761,7 +800,13 @@ async function refresh() {
   $("#claude-signin").hidden = s.claude.loggedIn;
   pill($("#s-ig"), s.instagram.connected, "Connected", "Not connected");
   $("#ig-user").textContent = s.instagram.username ? "(@" + s.instagram.username + ")" : "";
-  $("#ig-form").hidden = s.instagram.connected;
+  const cl = s.chromeLogin || {};
+  const showForm = !s.instagram.connected || window.igReconnect || cl.status === "waiting";
+  $("#ig-form").hidden = !showForm;
+  $("#ig-again-row").hidden = showForm;
+  if (cl.message) { $("#ig-chrome-msg").className = "msg " + (cl.status === "error" ? "err" : cl.status === "done" ? "good" : ""); $("#ig-chrome-msg").textContent = cl.message; }
+  $("#ig-chrome").disabled = cl.status === "waiting";
+  if (cl.status === "done") window.igReconnect = false;
   for (const k of ["done", "pending", "failed"]) $("#c-" + k).textContent = s.counts[k] || 0;
   $("#open-lib").hidden = !s.library;
   const cat = $("#cat"), have = [...cat.options].map(o => o.value);
@@ -793,6 +838,12 @@ $("#ig-go").onclick = async () => {
   }
   say("#ig-msg", r, "Connected."); refresh();
 };
+$("#ig-chrome").onclick = async () => {
+  const r = await post("/api/ig/chrome");
+  if (r.error) say("#ig-chrome-msg", r, ""); else { $("#ig-chrome-msg").className = "msg"; $("#ig-chrome-msg").textContent = r.message; }
+  refresh();
+};
+$("#ig-again").onclick = () => { window.igReconnect = true; refresh(); };
 $("#ig-resend").onclick = async () => {
   const b = $("#ig-resend"); b.disabled = true; $("#ig-resend-msg").textContent = "Asking Instagram...";
   const r = await post("/api/ig/resend");
