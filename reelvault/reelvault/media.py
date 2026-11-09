@@ -83,27 +83,60 @@ def load_audio(video: Path, rate: int = 16000):
 
 
 _whisper = None
+_whisper_device = None
+GPU_ERRORS = ("cublas", "cudnn", "cuda", "cudart", "nvrtc", "gpu")
+
+
+def _load_whisper(model_size: str, device: str):
+    global _whisper, _whisper_device
+    import os
+
+    os.environ.setdefault("HF_HUB_VERBOSITY", "error")  # hide the harmless "HF_TOKEN" download warning
+    from faster_whisper import WhisperModel
+
+    _whisper = WhisperModel(model_size, device=device, compute_type="int8")
+    _whisper_device = device
 
 
 def transcribe(video: Path, model_size: str) -> dict:
-    """Local speech-to-text with faster-whisper. Returns text plus timed segments."""
-    global _whisper
-    from faster_whisper import WhisperModel
+    """Local speech-to-text with faster-whisper. Returns text plus timed segments.
 
+    Tries the graphics card first (fast). If its NVIDIA speech libraries are missing,
+    it switches to the normal processor (CPU) and keeps going.
+    """
     if _whisper is None:
-        print(f"  loading whisper '{model_size}' (first run downloads it)...")
-        _whisper = WhisperModel(model_size, device="auto", compute_type="int8")
+        print(f"  loading speech-to-text '{model_size}' (the first run downloads it)...")
+        try:
+            _load_whisper(model_size, "auto")
+        except Exception as e:
+            if not any(k in str(e).lower() for k in GPU_ERRORS):
+                raise
+            _load_whisper(model_size, "cpu")
     audio = load_audio(video)
     if audio.size == 0:
         return {"language": "", "language_probability": 0, "text": "", "segments": []}
-    segments, info = _whisper.transcribe(audio, vad_filter=True, beam_size=5)
-    segs = [{"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text.strip()} for s in segments]
+    try:
+        segs, info = _run(audio)
+    except Exception as e:
+        # The GPU libraries fail only when the first audio is processed, so catch it here.
+        if _whisper_device == "cpu" or not any(k in str(e).lower() for k in GPU_ERRORS):
+            raise
+        print("  graphics-card speech tools aren't installed; using the processor instead (a bit slower).")
+        _load_whisper(model_size, "cpu")
+        segs, info = _run(audio)
     return {
         "language": info.language,
         "language_probability": round(info.language_probability, 3),
         "text": " ".join(s["text"] for s in segs).strip(),
         "segments": segs,
     }
+
+
+def _run(audio):
+    segments, info = _whisper.transcribe(audio, vad_filter=True, beam_size=5)
+    # segments is lazy: the real work (and any GPU error) happens while reading it
+    segs = [{"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text.strip()} for s in segments]
+    return segs, info
 
 
 def timed_transcript(tr: dict) -> str:

@@ -1,6 +1,6 @@
 [project]
 name = "reelvault"
-version = "0.3.0"
+version = "0.3.1"
 description = "Turn your saved Instagram reels into transcripts, hook/meat/CTA skeletons, scripts and a knowledge base."
 requires-python = ">=3.11"
 dependencies = [
