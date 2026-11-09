@@ -127,5 +127,5 @@ def test_not_connected(tmp_path):
     from reelvault import fetch
 
     cfg = Config(vault_dir=tmp_path / "v", cookies_file=str(tmp_path / "none.json"))
-    with pytest.raises(SystemExit, match="Connect your Instagram"):
+    with pytest.raises(SystemExit, match="Connect Instagram first"):
         fetch.from_saved(cfg, Library(cfg.vault_dir))

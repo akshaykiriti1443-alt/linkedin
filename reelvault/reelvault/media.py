@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,6 +15,11 @@ def _need(tool: str) -> str:
     if not path:
         raise SystemExit(f"'{tool}' is not installed. Install ffmpeg first (it ships ffprobe too).")
     return path
+
+
+# The app runs under pythonw (no console). Without this flag Windows opens a black window for every
+# ffmpeg/ffprobe call: about 14 per reel.
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
 @dataclass
@@ -27,7 +33,7 @@ class Probe:
 def probe(video: Path) -> Probe:
     out = subprocess.run(
         [_need("ffprobe"), "-v", "error", "-show_streams", "-show_format", "-of", "json", str(video)],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, check=True, creationflags=NO_WINDOW,
     ).stdout
     data = json.loads(out)
     streams = data.get("streams", [])
@@ -63,7 +69,7 @@ def extract_frames(video: Path, out_dir: Path, times: list[float], width: int) -
         subprocess.run(
             [ffmpeg, "-y", "-loglevel", "error", "-ss", f"{t}", "-i", str(video),
              "-frames:v", "1", "-vf", f"scale={width}:-2", "-q:v", "4", str(dest)],
-            check=True,
+            check=True, creationflags=NO_WINDOW,
         )
         if dest.exists():
             frames.append((t, dest))
@@ -77,7 +83,7 @@ def load_audio(video: Path, rate: int = 16000):
     raw = subprocess.run(
         [_need("ffmpeg"), "-loglevel", "error", "-i", str(video), "-vn", "-ac", "1", "-ar", str(rate),
          "-f", "f32le", "-"],
-        capture_output=True, check=True,
+        capture_output=True, check=True, creationflags=NO_WINDOW,
     ).stdout
     return np.frombuffer(raw, dtype=np.float32)
 

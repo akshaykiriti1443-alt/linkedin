@@ -27,11 +27,26 @@ from .library import Library
 from .schema import ReelAnalysis
 
 
+def check_analysis(analysis: dict) -> dict:
+    """Fail fast on a bad shape. Breakdowns from before 0.4 (no purpose_guess, claims_to_check or
+    client_explainer) are still accepted: they file with no guess, like any older reel."""
+    a = dict(analysis)
+    a.setdefault("claims_to_check", [])
+    a.setdefault("client_explainer", "")
+    no_guess = not a.get("purpose_guess")
+    if no_guess:
+        a["purpose_guess"] = {"purpose": "", "reason": ""}  # placeholder so the shape check passes
+    out = ReelAnalysis.model_validate(a).model_dump()
+    if no_guess:
+        out["purpose_guess"] = None
+    return out
+
+
 def add_record(cfg: Config, lib: Library, record_path: Path, cover: Path | None = None,
                walkthrough: Path | None = None) -> Path:
     rec = json.loads(record_path.read_text(encoding="utf-8"))
     code = rec["shortcode"]
-    rec["analysis"] = ReelAnalysis.model_validate(rec["analysis"]).model_dump()  # fail fast on a bad shape
+    rec["analysis"] = check_analysis(rec["analysis"])
     rec.setdefault("meta", {}).setdefault("owner", "")
     rec.setdefault("transcript", {"language": "", "text": "", "segments": []})
     rec.setdefault("frames", [])

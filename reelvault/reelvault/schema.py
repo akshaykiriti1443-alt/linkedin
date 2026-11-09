@@ -76,6 +76,16 @@ class ScriptIdea(BaseModel):
     cta: str
 
 
+class PurposeGuess(BaseModel):
+    purpose: str = Field(
+        description=(
+            "Why the creator most likely saved this reel. One of: learn (for the advice), "
+            "hook (the opening stops the scroll), format (the way it is built), remake (they could make a better version)"
+        )
+    )
+    reason: str = Field(description="One short line on why.")
+
+
 class ReelAnalysis(BaseModel):
     title: str = Field(description="A short, clear title for this reel (max 10 words).")
     category: str = Field(description="Pick one category from the allowed list.")
@@ -104,3 +114,39 @@ class ReelAnalysis(BaseModel):
     why_it_performed: str = Field(description="Your best read on why this reel works.")
     notable_quotes: List[str] = Field(description="Lines worth saving word for word.")
     confidence_notes: str = Field(description="Anything you could not tell, e.g. no audio or unclear frames. Empty if none.")
+    purpose_guess: PurposeGuess
+    claims_to_check: List[str] = Field(description="Numbers or claims to verify before repeating them. Empty if none.")
+    client_explainer: str = Field(
+        description="2-3 plain sentences a business owner could paste to a client to explain the idea."
+    )
+
+
+# --------------------------------------------------------------------------
+# Made on demand (separate Claude calls)
+# --------------------------------------------------------------------------
+
+class TooClose(BaseModel):
+    line: str = Field(description="A line in your script that is too close to the original reel.")
+    why: str = Field(description="What it copies and how to change it.")
+
+
+class RemakePack(BaseModel):
+    core_idea: str = Field(description="The idea behind the original reel, in one or two sentences.")
+    whats_weak: List[str] = Field(description="What the original does badly or leaves out.")
+    your_angle: str = Field(description="How this new version is different and stronger.")
+    script: str = Field(description="The full new script in your own words, with [VISUAL] cues.")
+    shot_list: List[str] = Field(description="Shots to film, in order.")
+    caption: str = Field(description="The post caption, with the CTA.")
+    hashtags: List[str] = Field(description="5-8 hashtags.")
+    too_close: List[TooClose] = Field(description="Lines still too close to the original. Empty if none.")
+    made_for: str = Field(description="Who this version is for: 'me' or the client's name.")
+
+
+class PurposeGuessItem(BaseModel):
+    id: str = Field(description="The reel id, copied exactly.")
+    purpose: str = Field(description="One of: learn, hook, format, remake.")
+    reason: str = Field(description="One short line on why.")
+
+
+class PurposeGuesses(BaseModel):
+    guesses: List[PurposeGuessItem] = Field(description="One guess per reel.")

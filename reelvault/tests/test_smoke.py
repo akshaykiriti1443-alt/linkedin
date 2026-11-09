@@ -47,6 +47,9 @@ SAMPLE = {
     "why_it_performed": "Contrarian hook plus a keyword CTA drives comments.",
     "notable_quotes": ["Three good posts beat seven lazy ones."],
     "confidence_notes": "",
+    "purpose_guess": {"purpose": "hook", "reason": "The contrarian opening stops the scroll."},
+    "claims_to_check": ["Three posts beat seven"],
+    "client_explainer": "Post fewer reels with better openings. The first two seconds decide who keeps watching.",
 }
 
 REQUESTS: list[dict] = []

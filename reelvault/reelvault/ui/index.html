@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>ReelVault</title>
+<link rel="stylesheet" href="/ui/app.css">
+</head>
+<body>
+<div class="app">
+
+<nav class="nav" aria-label="Main">
+  <div class="brand">
+    <span class="logo" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="2.5" width="18" height="19" rx="4"/><path d="M10 8.5v7l6-3.5z" class="fill"/></svg></span>
+    <span class="brand-name">ReelVault</span>
+    <span class="ver ver-top" data-version></span>
+    <span class="jobdot" id="jobdot" hidden title="Working"></span>
+  </div>
+  <div class="navlinks">
+    <a href="#home" data-nav="home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Home</span></a>
+    <a href="#library" data-nav="library"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5"/></svg><span>Library</span></a>
+    <a href="#studio" data-nav="studio"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg><span>Studio</span></a>
+    <a href="#settings" data-nav="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.8 1.8M16.7 16.7l1.8 1.8M5.5 18.5l1.8-1.8M16.7 7.3l1.8-1.8"/></svg><span>Settings</span></a>
+  </div>
+  <div class="navfoot">
+    <div class="navjob" id="navjob">Idle</div>
+    <a href="#settings" class="navupdate" id="navupdate" hidden>Update available</a>
+    <div class="ver" data-version></div>
+  </div>
+</nav>
+
+<main class="main" id="main">
+  <div class="banner warn" id="closed-banner" hidden>
+    <span>ReelVault is closed. Double-click the ReelVault icon to open it again.</span>
+  </div>
+  <div class="banner warn" id="update-fail" hidden>
+    <span id="update-fail-text">The last update didn't work.</span>
+    <span class="row-tight"><a class="btn ghost" href="#settings">See details</a><button type="button" class="ghost" id="update-fail-close">OK</button></span>
+  </div>
+  <div class="banner" id="update-banner" hidden>
+    <span id="update-banner-text">A new version of ReelVault is ready.</span>
+    <span class="row-tight"><button type="button" id="banner-update">Update now</button><button type="button" class="ghost" id="banner-later">Not now</button></span>
+  </div>
+
+  <!-- ============================ HOME ============================ -->
+  <section class="view" id="v-home" hidden>
+    <h1>Home</h1>
+    <div class="grid2">
+      <div class="panel">
+        <h2>Setup</h2>
+        <div class="lights" id="lights"></div>
+      </div>
+      <div class="panel">
+        <h2>Your library</h2>
+        <div class="counts">
+          <a href="#library"><b id="c-done">0</b><span>analyzed</span></a>
+          <div><b id="c-pending">0</b><span>waiting</span></div>
+          <div><b id="c-failed">0</b><span>failed</span></div>
+        </div>
+        <div class="row"><button type="button" class="ghost" id="retry">Retry failed reels</button></div>
+        <div class="msg" id="retry-msg"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Get new reels</h2>
+      <p class="muted">Downloads the reels you saved on Instagram that aren't in your library yet. Then Claude analyzes them.</p>
+      <div class="row">
+        <label class="inline-label" for="limit">How many</label>
+        <input id="limit" class="num" type="number" min="1" max="200" value="20">
+        <button type="button" id="run">Get new reels</button>
+      </div>
+      <p class="msg" id="run-need-ig" hidden>Connect Instagram first. <a href="#settings">Go to Settings</a>.</p>
+      <div class="msg" id="run-msg"></div>
+      <details class="fold" id="links-fold">
+        <summary>Analyze links</summary>
+        <div class="stack">
+          <p class="muted">Paste one or more Instagram reel links, one per line.</p>
+          <textarea id="links" placeholder="https://www.instagram.com/reel/..."></textarea>
+          <div class="row"><button type="button" id="links-go">Analyze these links</button></div>
+          <div class="msg" id="links-msg"></div>
+        </div>
+      </details>
+    </div>
+
+    <div class="panel" id="sort-panel">
+      <div class="panel-head"><h2>Sort new reels</h2><span class="pill" id="sort-count"></span></div>
+      <p class="muted">Why did you save each reel? The AI made a guess. Tap to change it, then click <b>Looks right</b>.</p>
+      <div class="sortlist" id="sortlist"></div>
+      <div class="row" id="sort-more-row" hidden><button type="button" class="ghost" id="sort-more">Show more</button></div>
+      <div class="row" id="guess-row" hidden>
+        <button type="button" class="ghost" id="guess-old">Guess purposes for older reels</button>
+        <span class="muted small" id="guess-hint"></span>
+      </div>
+      <div class="msg" id="guess-msg"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>This week</h2><span class="pill" id="todo-count"></span></div>
+      <p class="muted">Steps from the reels you saved to learn from. Tick them off as you go.</p>
+      <ul class="todos" id="todos"></ul>
+      <div class="row" id="todo-more-row" hidden><button type="button" class="ghost" id="todo-more">Show all steps</button></div>
+    </div>
+
+    <div class="panel">
+      <details class="fold" id="activity">
+        <summary><span>Activity</span> <span class="pill" id="job">Idle</span></summary>
+        <pre class="log" id="log">Nothing yet.</pre>
+      </details>
+    </div>
+  </section>
+
+  <!-- ============================ LIBRARY ============================ -->
+  <section class="view" id="v-library" hidden>
+    <div class="headrow"><h1>Library</h1><span class="muted" id="lib-count"></span></div>
+    <div class="tabs" role="tablist" id="lib-tabs">
+      <a href="#library" data-tab="all">All</a>
+      <a href="#library/learn" data-tab="learn"><i class="dot p-learn"></i>Learn it</a>
+      <a href="#library/hooks" data-tab="hooks"><i class="dot p-hook"></i>Hooks</a>
+      <a href="#library/formats" data-tab="formats"><i class="dot p-format"></i>Formats</a>
+      <a href="#library/remakes" data-tab="remakes"><i class="dot p-remake"></i>Remakes</a>
+    </div>
+    <div class="filters">
+      <input type="search" id="lib-q" placeholder="Search titles, hooks, creators..." aria-label="Search">
+      <select id="lib-cat" aria-label="Topic"><option value="">All topics</option></select>
+      <select id="lib-owner" aria-label="Creator"><option value="">All creators</option></select>
+      <label class="check" id="lib-all-wrap" hidden><input type="checkbox" id="lib-all"> <span id="lib-all-label">Show every reel</span></label>
+    </div>
+    <div id="lib-body"></div>
+  </section>
+
+  <!-- ============================ REEL ============================ -->
+  <section class="view" id="v-reel" hidden>
+    <a class="back" href="#library" id="reel-back">&larr; Back to library</a>
+    <div id="reel-body"></div>
+  </section>
+
+  <!-- ============================ STUDIO ============================ -->
+  <section class="view" id="v-studio" hidden>
+    <h1>Studio</h1>
+    <div class="panel">
+      <h2>Write new scripts</h2>
+      <p class="muted">Claude writes scripts for you. It uses the hooks, structures and calls to action in your library.</p>
+      <label class="field"><span>What is the new video about?</span>
+        <input id="topic" maxlength="1500" placeholder="For example: why most Facebook ads stop working after 2 weeks"></label>
+      <div class="grid2 tight">
+        <label class="field"><span>Start from a hook (optional)</span>
+          <select id="st-hook"><option value="">No hook. Let Claude pick.</option></select></label>
+        <label class="field"><span>Start from a format (optional)</span>
+          <select id="st-format"><option value="">No format. Let Claude pick.</option></select></label>
+      </div>
+      <div class="pickprev" id="st-preview" hidden></div>
+      <label class="check"><input type="checkbox" id="st-all"> <span>Show hooks and formats from every reel</span></label>
+      <div class="row">
+        <label class="field grow"><span>Learn from reels about</span><select id="cat"><option value="">All my reels</option></select></label>
+        <label class="field"><span>How many</span><select id="count"><option>1</option><option selected>3</option><option>5</option></select></label>
+      </div>
+      <div class="row"><button type="button" id="remix">Write scripts</button></div>
+      <div class="msg" id="remix-msg"></div>
+    </div>
+    <div class="panel" id="st-result" hidden>
+      <div class="panel-head"><h2>Your latest scripts</h2><span class="row-tight"><button type="button" class="ghost small-btn" id="st-copy">Copy</button><a class="btn ghost small-btn" id="st-open" target="_blank" rel="noopener">Open file</a></span></div>
+      <pre class="doc" id="st-text"></pre>
+    </div>
+  </section>
+
+  <!-- ============================ SETTINGS ============================ -->
+  <section class="view" id="v-settings" hidden>
+    <h1>Settings</h1>
+
+    <div class="panel" id="set-claude">
+      <div class="panel-head"><h2>Claude</h2><span class="pill" id="s-claude"></span></div>
+      <p class="muted">ReelVault uses your Claude subscription to analyze reels and write scripts.</p>
+      <div class="row"><button type="button" id="claude-signin">Sign in to Claude</button></div>
+      <div class="msg" id="claude-msg"></div>
+    </div>
+
+    <div class="panel" id="set-ig">
+      <div class="panel-head"><h2>Instagram <span class="muted normal" id="ig-user"></span></h2><span class="pill" id="s-ig"></span></div>
+      <div id="ig-form" class="stack">
+        <p class="muted">This uses your normal Chrome. A new Instagram tab opens there. If you're already logged in, ReelVault connects in a few seconds.
+        If not, log in in that tab as usual. ReelVault never sees your password.</p>
+        <div class="row"><button type="button" id="ig-connect">Connect Instagram</button></div>
+        <div class="msg" id="ig-connect-msg"></div>
+        <div id="ext-setup" class="card" hidden>
+          <div class="panel-head"><b>One-time setup: add the ReelVault Connector to Chrome</b><span class="pill" id="ext-status"></span></div>
+          <p class="muted">It takes about a minute. It isn't in the Chrome Web Store. It comes with ReelVault, in the folder below.</p>
+          <ol class="steps-ol">
+            <li><button type="button" class="ghost" id="ext-open">Open extensions page</button>
+              <div class="hint">Nothing opened? Type <code>chrome://extensions</code> in Chrome's address bar.</div></li>
+            <li>Turn on <b>Developer mode</b>. It's the switch at the top right.</li>
+            <li>Click <b>Load unpacked</b> and pick this folder:
+              <div class="pathrow"><code id="ext-path"></code></div>
+              <div class="row-tight"><button type="button" class="ghost" id="ext-copy">Copy path</button><button type="button" class="ghost" id="ext-folder">Show folder</button></div>
+              <div class="hint">Tip: paste the path into the address box at the top of the folder window. Press Enter, then click <b>Select Folder</b>.</div></li>
+            <li>Come back here. When the label says <b>Added</b>, click <b>Connect Instagram</b> again.</li>
+          </ol>
+        </div>
+        <details class="fold" id="ig-other">
+          <summary>Other ways to connect</summary>
+          <div class="stack">
+            <div class="subcard">
+              <b>Log in inside a separate Chrome window</b>
+              <p class="muted">ReelVault opens its own Chrome window. Log in there.</p>
+              <div class="row"><button type="button" class="ghost" id="ig-chrome">Open login window</button></div>
+              <div class="msg" id="ig-chrome-msg"></div>
+            </div>
+            <div class="subcard">
+              <b>Type your password here</b>
+              <div class="row">
+                <input id="ig-u" placeholder="Instagram username" autocomplete="username" aria-label="Instagram username">
+                <input id="ig-p" type="password" placeholder="Password" autocomplete="current-password" aria-label="Password">
+                <button type="button" id="ig-go">Connect</button>
+              </div>
+              <div id="ig-2fa" class="stack" hidden>
+                <p id="ig-2fa-how">Enter the login code Instagram sent you.</p>
+                <div class="row">
+                  <input id="ig-code" placeholder="Login code (6 digits) or a backup code" inputmode="numeric" autocomplete="one-time-code" aria-label="Login code">
+                  <button type="button" id="ig-code-go">Confirm</button>
+                </div>
+                <div class="row"><button type="button" class="ghost" id="ig-resend">Text me a new code</button><span class="msg" id="ig-resend-msg"></span></div>
+                <p class="muted small">No code coming? If you use an authenticator app (like Google Authenticator), the code is in that app, not in a text. You can also type one of your 8-digit Instagram backup codes.</p>
+              </div>
+              <div class="msg" id="ig-msg"></div>
+            </div>
+            <div class="subcard">
+              <b>Reuse a login you already have in a browser</b>
+              <div class="row">
+                <select id="ig-browser" aria-label="Browser"><option value="firefox">Firefox</option><option value="chrome">Chrome</option><option value="edge">Edge</option><option value="brave">Brave</option><option value="opera">Opera</option></select>
+                <button type="button" class="ghost" id="ig-browser-go">Connect with my browser</button>
+              </div>
+              <div class="msg" id="ig-browser-msg"></div>
+            </div>
+          </div>
+        </details>
+      </div>
+      <div class="row" id="ig-again-row" hidden><button type="button" class="ghost" id="ig-again">Reconnect Instagram</button></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Video tools</h2><span class="pill" id="s-ffmpeg"></span></div>
+      <p class="muted" id="ffmpeg-hint">ReelVault uses these to read the video and the sound.</p>
+    </div>
+
+    <div class="panel">
+      <h2>About you</h2>
+      <p class="muted">Claude reads this to write hooks and scripts that fit your niche.</p>
+      <textarea id="profile" class="tall" aria-label="About you"></textarea>
+      <div class="row"><button type="button" id="profile-save">Save</button></div>
+      <div class="msg" id="profile-msg"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Run every day</h2>
+      <p class="muted">ReelVault checks your saved reels each day at this time while the computer is on.</p>
+      <div class="row">
+        <input id="sched-time" class="time" type="time" value="20:00" aria-label="Daily time">
+        <button type="button" id="sched-on">Turn on</button>
+        <button type="button" class="ghost" id="sched-off">Turn off</button>
+      </div>
+      <div class="msg" id="sched-msg"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Updates</h2><span class="pill" id="s-update"></span></div>
+      <p>You have version <b data-version-plain></b>.</p>
+      <p class="muted" id="update-text">ReelVault checks for a new version once an hour.</p>
+      <div class="row">
+        <button type="button" class="ghost" id="update-check">Check for updates</button>
+        <button type="button" id="update-now" hidden>Update now</button>
+      </div>
+      <div class="msg" id="update-msg"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Your files</h2>
+      <p class="muted">Everything ReelVault saves lives in this folder:</p>
+      <div class="pathrow"><code id="home-path"></code></div>
+      <div class="row-tight"><a class="btn ghost" id="open-lib" href="/vault/index.html" target="_blank" rel="noopener" hidden>Open the one-page library</a></div>
+    </div>
+
+    <div class="panel">
+      <h2>Close ReelVault</h2>
+      <p class="muted">This stops the app. Double-click the ReelVault icon to open it again.</p>
+      <div class="row"><button type="button" class="danger" id="quit">Close app</button></div>
+    </div>
+  </section>
+</main>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<script src="/ui/app.js"></script>
+</body>
+</html>

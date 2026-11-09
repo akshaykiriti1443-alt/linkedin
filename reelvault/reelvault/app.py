@@ -1,9 +1,9 @@
-"""ReelVault desktop app: a control panel that opens in your browser.
+"""ReelVault desktop app: one web app that opens in your browser (screens live in reelvault/ui/).
 
 Start it by double-clicking the ReelVault shortcut (it runs `pythonw -m reelvault.app`).
 Everything lives in  %USERPROFILE%\\ReelVault  (or $REELVAULT_HOME).
 
-    python -m reelvault.app            open the control panel
+    python -m reelvault.app            open the app
     python -m reelvault.app --run-once fetch + analyze once, then exit (used by the daily schedule)
 """
 
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import collections
 import io
+import itertools
 import json
 import mimetypes
 import os
@@ -25,7 +26,7 @@ import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from . import __version__
 
@@ -107,8 +108,12 @@ def cfg_lib():
 # --------------------------------------------------------------------------
 
 LOG: collections.deque[str] = collections.deque(maxlen=400)
-JOB = {"name": None, "started": None, "result": None}
+# id: a number unique to each job (the page waits for that id). tag: what the job is about, e.g. "remake:<reel>".
+JOB = {"name": None, "started": None, "result": None, "id": None, "tag": ""}
 JOB_LOCK = threading.Lock()
+# The last jobs that ended: [{"id", "name", "tag", "ok", "result", "message"}], newest last.
+FINISHED: collections.deque[dict] = collections.deque(maxlen=20)
+_JOB_IDS = itertools.count(int(time.time() * 1000))  # keeps growing across restarts of the app
 
 
 class _LogWriter(io.TextIOBase):
@@ -127,31 +132,39 @@ def log(msg: str) -> None:
     LOG.append(f"{datetime.now():%H:%M} {msg}")
 
 
-def start_job(name: str, fn, *args) -> bool:
+def start_job(name: str, fn, *args, tag: str = "") -> int:
+    """Run fn(*args) in the background. Returns the new job's id, or 0 if another job is running."""
     with JOB_LOCK:
         if JOB["name"]:
-            return False
-        JOB.update(name=name, started=time.time(), result=None)
+            return 0
+        job_id = next(_JOB_IDS)
+        JOB.update(name=name, started=time.time(), result=None, id=job_id, tag=tag)
 
     def runner():
         old_out, old_err = sys.stdout, sys.stderr
         sys.stdout = sys.stderr = _LogWriter()
         log(f"Started: {name}")
+        ok, result, message = False, None, ""
         try:
-            JOB["result"] = fn(*args)
+            result = JOB["result"] = fn(*args)
+            ok = True
             log(f"Finished: {name}")
         except SystemExit as e:
+            message = str(e)
             log(f"Stopped: {e}")
         except Exception as e:  # show any failure in the panel instead of crashing the app
+            message = f"Something went wrong: {e}"
             log(f"Error: {e}")
             LOG.extend(traceback.format_exc().splitlines()[-6:])
         finally:
             sys.stdout, sys.stderr = old_out, old_err
-            with JOB_LOCK:
+            with JOB_LOCK:  # record the end before freeing the slot, so a poll never sees neither
+                FINISHED.append({"id": job_id, "name": name, "tag": tag, "ok": ok, "result": result,
+                                 "message": message})
                 JOB["name"] = None
 
     threading.Thread(target=runner, daemon=True).start()
-    return True
+    return job_id
 
 
 def rebuild_outputs(lib) -> None:
@@ -202,6 +215,7 @@ def job_retry():
     ok, bad = process_pending(cfg, lib, retry_failed=True)
     print(f"Analyzed {ok}, failed {bad}.")
     rebuild_outputs(lib)
+    return {"ok": ok, "bad": bad}
 
 
 def job_remix(topic: str, category: str | None, count: int):
@@ -271,6 +285,9 @@ def status() -> dict:
     cats = sorted({r["analysis"]["category"] for r in lib.all_done()})
     counts = lib.stats()
     lib.db.close()
+    with JOB_LOCK:  # one consistent picture of the running job and the ones that ended
+        job = dict(JOB)
+        finished = list(FINISHED)
     return {
         "home": str(HOME),
         "version": __version__,
@@ -279,8 +296,11 @@ def status() -> dict:
         "instagram": {"username": cfg.instagram_username, "connected": _ig_connected()},
         "counts": counts,
         "categories": cats,
-        "job": JOB["name"],
-        "result": JOB["result"],
+        "job": job["name"],
+        "job_id": job["id"] if job["name"] else None,
+        "job_tag": job["tag"] if job["name"] else "",
+        "result": job["result"],
+        "finished": finished,
         "log": list(LOG)[-200:],
         "schedule": schedule_status(),
         "profile": (HOME / "profile.md").read_text(encoding="utf-8") if (HOME / "profile.md").exists() else "",
@@ -288,6 +308,7 @@ def status() -> dict:
         "chromeLogin": _chrome_state(),
         "extension": {"seen": _ext_seen(), "folder": str(EXT_DIR)},
         "igWaiting": time.time() < IG_WAIT["until"],
+        "last_update": UPDATE_STATE["last"],
     }
 
 
@@ -617,6 +638,327 @@ def run_once() -> None:
 
 
 # --------------------------------------------------------------------------
+# Reels, purposes, banks and to-dos (the JSON the app's screens use)
+# --------------------------------------------------------------------------
+
+class ApiError(Exception):
+    """A plain message for the user, sent as {"error": ...} with an HTTP code."""
+
+    def __init__(self, message: str, code: int = 400):
+        super().__init__(message)
+        self.message, self.code = message, code
+
+
+BUSY = "ReelVault is busy with another task. Wait for it to finish."
+TOPIC_MAX = 4000  # "Write scripts": the topic plus the hook and format picked in Studio
+NO_REEL = "That reel is not in your library."
+GUESS_CHUNK = 200  # reels per Claude call when guessing purposes (one call for most libraries)
+
+
+class _OpenLib:
+    """with _OpenLib() as (cfg, lib): ... closes the database afterwards."""
+
+    def __enter__(self):
+        self.cfg, self.lib = cfg_lib()
+        return self.cfg, self.lib
+
+    def __exit__(self, *exc):
+        self.lib.db.close()
+
+
+def vault_url(rec: dict, name: str | None) -> str | None:
+    """URL for a file in a reel's folder, served by /vault/<path>. Folder names have spaces, so quote them."""
+    if not name:
+        return None
+    folder = str(rec.get("folder") or "").replace("\\", "/").strip("/")
+    return "/vault/" + quote(f"{folder}/{name}" if folder else name)
+
+
+def reel_media(rec: dict, root: Path) -> dict:
+    folder = root / str(rec.get("folder") or "").replace("\\", "/")
+
+    def have(name):
+        return bool(name) and (folder / name).is_file()
+
+    frames = [f["file"] for f in rec.get("frames") or [] if isinstance(f, dict) and f.get("file")]
+    video = rec.get("video", "video.mp4")  # the first version wrote no "video" key; a manual record sets None
+    thumb = rec.get("cover") if have(rec.get("cover")) else None
+    if not thumb and frames:
+        pick = frames[min(1, len(frames) - 1)]
+        thumb = pick if have(pick) else None
+    return {
+        "video": vault_url(rec, video) if have(video) else None,
+        "thumb": vault_url(rec, thumb),
+        "frames": [vault_url(rec, f) for f in frames if have(f)],
+    }
+
+
+def reel_summary(rec: dict, root: Path) -> dict:
+    a, meta = rec["analysis"], rec.get("meta") or {}
+    sk = a.get("skeleton") or {}
+    hook = sk.get("hook") or {}
+    return {
+        "id": rec["shortcode"],
+        "title": a.get("title", ""),
+        "owner": meta.get("owner") or "",
+        "url": meta.get("url") or "",
+        "category": a.get("category", ""),
+        "subcategory": a.get("subcategory", ""),
+        "tags": a.get("tags") or [],
+        "duration": rec.get("duration"),
+        "thumb": reel_media(rec, root)["thumb"],
+        "posted_at": meta.get("posted_at"),
+        "analyzed_at": rec.get("analyzed_at"),
+        "purposes": rec["purposes"],
+        "purpose_guess": rec["purpose_guess"],
+        "purpose_confirmed": rec["purpose_confirmed"],
+        "summary": a.get("summary", ""),
+        "hook": {k: hook.get(k, "") for k in ("spoken", "on_screen_text", "hook_type")},
+        "structure_name": sk.get("structure_name", ""),
+        "cta_type": (sk.get("cta") or {}).get("cta_type", ""),
+        "content_format": a.get("content_format", ""),
+        "has_remake": bool(rec["extra"].get("remakes")),
+    }
+
+
+def api_reels() -> dict:
+    with _OpenLib() as (cfg, lib):
+        rows = lib.rows_done()
+        reels = [reel_summary(r, cfg.vault_dir) for r in rows]
+    return {
+        "reels": reels,
+        "categories": sorted({r["category"] for r in reels if r["category"]}),
+        "creators": sorted({r["owner"] for r in reels if r["owner"]}, key=str.lower),
+    }
+
+
+def api_reel(code: str) -> dict:
+    with _OpenLib() as (cfg, lib):
+        rec = lib.row(code)
+        if not rec:
+            raise ApiError(NO_REEL, 404)
+        rec["media"] = reel_media(rec, cfg.vault_dir)
+    return rec
+
+
+def api_set_purposes(code: str, body: dict) -> dict:
+    from .purposes import clean
+
+    wanted = body.get("purposes")
+    if not isinstance(wanted, list):
+        raise ApiError("Send the purposes as a list.")
+    purposes = clean(wanted)
+    if not purposes:
+        raise ApiError("Pick at least one purpose.")
+    with _OpenLib() as (_, lib):
+        if not lib.row(code):
+            raise ApiError(NO_REEL, 404)
+        lib.set_purposes(code, purposes, confirmed=True)
+    return {"ok": True, "purposes": purposes, "purpose_confirmed": True}
+
+
+def api_todo(code: str, body: dict) -> dict:
+    index = body.get("index")
+    if isinstance(index, bool) or not isinstance(index, int):
+        raise ApiError("Say which step to tick.")
+    done = bool(body.get("done", True))
+    with _OpenLib() as (_, lib):
+        rec = lib.row(code)
+        if not rec:
+            raise ApiError(NO_REEL, 404)
+        if not 0 <= index < len(rec["analysis"].get("action_plan") or []):
+            raise ApiError("That step does not exist.")
+
+        def change(extra):
+            ticks = {i for i in extra.get("todo_done") or [] if isinstance(i, int)}
+            (ticks.add if done else ticks.discard)(index)
+            extra["todo_done"] = sorted(ticks)
+
+        extra = lib.update_extra(code, change)
+    return {"ok": True, "todo_done": extra["todo_done"]}
+
+
+def _first_line(text: str) -> str:
+    line = next((x.strip() for x in (text or "").splitlines() if x.strip()), "")
+    return re.split(r"(?<=[.!?])\s+", line, maxsplit=1)[0] if line else ""
+
+
+def _wants_all(query: dict) -> bool:
+    return (query.get("all") or [""])[0] in ("1", "true", "yes")
+
+
+def api_hooks(query: dict) -> dict:
+    out = []
+    with _OpenLib() as (_, lib):
+        for rec in lib.rows_done():
+            if not _wants_all(query) and "hook" not in rec["purposes"]:
+                continue
+            a = rec["analysis"]
+            h = a["skeleton"]["hook"]
+            out.append({
+                "reel_id": rec["shortcode"], "title": a["title"], "owner": (rec.get("meta") or {}).get("owner") or "",
+                "spoken": h.get("spoken", ""), "on_screen_text": h.get("on_screen_text", ""),
+                "visual": h.get("visual", ""), "hook_type": h.get("hook_type", ""),
+                "why_it_works": h.get("why_it_works", ""),
+                "formula": _first_line(a.get("fill_in_template", "")) or h.get("spoken") or h.get("on_screen_text", ""),
+                "variations": a.get("hook_variations") or [],
+            })
+    return {"hooks": out}
+
+
+def api_formats(query: dict) -> dict:
+    out = []
+    with _OpenLib() as (_, lib):
+        for rec in lib.rows_done():
+            if not _wants_all(query) and "format" not in rec["purposes"]:
+                continue
+            a = rec["analysis"]
+            sk = a["skeleton"]
+            out.append({
+                "reel_id": rec["shortcode"], "title": a["title"], "owner": (rec.get("meta") or {}).get("owner") or "",
+                "structure_name": sk.get("structure_name", ""),
+                "beats": [b.get("purpose", "") for b in sk.get("meat") or []],
+                "pacing": sk.get("pacing", ""), "template": a.get("fill_in_template", ""),
+                "script_ideas": a.get("script_ideas") or [],
+            })
+    return {"formats": out}
+
+
+def api_todos(query: dict) -> list:
+    out = []
+    with _OpenLib() as (_, lib):
+        for rec in lib.rows_done():
+            if "learn" not in rec["purposes"]:
+                continue
+            ticks = set(rec["extra"].get("todo_done") or [])
+            for i, s in enumerate(rec["analysis"].get("action_plan") or []):
+                done = i in ticks
+                if done and not _wants_all(query):
+                    continue
+                out.append({"reel_id": rec["shortcode"], "title": rec["analysis"]["title"], "index": i,
+                            "step": s.get("step", ""), "why": s.get("why", ""), "effort": s.get("effort", ""),
+                            "done": done})
+    return out
+
+
+def job_remake(code: str, made_for: str, notes: str):
+    from .analyze import make_remake
+    from .library import _now
+
+    cfg, lib = cfg_lib()
+    try:
+        rec = lib.row(code)
+        if not rec:
+            raise SystemExit(NO_REEL)
+        pack = make_remake(cfg, rec, made_for, notes)
+        item = dict(pack.model_dump(), created_at=_now())
+        extra = lib.update_extra(code, lambda e: e.setdefault("remakes", []).append(item))
+        lib.set_purposes(code, lib.row(code)["purposes"] + ["remake"], confirmed=None)
+        print(f"Your better version of \"{rec['analysis']['title']}\" is ready.")
+        return {"reel": code, "remake": len(extra["remakes"]) - 1}
+    finally:
+        lib.db.close()
+
+
+def api_remake(code: str, body: dict) -> dict:
+    made_for = str(body.get("for") or "me").strip()[:120] or "me"
+    notes = str(body.get("notes") or "").strip()[:4000]
+    with _OpenLib() as (_, lib):
+        rec = lib.row(code)
+    if not rec:
+        raise ApiError(NO_REEL, 404)
+    title = rec["analysis"]["title"]
+    name = f"Make it better: {title}"
+    job_id = start_job(name, job_remake, code, made_for, notes, tag=f"remake:{code}")
+    if not job_id:
+        raise ApiError(BUSY, 409)
+    return {"ok": True, "job": name, "job_id": job_id}
+
+
+def job_guess():
+    from .analyze import guess_purposes
+
+    cfg, lib = cfg_lib()
+    try:
+        recs = lib.unguessed()
+        if not recs:
+            print("Every reel already has a guess.")
+            return {"guessed": 0}
+        n = 0
+        for i in range(0, len(recs), GUESS_CHUNK):
+            for code, guess in guess_purposes(cfg, recs[i:i + GUESS_CHUNK]).items():
+                n += lib.set_guess(code, guess)
+        print(f"Guessed purposes for {n} of {len(recs)} reel(s). Check them under Sort new reels.")
+        return {"guessed": n}
+    finally:
+        lib.db.close()
+
+
+def api_guess() -> dict:
+    with _OpenLib() as (_, lib):
+        n = len(lib.unguessed())
+    if not n:
+        return {"ok": True, "count": 0}
+    job_id = start_job("Guess purposes for older reels", job_guess, tag="guess")
+    if not job_id:
+        raise ApiError(BUSY, 409)
+    return {"ok": True, "count": n, "job_id": job_id}
+
+
+# --------------------------------------------------------------------------
+# Self-update
+# --------------------------------------------------------------------------
+
+UPDATE_STATE: dict = {"last": None}   # result of the last update run, read once at start
+
+
+def _update_branch() -> str:
+    from .config import load_config
+
+    return load_config(HOME / "reelvault.toml").update_branch
+
+
+def api_update_info(query: dict) -> dict:
+    from . import update
+
+    info = update.check(__version__, _update_branch(), force=_wants_all({"all": query.get("refresh")}))
+    last = UPDATE_STATE["last"]
+    if last and not last.get("ok") and not info["error"]:
+        info["error"] = last.get("message") or "The last update did not work. Your current version still works."
+    info["last_update"] = last
+    return info
+
+
+def api_update_apply(body: dict) -> dict:
+    from . import update
+
+    with JOB_LOCK:
+        if JOB["name"]:
+            raise ApiError(f"ReelVault is busy with \"{JOB['name']}\". Wait for it to finish, then update.", 409)
+        JOB.update(name="Update ReelVault", started=time.time(), result=None, id=next(_JOB_IDS), tag="update")
+    try:
+        info = update.check(__version__, _update_branch(), force=True)
+        if info["error"]:
+            raise ApiError(info["error"], 502)
+        if not info["available"] and not body.get("force"):
+            raise ApiError("You already have the newest version.", 400)
+        log(f"Downloading ReelVault {info['latest']}...")
+        try:
+            src = update.download(HOME, _update_branch())
+            update.start_helper(src, PORT, HOME)
+        except update.UpdateError as e:
+            log(f"Update stopped: {e}" + (f" ({e.detail})" if e.detail else ""))
+            raise ApiError(str(e), 502)
+        log("Installing the update. ReelVault will close and open again in a minute.")
+    except Exception:
+        with JOB_LOCK:
+            JOB["name"] = None
+        raise
+    threading.Thread(target=lambda: (time.sleep(1.0), os._exit(0)), daemon=True).start()
+    return {"ok": True, "latest": info["latest"]}
+
+
+# --------------------------------------------------------------------------
 # Web server
 # --------------------------------------------------------------------------
 
@@ -668,6 +1010,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             self._get()
+        except ApiError as e:
+            self._json({"error": e.message}, e.code)
+        except ConnectionError:  # the browser hung up (e.g. it cancelled a video request): nothing to tell it
+            pass
         except (Exception, SystemExit) as e:  # keep the app alive and tell the panel what went wrong
             LOG.append(f"Error: {e}")
             self._json({"error": str(e)}, 500)
@@ -675,27 +1021,64 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             self._post()
+        except ApiError as e:
+            self._json({"error": e.message}, e.code)
+        except ConnectionError:
+            pass
         except (Exception, SystemExit) as e:
             LOG.append(f"Error: {e}")
             self._json({"error": str(e)}, 500)
 
+    REEL_PATH = re.compile(r"^/api/reels/([A-Za-z0-9_-]+)(?:/(purposes|todo|remake))?/?$")
+
     def _get(self):
         if not self._local_only():
             return
-        path = unquote(urlparse(self.path).path)
-        if path == "/":
-            body = PANEL.encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+        url = urlparse(self.path)
+        path = unquote(url.path)
+        query = parse_qs(url.query)
+        m = self.REEL_PATH.match(path)
+        if path in ("/", "/index.html"):
+            self._ui("index.html")
+        elif path.startswith("/ui/"):
+            self._ui(path[len("/ui/"):])
         elif path == "/api/status":
             self._json(status())
+        elif path == "/api/reels":
+            self._json(api_reels())
+        elif m and not m.group(2):
+            self._json(api_reel(m.group(1)))
+        elif path == "/api/banks/hooks":
+            self._json(api_hooks(query))
+        elif path == "/api/banks/formats":
+            self._json(api_formats(query))
+        elif path == "/api/todos":
+            self._json(api_todos(query))
+        elif path == "/api/update":
+            self._json(api_update_info(query))
         elif path.startswith("/vault/"):
             self._file(path[len("/vault/"):])
         else:
             self._json({"error": "not found"}, 404)
+
+    def _ui(self, rel: str):
+        """The app's screens: static files in reelvault/ui/."""
+        root = UI_DIR.resolve()
+        p = (root / rel).resolve()
+        if root not in p.parents or not p.is_file():
+            if rel == "index.html":
+                return self._html(MISSING_UI)
+            return self._json({"error": "not found"}, 404)
+        ctype = UI_TYPES.get(p.suffix.lower()) or mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+        self._send_file(p, ctype, cache=False)
+
+    def _html(self, page: str):
+        body = page.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _file(self, rel: str):
         from .config import load_config
@@ -709,6 +1092,9 @@ class Handler(BaseHTTPRequestHandler):
         ctype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
         if p.suffix == ".md":
             ctype = "text/plain; charset=utf-8"
+        self._send_file(p, ctype)
+
+    def _send_file(self, p: Path, ctype: str, cache: bool = True):
         size = p.stat().st_size
         start, end = 0, size - 1
         rng = self.headers.get("Range")
@@ -726,6 +1112,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Accept-Ranges", "bytes")
+        if not cache:
+            self.send_header("Cache-Control", "no-cache")
         self.send_header("Content-Length", str(end - start + 1))
         self.end_headers()
         with open(p, "rb") as f:
@@ -737,7 +1125,7 @@ class Handler(BaseHTTPRequestHandler):
                     break
                 try:
                     self.wfile.write(chunk)
-                except (BrokenPipeError, ConnectionResetError):
+                except ConnectionError:  # Broken pipe, reset, or aborted (WinError 10053): the browser hung up
                     return
                 left -= len(chunk)
 
@@ -745,26 +1133,48 @@ class Handler(BaseHTTPRequestHandler):
         if not self._local_only():
             return
         path = urlparse(self.path).path
-        b = self._body()
-        busy = {"error": "ReelVault is busy with another task. Wait for it to finish."}
-        if path == "/api/run":
+        try:
+            b = self._body()
+        except ValueError:
+            raise ApiError("The request was not valid JSON.")
+        if not isinstance(b, dict):
+            raise ApiError("The request was not valid JSON.")
+        busy = {"error": BUSY}
+        m = self.REEL_PATH.match(path)
+        if m and m.group(2) == "purposes":
+            self._json(api_set_purposes(m.group(1), b))
+        elif m and m.group(2) == "todo":
+            self._json(api_todo(m.group(1), b))
+        elif m and m.group(2) == "remake":
+            self._json(api_remake(m.group(1), b))
+        elif path == "/api/sort/guess":
+            self._json(api_guess())
+        elif path == "/api/update":
+            self._json(api_update_apply(b))
+        elif path == "/api/run":
             limit = int(b.get("limit") or 20)
-            self._json({"ok": True} if start_job("Get new saved reels", job_fetch_and_analyze, limit) else busy)
+            job_id = start_job("Get new saved reels", job_fetch_and_analyze, limit, tag="run")
+            self._json({"ok": True, "job_id": job_id} if job_id else busy)
         elif path == "/api/links":
             from .fetch import SHORTCODE_RE
 
             urls = [m.group(0) for m in SHORTCODE_RE.finditer(b.get("text", ""))]
             if not urls:
                 return self._json({"error": "No Instagram reel links found. Paste links like instagram.com/reel/..."})
-            self._json({"ok": True, "count": len(urls)} if start_job("Analyze pasted links", job_links, urls) else busy)
+            job_id = start_job("Analyze pasted links", job_links, urls, tag="links")
+            self._json({"ok": True, "count": len(urls), "job_id": job_id} if job_id else busy)
         elif path == "/api/retry":
-            self._json({"ok": True} if start_job("Retry failed reels", job_retry) else busy)
+            job_id = start_job("Retry failed reels", job_retry, tag="retry")
+            self._json({"ok": True, "job_id": job_id} if job_id else busy)
         elif path == "/api/remix":
             topic = (b.get("topic") or "").strip()
             if not topic:
                 return self._json({"error": "Type what the new video is about."})
-            ok = start_job("Write scripts", job_remix, topic, b.get("category"), int(b.get("count") or 3))
-            self._json({"ok": True} if ok else busy)
+            if len(topic) > TOPIC_MAX:
+                return self._json({"error": f"That is too long. Keep it under {TOPIC_MAX:,} characters."})
+            job_id = start_job("Write scripts", job_remix, topic, b.get("category"), int(b.get("count") or 3),
+                               tag="remix")
+            self._json({"ok": True, "job_id": job_id} if job_id else busy)
         elif path == "/api/ig/login":
             self._json(ig_login(b.get("username", ""), b.get("password", "")))
         elif path == "/api/ig/2fa":
@@ -839,6 +1249,9 @@ def main(argv=None):
             webbrowser.open(url)
             return
     prepare_home()
+    from .update import take_last_result
+
+    UPDATE_STATE["last"] = take_last_result(HOME)
     if sys.stdout is None:  # pythonw has no console
         sys.stdout = sys.stderr = open(HOME / "app.log", "a", encoding="utf-8")
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
@@ -848,245 +1261,20 @@ def main(argv=None):
     server.serve_forever()
 
 
-PANEL = r"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ReelVault</title>
-<style>
-:root{--bg:#f2f3f6;--panel:#fff;--ink:#151a2b;--muted:#5f6577;--line:#dfe1e8;--chip:#e9ebf1;--accent:#3d3fd1;--ok:#15803d;--warn:#b45309;--bad:#b91c1c;
---font:"Segoe UI",system-ui,-apple-system,sans-serif;--mono:Consolas,ui-monospace,Menlo,monospace}
-@media (prefers-color-scheme:dark){:root{--bg:#10121a;--panel:#191c27;--ink:#e8eaf2;--muted:#9aa0b4;--line:#2a2e3d;--chip:#232737;--accent:#8f91ff;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;color-scheme:dark}}
-*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--font)}
-.wrap{max-width:1080px;margin:0 auto;padding:20px 16px 40px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
-@media (max-width:820px){.wrap{grid-template-columns:minmax(0,1fr)}}
-header{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
-h1{margin:0;font-size:24px}h1 small{font-size:14px;color:var(--muted);font-weight:400;margin-left:8px}
-section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0}
-section.wide{grid-column:1/-1}
-h2{margin:0;font-size:16px}p{margin:0;color:var(--muted);font-size:14px}
-.steps{display:grid;gap:8px}
-.step{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)}
-.step:first-child{border-top:0}.step .name{flex:1 1 200px}
-.pill{font-size:12px;font-weight:600;border-radius:99px;padding:2px 10px;background:var(--chip)}
-.pill.ok{color:var(--ok)}.pill.no{color:var(--warn)}
-button,.btn{font:inherit;font-weight:600;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;background:var(--accent);color:#fff;text-decoration:none;display:inline-block}
-button.ghost{background:var(--chip);color:var(--ink)}
-button:disabled{opacity:.5;cursor:default}
-input,textarea,select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%;min-width:0}
-textarea{min-height:90px;resize:vertical}
-.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.row>*{flex:1 1 120px}.row>button{flex:0 0 auto}
-details summary{cursor:pointer;color:var(--muted);font-size:14px}
-.card{border:1px solid var(--line);border-radius:8px;padding:12px 14px;background:var(--bg);display:flex;flex-direction:column;gap:6px}
-.card ol{margin:0;padding-left:20px;display:grid;gap:10px}.card .hint{color:var(--muted);font-size:13px}.card .pill{align-self:flex-start}
-code{font:13px var(--mono);background:var(--chip);padding:1px 6px;border-radius:4px;word-break:break-all}
-pre{margin:0;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;max-height:300px;overflow:auto;font:12.5px/1.5 var(--mono);white-space:pre-wrap}
-.counts{display:flex;gap:16px;flex-wrap:wrap}.counts b{font-size:22px;display:block}
-.msg{font-size:14px;min-height:1.2em}.msg.err{color:var(--bad)}.msg.good{color:var(--ok)}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-</style></head><body>
-<div class="wrap">
-<header><h1>ReelVault <small id="ver"></small> <small id="home"></small></h1>
-<div class="row"><a class="btn" id="open-lib" href="/vault/index.html" target="_blank">Open my library</a><button class="ghost" id="quit">Close app</button></div></header>
-
-<section>
-<h2>Setup</h2>
-<div class="steps">
- <div class="step"><span class="name">1. Video tools</span><span class="pill" id="s-ffmpeg"></span></div>
- <div class="step"><span class="name">2. Claude (your subscription)</span><span class="pill" id="s-claude"></span><button class="ghost" id="claude-signin">Sign in to Claude</button></div>
- <div class="step"><span class="name">3. Instagram <span id="ig-user"></span></span><span class="pill" id="s-ig"></span></div>
-</div>
-<div id="ig-form" class="steps">
- <p>Uses your normal Chrome. A new Instagram tab opens there. If you're already logged in, ReelVault connects in a few seconds.
- If not, log in in that tab as usual ("Resend code" works there). ReelVault never sees your password.</p>
- <div class="row"><button id="ig-connect">Connect Instagram</button></div>
- <div class="msg" id="ig-connect-msg"></div>
- <div id="ext-setup" class="card" hidden>
-  <p><b>One-time setup:</b> add the small ReelVault Connector to Chrome. It takes about a minute.
-  It isn't in the Chrome Web Store: it comes with ReelVault, in the folder below.</p>
-  <ol>
-   <li><button class="ghost" id="ext-open">Open Chrome's extensions page</button><br>
-     <span class="hint">Nothing opened? Type <code>chrome://extensions</code> in Chrome's address bar.</span></li>
-   <li>Turn on <b>Developer mode</b> (the switch at the top right).</li>
-   <li>Click <b>Load unpacked</b> and pick this folder:<br>
-     <code id="ext-path"></code> <button class="ghost" id="ext-copy">Copy</button> <button class="ghost" id="ext-folder">Show folder</button><br>
-     <span class="hint">Tip: paste it into the address box at the top of the folder window, press Enter, then click <b>Select Folder</b>.</span></li>
-   <li>Come back here. When this says <b>Added</b>, click <b>Connect Instagram</b> again.</li>
-  </ol>
-  <span class="pill" id="ext-status"></span>
- </div>
- <details>
- <summary>Other ways to connect</summary>
- <div class="steps" style="margin-top:10px">
- <p>Log in inside a separate ReelVault Chrome window:</p>
- <div class="row"><button class="ghost" id="ig-chrome">Open login window</button></div>
- <div class="msg" id="ig-chrome-msg"></div>
- <p>Type your password here instead:</p>
- <div class="row"><input id="ig-u" placeholder="Instagram username" autocomplete="username"><input id="ig-p" type="password" placeholder="Password" autocomplete="current-password"><button id="ig-go">Connect</button></div>
- <div id="ig-2fa" class="steps" hidden>
-  <p id="ig-2fa-how">Enter the login code Instagram sent you.</p>
-  <div class="row"><input id="ig-code" placeholder="Login code (6 digits) or a backup code" inputmode="numeric" autocomplete="one-time-code"><button id="ig-code-go">Confirm</button></div>
-  <div class="row"><button class="ghost" id="ig-resend">Text me a new code</button><span class="msg" id="ig-resend-msg"></span></div>
-  <p>No code coming? If you use an authenticator app (Google Authenticator, Duo...), the code is in that app, not in SMS. You can also type one of your 8-digit Instagram backup codes.</p>
- </div>
- <div class="msg" id="ig-msg"></div>
- <p>Or reuse a login you already have in a browser:</p>
- <div class="row"><select id="ig-browser" aria-label="Browser"><option value="firefox">Firefox</option><option value="chrome">Chrome</option><option value="edge">Edge</option><option value="brave">Brave</option><option value="opera">Opera</option></select><button class="ghost" id="ig-browser-go">Connect with my browser</button></div>
- </div>
- </details>
-</div>
-<div class="row" id="ig-again-row" hidden><button class="ghost" id="ig-again">Reconnect Instagram</button></div>
-</section>
-
-<section>
-<h2>Your library</h2>
-<div class="counts"><div><b id="c-done">0</b>analyzed</div><div><b id="c-pending">0</b>waiting</div><div><b id="c-failed">0</b>failed</div></div>
-<div class="row"><input id="limit" type="number" min="1" max="200" value="20" aria-label="How many new reels"><button id="run">Get new saved reels</button></div>
-<p>Downloads reels you saved on Instagram that aren't in the library yet, then analyzes them.</p>
-<div class="row"><button class="ghost" id="retry">Retry failed reels</button></div>
-<div class="msg" id="run-msg"></div>
-</section>
-
-<section>
-<h2>Analyze specific reels</h2>
-<p>Paste one or more Instagram reel links, one per line.</p>
-<textarea id="links" placeholder="https://www.instagram.com/reel/..."></textarea>
-<div class="row"><button id="links-go">Analyze these links</button></div>
-<div class="msg" id="links-msg"></div>
-</section>
-
-<section>
-<h2>Run every day</h2>
-<p>ReelVault checks your saved reels each day at this time while the computer is on.</p>
-<div class="row"><input id="sched-time" type="time" value="20:00" aria-label="Daily time"><button id="sched-on">Turn on</button><button class="ghost" id="sched-off">Turn off</button></div>
-<div class="msg" id="sched-msg"></div>
-</section>
-
-<section>
-<h2>Write new scripts</h2>
-<p>Claude writes scripts for you from the hooks, structures and CTAs in your library.</p>
-<input id="topic" placeholder="What is the new video about?">
-<div class="row"><select id="cat"><option value="">Any category</option></select><select id="count"><option>1</option><option selected>3</option><option>5</option></select><button id="remix">Write scripts</button></div>
-<div class="msg" id="remix-msg"></div>
-</section>
-
-<section>
-<h2>About you</h2>
-<p>Claude reads this to write hooks and scripts that fit your niche.</p>
-<textarea id="profile" style="min-height:160px"></textarea>
-<div class="row"><button class="ghost" id="profile-save">Save</button></div>
-<div class="msg" id="profile-msg"></div>
-</section>
-
-<section class="wide">
-<h2>Activity <span class="pill" id="job"></span></h2>
-<pre id="log">Nothing yet.</pre>
-</section>
-</div>
-<script>
-const $ = s => document.querySelector(s);
-const post = (u, b) => fetch(u, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(b || {})}).then(r => r.json());
-const say = (id, r, good) => { const m = $(id); m.className = "msg " + (r.error ? "err" : "good"); m.textContent = r.error || good; };
-let profileLoaded = false, lastResult = null;
-function pill(el, ok, yes, no) { el.className = "pill " + (ok ? "ok" : "no"); el.textContent = ok ? yes : no; }
-async function refresh() {
-  let s; try { s = await (await fetch("/api/status")).json(); } catch (e) { $("#job").textContent = "app closed"; return; }
-  $("#home").textContent = s.home; $("#ver").textContent = "v" + s.version;
-  pill($("#s-ffmpeg"), s.ffmpeg, "Ready", "Missing: run the installer again");
-  pill($("#s-claude"), s.claude.loggedIn, "Signed in", s.claude.installed ? "Not signed in" : "Not installed");
-  $("#claude-signin").hidden = s.claude.loggedIn;
-  pill($("#s-ig"), s.instagram.connected, "Connected", "Not connected");
-  $("#ig-user").textContent = s.instagram.username ? "(@" + s.instagram.username + ")" : "";
-  const ex = s.extension || {};
-  $("#ext-path").textContent = ex.folder || "";
-  pill($("#ext-status"), ex.seen, "Added", "Not added yet");
-  $("#ext-setup").hidden = ex.seen || s.instagram.connected;
-  $("#ig-connect").disabled = !!s.igWaiting;
-  if (s.igWaiting && !window.igMsgSet) { $("#ig-connect-msg").className = "msg"; $("#ig-connect-msg").textContent = "Waiting for your login in the Instagram tab..."; }
-  if (s.instagram.connected && $("#ig-connect-msg").textContent.startsWith("Waiting")) { $("#ig-connect-msg").className = "msg good"; $("#ig-connect-msg").textContent = "Connected."; }
-  const cl = s.chromeLogin || {};
-  const showForm = !s.instagram.connected || window.igReconnect || cl.status === "waiting";
-  $("#ig-form").hidden = !showForm;
-  $("#ig-again-row").hidden = showForm;
-  if (cl.message) { $("#ig-chrome-msg").className = "msg " + (cl.status === "error" ? "err" : cl.status === "done" ? "good" : ""); $("#ig-chrome-msg").textContent = cl.message; }
-  $("#ig-chrome").disabled = cl.status === "waiting";
-  if (cl.status === "done") window.igReconnect = false;
-  for (const k of ["done", "pending", "failed"]) $("#c-" + k).textContent = s.counts[k] || 0;
-  $("#open-lib").hidden = !s.library;
-  const cat = $("#cat"), have = [...cat.options].map(o => o.value);
-  s.categories.forEach(c => { if (!have.includes(c)) cat.add(new Option(c, c)); });
-  if (!profileLoaded) { $("#profile").value = s.profile; profileLoaded = true; }
-  $("#sched-msg").textContent = s.schedule ? "On. Next run: " + s.schedule : "Off.";
-  $("#job").textContent = s.job ? "Working: " + s.job : "Idle";
-  document.querySelectorAll("#run,#links-go,#remix,#retry").forEach(b => b.disabled = !!s.job);
-  $("#log").textContent = s.log.length ? s.log.join("\n") : "Nothing yet.";
-  $("#log").scrollTop = $("#log").scrollHeight;
-  if (s.result && s.result.script && JSON.stringify(s.result) !== lastResult) {
-    lastResult = JSON.stringify(s.result);
-    $("#remix-msg").innerHTML = 'Done. <a target="_blank" href="/vault/' + encodeURI(s.result.script) + '">Open the scripts</a>';
-  }
+UI_DIR = Path(__file__).parent / "ui"
+UI_TYPES = {
+    ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png",
+    ".ico": "image/x-icon", ".woff2": "font/woff2",
 }
-$("#ig-go").onclick = async () => {
-  $("#ig-msg").textContent = "Connecting...";
-  const r = await post("/api/ig/login", {username: $("#ig-u").value, password: $("#ig-p").value});
-  $("#ig-p").value = "";
-  if (r.need2fa) {
-    $("#ig-2fa").hidden = false; $("#ig-msg").textContent = "";
-    const ways = [];
-    if (r.sms) ways.push("a text message" + (r.phone ? " to " + r.phone : ""));
-    if (r.whatsapp) ways.push("WhatsApp");
-    if (r.app) ways.push("your authenticator app");
-    $("#ig-2fa-how").textContent = ways.length ? "Enter the login code from " + ways.join(" or ") + "." : "Enter the login code Instagram sent you.";
-    $("#ig-resend").hidden = r.app && !r.sms;
-    $("#ig-code").focus(); return;
-  }
-  say("#ig-msg", r, "Connected."); refresh();
-};
-$("#ig-connect").onclick = async () => {
-  const r = await post("/api/ig/connect");
-  if (r.needExtension) {
-    window.showExt = true;
-    $("#ig-connect-msg").className = "msg"; $("#ig-connect-msg").textContent = "First, add the ReelVault Connector to Chrome (one time):";
-  } else { window.igMsgSet = true; say("#ig-connect-msg", r, r.message || ""); setTimeout(() => window.igMsgSet = false, 8000); }
-  refresh();
-};
-$("#ext-folder").onclick = async () => { const r = await post("/api/ext/folder"); if (r.error) say("#ig-connect-msg", r, ""); };
-$("#ext-open").onclick = async () => { const r = await post("/api/ext/open"); if (r.error) say("#ig-connect-msg", r, ""); };
-$("#ext-copy").onclick = () => {
-  const t = $("#ext-path").textContent, b = $("#ext-copy");
-  navigator.clipboard.writeText(t).then(() => b.textContent = "Copied", () => {
-    const r = document.createRange(); r.selectNodeContents($("#ext-path")); getSelection().removeAllRanges(); getSelection().addRange(r); b.textContent = "Press Ctrl+C";
-  });
-};
-$("#ig-chrome").onclick = async () => {
-  const r = await post("/api/ig/chrome");
-  if (r.error) say("#ig-chrome-msg", r, ""); else { $("#ig-chrome-msg").className = "msg"; $("#ig-chrome-msg").textContent = r.message; }
-  refresh();
-};
-$("#ig-again").onclick = () => { window.igReconnect = true; refresh(); };
-$("#ig-resend").onclick = async () => {
-  const b = $("#ig-resend"); b.disabled = true; $("#ig-resend-msg").textContent = "Asking Instagram...";
-  const r = await post("/api/ig/resend");
-  $("#ig-resend-msg").className = "msg " + (r.error ? "err" : "good");
-  $("#ig-resend-msg").textContent = r.error || ("New code sent" + (r.phone ? " to " + r.phone : "") + ". Use only the newest code.");
-  setTimeout(() => { b.disabled = false; }, 60000);  // Instagram blocks rapid repeats
-};
-$("#ig-browser-go").onclick = async () => {
-  $("#ig-msg").className = "msg"; $("#ig-msg").textContent = "Reading your browser's Instagram login...";
-  const r = await post("/api/ig/browser", {browser: $("#ig-browser").value});
-  say("#ig-msg", r, "Connected as @" + (r.username || "")); refresh();
-};
-$("#ig-code-go").onclick = async () => { const r = await post("/api/ig/2fa", {code: $("#ig-code").value}); say("#ig-msg", r, "Connected."); refresh(); };
-$("#claude-signin").onclick = async () => { const r = await post("/api/claude/signin"); say("#run-msg", r, "A sign-in page opens in your browser. Finish there, then come back."); };
-$("#run").onclick = async () => say("#run-msg", await post("/api/run", {limit: $("#limit").value}), "Started. Watch the activity box below.");
-$("#retry").onclick = async () => say("#run-msg", await post("/api/retry"), "Retrying failed reels.");
-$("#links-go").onclick = async () => { const r = await post("/api/links", {text: $("#links").value}); say("#links-msg", r, `Started on ${r.count} link(s).`); };
-$("#sched-on").onclick = async () => { say("#sched-msg", await post("/api/schedule", {time: $("#sched-time").value}), "On."); refresh(); };
-$("#sched-off").onclick = async () => { say("#sched-msg", await post("/api/schedule", {time: null}), "Off."); refresh(); };
-$("#remix").onclick = async () => say("#remix-msg", await post("/api/remix", {topic: $("#topic").value, category: $("#cat").value, count: $("#count").value}), "Writing... this takes a minute or two.");
-$("#profile-save").onclick = async () => say("#profile-msg", await post("/api/profile", {text: $("#profile").value}), "Saved.");
-$("#quit").onclick = async () => { await post("/api/quit"); document.body.innerHTML = "<p style='padding:24px'>ReelVault is closed. Double-click the ReelVault icon to open it again.</p>"; };
-refresh(); setInterval(refresh, 2000);
-</script></body></html>
+
+MISSING_UI = """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>ReelVault</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="font:16px/1.5 system-ui,sans-serif;max-width:560px;margin:60px auto;padding:0 16px">
+<h1>ReelVault</h1><p>The app's screens are missing from this install.</p>
+<p>Run the ReelVault installer again to fix it. Your library is safe.</p></body></html>
 """
+
 
 if __name__ == "__main__":
     main()

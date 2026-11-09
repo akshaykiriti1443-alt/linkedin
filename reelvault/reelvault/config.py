@@ -40,6 +40,7 @@ class Config:
     include_images: bool = False
     categories: list[str] = field(default_factory=lambda: list(DEFAULT_CATEGORIES))
     profile_file: Path = Path("profile.md")
+    update_branch: str = "claude/kind-dijkstra-0o03in"   # where "Update now" gets new versions from
 
     # Folder helpers
     @property

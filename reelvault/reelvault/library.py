@@ -9,7 +9,7 @@
           transcript_timed.txt      transcript with timestamps
           analysis.json             everything Claude extracted
           note.md                   the readable card (Obsidian-friendly)
-      index.sqlite                  search index
+      index.sqlite                  search index (+ your purposes, ticks and remakes)
       index.html                    the dashboard (reelvault site)
 """
 
@@ -21,6 +21,8 @@ import shutil
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+
+from .purposes import clean, clean_guess
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
@@ -45,6 +47,50 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(
 );
 """
 
+# Columns added after 0.3. Old databases get them on open; nothing else changes.
+NEW_COLUMNS = {
+    "purposes": "TEXT NOT NULL DEFAULT '[]'",     # JSON list of purpose ids
+    "purpose_guess": "TEXT",                       # JSON {"purpose", "reason"} or NULL
+    "purpose_confirmed": "INTEGER NOT NULL DEFAULT 0",
+    "extra": "TEXT NOT NULL DEFAULT '{}'",         # JSON {"todo_done": [...], "remakes": [...]}
+}
+
+
+def migrate(db: sqlite3.Connection) -> list[str]:
+    """Add any missing columns to items. Safe to run on every open, also from several threads or
+    processes at once (the app opens the vault once per request). Returns the columns it added."""
+    have = {r[1] for r in db.execute("PRAGMA table_info(items)")}
+    if all(name in have for name in NEW_COLUMNS):
+        return []
+    added = []
+    if db.in_transaction:
+        db.commit()
+    db.execute("BEGIN IMMEDIATE")  # one writer at a time; others wait (busy timeout) and then see the columns
+    try:
+        have = {r[1] for r in db.execute("PRAGMA table_info(items)")}
+        for name, decl in NEW_COLUMNS.items():
+            if name in have:
+                continue
+            try:
+                db.execute(f"ALTER TABLE items ADD COLUMN {name} {decl}")
+                added.append(name)
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
+    return added
+
+
+def _loads(text, default):
+    try:
+        v = json.loads(text) if text else default
+    except (TypeError, ValueError):
+        return default
+    return v if isinstance(v, type(default)) else default
+
 
 def slugify(text: str, n: int = 40) -> str:
     s = re.sub(r"[^\w\s-]", "", text.lower()).strip()
@@ -59,9 +105,10 @@ class Library:
     def __init__(self, vault_dir: Path):
         self.root = vault_dir
         self.root.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(vault_dir / "index.sqlite")
+        self.db = sqlite3.connect(vault_dir / "index.sqlite", timeout=30)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
+        migrate(self.db)
 
     # --- bookkeeping -----------------------------------------------------
     def has(self, code: str) -> bool:
@@ -90,6 +137,74 @@ class Library:
     def all_done(self) -> list[dict]:
         rows = self.db.execute("SELECT data FROM items WHERE status='done' ORDER BY analyzed_at DESC").fetchall()
         return [json.loads(r["data"]) for r in rows]
+
+    # --- purposes and your own state ------------------------------------
+    def rows_done(self) -> list[dict]:
+        """Every analyzed reel, newest first: the record plus purposes, purpose_guess, purpose_confirmed, extra."""
+        rows = self.db.execute("SELECT * FROM items WHERE status='done' ORDER BY analyzed_at DESC").fetchall()
+        return [self._row(r) for r in rows]
+
+    def row(self, code: str) -> dict | None:
+        r = self.db.execute("SELECT * FROM items WHERE shortcode=? AND status='done'", (code,)).fetchone()
+        return self._row(r) if r else None
+
+    @staticmethod
+    def _row(r: sqlite3.Row) -> dict:
+        rec = json.loads(r["data"])
+        rec["purposes"] = clean(_loads(r["purposes"], []))
+        rec["purpose_guess"] = clean_guess(_loads(r["purpose_guess"], {}))
+        rec["purpose_confirmed"] = bool(r["purpose_confirmed"])
+        rec["extra"] = _loads(r["extra"], {})
+        rec["analyzed_at"] = r["analyzed_at"]
+        return rec
+
+    def set_purposes(self, code: str, purposes: list[str], confirmed: bool | None = True) -> list[str]:
+        """Save the purposes. confirmed=None leaves the confirmed flag as it is."""
+        purposes = clean(purposes)
+        if confirmed is None:
+            self.db.execute("UPDATE items SET purposes=? WHERE shortcode=?", (json.dumps(purposes), code))
+        else:
+            self.db.execute("UPDATE items SET purposes=?, purpose_confirmed=? WHERE shortcode=?",
+                            (json.dumps(purposes), int(confirmed), code))
+        self.db.commit()
+        return purposes
+
+    def set_guess(self, code: str, guess: dict) -> bool:
+        """Store an AI guess. If you have not confirmed this reel yet, the guess becomes its purpose."""
+        guess = clean_guess(guess)
+        r = self.db.execute("SELECT purpose_confirmed, extra FROM items WHERE shortcode=?", (code,)).fetchone()
+        if not guess or r is None:
+            return False
+        self.db.execute("UPDATE items SET purpose_guess=? WHERE shortcode=?", (json.dumps(guess), code))
+        if not r["purpose_confirmed"]:
+            # A remake you already made stays tagged; the guess replaces the rest.
+            keep = ["remake"] if _loads(r["extra"], {}).get("remakes") else []
+            self.db.execute("UPDATE items SET purposes=? WHERE shortcode=?",
+                            (json.dumps(clean([guess["purpose"], *keep])), code))
+        self.db.commit()
+        return True
+
+    def unguessed(self) -> list[dict]:
+        """Reels from before 0.4 that have no AI guess and that you have not sorted yourself yet."""
+        rows = self.db.execute(
+            "SELECT * FROM items WHERE status='done' AND purpose_guess IS NULL AND purpose_confirmed=0 "
+            "ORDER BY analyzed_at DESC").fetchall()
+        return [self._row(r) for r in rows]
+
+    def update_extra(self, code: str, change) -> dict:
+        """Run change(extra) on this reel's saved state and store the result.
+        The read and the write happen under one write lock, so two changes at once never undo each other."""
+        if self.db.in_transaction:
+            self.db.commit()
+        with self.db:
+            self.db.execute("BEGIN IMMEDIATE")
+            r = self.db.execute("SELECT extra FROM items WHERE shortcode=?", (code,)).fetchone()
+            if r is None:
+                raise KeyError(code)
+            extra = _loads(r["extra"], {})
+            change(extra)
+            self.db.execute("UPDATE items SET extra=? WHERE shortcode=?", (json.dumps(extra, ensure_ascii=False), code))
+        return extra
 
     def stats(self) -> dict:
         rows = self.db.execute("SELECT status, COUNT(*) n FROM items GROUP BY status").fetchall()
@@ -122,6 +237,8 @@ class Library:
              sk["cta"]["cta_type"], a["content_format"], sk["structure_name"], _now(),
              json.dumps(record, ensure_ascii=False), code),
         )
+        if clean_guess(a.get("purpose_guess")):
+            self.set_guess(code, a["purpose_guess"])  # new reels: the AI guess is their purpose until you confirm
         self.db.execute("DELETE FROM search WHERE shortcode=?", (code,))
         self.db.execute(
             "INSERT INTO search VALUES(?,?,?,?,?,?,?,?,?)",
@@ -189,6 +306,11 @@ def render_note(rec: dict) -> str:
         f"**{x['title']}**  \nHook: {x['hook']}  \n" + "\n".join(f"  - {o}" for o in x["outline"]) + f"  \nCTA: {x['cta']}"
         for x in a["script_ideas"]
     )
+    extras = ""
+    if a.get("claims_to_check"):
+        extras += f"\n**Check before you trust**\n{_bullets(a['claims_to_check'])}\n"
+    if a.get("client_explainer"):
+        extras += f"\n**Explain it to a client**\n{a['client_explainer']}\n"
     link = f"[Open on Instagram]({meta['url']})" if meta.get("url") else ""
     if rec.get("video", "video.mp4"):
         media = f"![[{rec.get('video', 'video.mp4')}]]"
@@ -256,7 +378,7 @@ def render_note(rec: dict) -> str:
 
 ## Why it performed
 {a['why_it_performed']}
-
+{extras}
 **Quotes worth saving**
 {_bullets(a['notable_quotes'])}
 

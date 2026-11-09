@@ -55,7 +55,10 @@ New model `PurposeGuesses` (batch guess for old reels): `guesses: List[{id: str,
 - `extra TEXT` JSON object for user state: `{"todo_done": [indexes], "remakes": [RemakePack+{"created_at"}]}`
 
 On `file()` (new reel): copy `analysis.purpose_guess` into `purpose_guess`; `purposes = [guess]`, `purpose_confirmed = 0`.
-Old reels without a guess: `purpose_guess` NULL until the batch guess runs.
+Old reels without a guess: `purpose_guess` NULL until the batch guess runs. A guess (on filing or from the batch)
+replaces `purposes` only while the reel is unconfirmed, and keeps `remake` if the reel already has a remake.
+`reelvault add` (manual.add_record) still accepts breakdowns from before 0.4: they file with no guess,
+`claims_to_check: []` and `client_explainer: ""`.
 
 ## HTTP API (all JSON; same localhost/origin rules as today)
 Existing endpoints stay and keep working: `/api/status` (add `"version"` already there),
@@ -75,16 +78,33 @@ New:
 - `POST /api/reels/<id>/remake` body `{"for": "me" | "<client name>", "notes": "optional"}` -> starts a background job
   (uses the job system and log), stores the RemakePack in `extra.remakes`, adds `remake` to purposes.
 - `POST /api/sort/guess` -> background job: one batch Claude call (text only, low effort) guesses purposes for every
-  done reel whose `purpose_guess` is NULL, using title, summary, hook, structure_name. Saves guesses (does not confirm).
+  done reel whose `purpose_guess` is NULL and that the user has not confirmed yet, using title, summary, hook, structure_name. Saves guesses (does not confirm).
 - `GET /api/banks/hooks` -> `{"hooks": [{reel_id, title, owner, spoken, on_screen_text, visual, hook_type, why_it_works, formula, variations: [...]}]}`
   from reels whose purposes include `hook` (query `?all=1` = every reel).
 - `GET /api/banks/formats` -> `{"formats": [{reel_id, title, owner, structure_name, beats: [purpose...], pacing, template, script_ideas}]}`
   from reels whose purposes include `format` (`?all=1` = every reel).
-- `GET /api/todos` -> open "Do this" steps from `learn` reels: `[{reel_id, title, index, step, why, effort, done}]`.
-- `GET /api/update` -> `{"current": "0.4.0", "latest": "0.4.1"|null, "available": bool, "error": str|null}` (cached 1 hour).
+- `GET /api/todos` -> open "Do this" steps from `learn` reels: `[{reel_id, title, index, step, why, effort, done}]`
+  (a top-level list; `?all=1` also returns ticked steps with `done: true`).
+- `GET /api/update` -> `{"current": "0.4.0", "latest": "0.4.1"|null, "available": bool, "error": str|null, "last_update": {...}|null}`
+  (cached 1 hour; `?refresh=1` checks GitHub now, use it for "Check for updates"). `last_update` is the result of the
+  last update run, `{"ok", "message", "detail", "version", "at"}`, available for the app session right after an update
+  (also in `/api/status` as `last_update`). If that run failed, `error` carries its plain message (a failed check has `latest: null`; the UI tells the two apart that way).
 - `POST /api/update` -> downloads the newest code and restarts the app (see Self-update). Returns `{"ok": true}` then the app exits.
 
+Background jobs (one at a time): every endpoint that starts one (`/api/run`, `/api/links`, `/api/retry`, `/api/remix`,
+`/api/reels/<id>/remake`, `/api/sort/guess`) also returns `"job_id"` (a number unique to that job). `/api/status` adds
+`job_id` and `job_tag` for the running job (null / "" when idle; tags: `run`, `links`, `retry`, `remix`, `guess`,
+`remake:<reel id>`) and `finished`: the last 20 jobs that ended, oldest first,
+`[{"id", "name", "tag", "ok", "result", "message"}]` (`message` = the plain reason when `ok` is false).
+The UI decides that a job ended, and how, only from `finished` for the id it got, never from "job went null" or from
+`result` changing. It also follows a running job it did not start (after a page reload), by its tag.
+`/api/remix` refuses topics over 4,000 characters; the topic goes to Claude through stdin, never on the command line,
+and each run saves a new file (`<date>_<slug>.md`, then `-2`, `-3`...).
+
 All new endpoints: errors return `{"error": "plain message"}` with a 4xx/5xx code; never crash the server.
+(400 bad input, 404 unknown reel, 409 busy with another task, 502 GitHub unreachable.)
+`POST /api/sort/guess` returns `{"ok": true, "count": n}` (n = reels sent for guessing; 0 = nothing to do, no job started).
+`POST /api/reels/<id>/remake` returns `{"ok": true, "job": "Make it better: <title>"}`.
 
 ## Self-update (`reelvault/update.py`)
 - Source: `https://raw.githubusercontent.com/akshaykiriti1443-alt/linkedin/<branch>/reelvault/reelvault/__init__.py`
@@ -109,7 +129,7 @@ desktop, bottom/top bar on narrow screens. Visible version in the corner. "Updat
 - **Home**: setup lights (Claude, Instagram, Chrome extension; each links to Settings if not ready);
   "Get new reels" (count box, default 20) + "Analyze links" (textarea, collapsed);
   **Sort new reels** strip: unconfirmed reels with the AI guess pre-selected as one of 4 chips + reason; tap chips to
-  change, "Looks right" confirms; "Guess purposes for older reels" button when some have no guess;
+  change, "Looks right" confirms; "Guess purposes for older reels" button when some unconfirmed reels have no guess (same rule as the batch guess);
   **This week**: open "Do this" steps (tickable); activity (live log, collapsible), job status.
 - **Library**: tabs All / Learn it / Hooks / Formats / Remakes. All + Learn = card grid (cover, title, creator, purpose
   chips). Hooks = hook cards (spoken line big, type, why, copy buttons, "Use in Studio"). Formats = format cards
@@ -119,7 +139,7 @@ desktop, bottom/top bar on narrow screens. Visible version in the corner. "Updat
   saves immediately), "Watch on Instagram". Right = one section per purpose in purpose order, then **More**
   (collapsed: full skeleton, visuals, transcript with timestamps that seek the video, caption, why it performed).
   Remake section: "Make it better" with a "For: me / client name" field; shows progress while the job runs.
-- **Studio**: the existing "Write new scripts" (topic, category, count) moved here, plus "Start from" pickers listing
+- **Studio**: the existing "Write new scripts" (topic, category labeled "Learn from reels about", count) moved here, plus "Start from" pickers listing
   hooks/formats from the banks (the chosen hook text and format name are passed as extra context in the topic for now).
   Result opens inline (load the markdown from `/vault/scripts/...` and show it as preformatted text with Copy).
 - **Settings**: Claude sign-in, Instagram connect (+ Chrome extension setup card + "Other ways"), About you (profile),

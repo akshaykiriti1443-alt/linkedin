@@ -27,6 +27,19 @@ For each script give:
 Plain words. Short sentences. Active voice. Fit the creator's voice and offer from the profile."""
 
 
+REMIX_INSTRUCTION = "Write the scripts asked for at the end of the input. Output Markdown."
+
+
+def unique_path(folder: Path, stem: str, suffix: str = ".md") -> Path:
+    """folder/stem.md, or stem-2.md, stem-3.md ... so a new run never overwrites earlier scripts."""
+    out = folder / f"{stem}{suffix}"
+    n = 2
+    while out.exists():
+        out = folder / f"{stem}-{n}{suffix}"
+        n += 1
+    return out
+
+
 def _skeleton_brief(rec: dict) -> dict:
     a = rec["analysis"]
     return {
@@ -71,8 +84,9 @@ def remix(cfg: Config, lib: Library, topic: str, codes: list[str], category: str
     )
     print(f"Writing {count} script(s) from {len(briefs)} skeleton(s)...")
     if cfg.brain != "api":
-        text = brain.text(prompt, f"Write {count} scripts about: {topic}", REMIX_SYSTEM, cfg.vault_dir,
-                          cfg.model, cfg.effort)
+        # The topic stays in the prompt (sent through stdin). It can hold quotes and & from other people's
+        # hooks, and cmd.exe would break such text on the command line of an npm claude.cmd.
+        text = brain.text(prompt, REMIX_INSTRUCTION, REMIX_SYSTEM, cfg.vault_dir, cfg.model, cfg.effort)
     else:
         import anthropic
 
@@ -92,7 +106,7 @@ def remix(cfg: Config, lib: Library, topic: str, codes: list[str], category: str
         text = "".join(b.text for b in msg.content if b.type == "text")
     out_dir = cfg.vault_dir / "scripts"
     out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / f"{date.today()}_{slugify(topic)}.md"
+    out = unique_path(out_dir, f"{date.today()}_{slugify(topic)}")
     sources_md = "\n".join(f"- {b['source']} ({b['structure']})" for b in briefs)
     out.write_text(f"# Scripts: {topic}\n\n**Skeletons used**\n{sources_md}\n\n---\n\n{text}\n", encoding="utf-8")
     return out

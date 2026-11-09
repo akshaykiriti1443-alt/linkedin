@@ -46,7 +46,7 @@ def _web(cfg: Config):
 
     cookies = igweb.load_cookies(Path(cfg.cookies_file))
     if not cookies.get("sessionid"):
-        raise SystemExit("Connect your Instagram account first (step 3 in ReelVault).")
+        raise SystemExit("Connect Instagram first. Go to Settings and click Connect Instagram.")
     return igweb, igweb.session(cookies)
 
 
