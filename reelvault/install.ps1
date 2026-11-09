@@ -125,6 +125,10 @@ if ($LASTEXITCODE -ne 0) { throw "Package install failed. Run this installer aga
 & $VPy -m pip install --force-reinstall --no-deps $Pkg --quiet --disable-pip-version-check
 if ($LASTEXITCODE -ne 0) { throw "Package install failed. Run this installer again." }
 $Ver = & $VPy -c "import reelvault; print(reelvault.__version__)"
+# Set up the ReelVault folder now (settings + the Chrome extension folder),
+# so it is ready even before the app is opened.
+& $VPy -c "import reelvault.app as a; a.prepare_home()"
+if (-not (Test-Path (Join-Path $RV "chrome-extension\manifest.json"))) { throw "Could not create the Chrome extension folder." }
 Ok "ReelVault $Ver installed"
 
 # ---------------------------------------------------------------- Shortcuts

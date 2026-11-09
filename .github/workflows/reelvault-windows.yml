@@ -25,6 +25,7 @@ jobs:
           & "$rv\tools\ffmpeg\bin\ffmpeg.exe" -version | Select-Object -First 1
           & "$rv\app-env\Scripts\python.exe" -c "import reelvault.app, faster_whisper, instaloader, yt_dlp; print('imports ok')"
           if (-not (Test-Path "$env:USERPROFILE\Desktop\ReelVault.lnk")) { throw "desktop icon missing" }
+          if (-not (Test-Path "$rv\chrome-extension\manifest.json")) { throw "installer did not create the extension folder" }
           & "$env:USERPROFILE\.local\bin\claude.exe" --version
 
       - name: Run the test suite
