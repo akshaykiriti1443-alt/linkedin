@@ -22,6 +22,34 @@ class BrainError(RuntimeError):
     pass
 
 
+class ClaudeTooOld(BrainError):
+    """The installed Claude Code is older than the chosen model needs."""
+
+
+_update = {"tried": False}
+
+
+def update_claude() -> bool:
+    """Run `claude update` once per app run. Returns True if it ran without error."""
+    if _update["tried"]:
+        return False
+    _update["tried"] = True
+    exe = find_claude()
+    if not exe:
+        return False
+    print("  Claude Code is out of date; updating it (about a minute)...")
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    try:
+        r = subprocess.run([exe, "update"], capture_output=True, text=True, encoding="utf-8", timeout=600,
+                           env=_env(), creationflags=flags)
+    except Exception as e:
+        print(f"  Claude Code update didn't run: {e}")
+        return False
+    last = ((r.stdout or "") + (r.stderr or "")).strip().splitlines()
+    print(f"  {last[-1] if last else 'update finished'}")
+    return r.returncode == 0
+
+
 def find_claude() -> str | None:
     """Locate the Claude Code executable, including the Windows native install spot."""
     native = Path.home() / ".local" / "bin" / "claude.exe"
@@ -103,7 +131,29 @@ def _env() -> dict:
 def claude_code(prompt: str, instruction: str, system: str, cwd: Path, schema: dict | None = None,
                 read_files: bool = False, model: str | None = None, effort: str | None = None,
                 timeout: int = 900) -> dict:
-    """Run one headless Claude Code turn. Returns the parsed JSON result envelope."""
+    """Run one headless Claude Code turn. Returns the parsed JSON result envelope.
+
+    If Claude Code is too old for the chosen model, update it and try again; if that
+    doesn't help, use the model this Claude Code supports instead of failing."""
+    args = (prompt, instruction, system, cwd, schema, read_files)
+    if _update.get("no_model"):
+        model = None  # already fell back this run
+    try:
+        return _claude_code_once(*args, model, effort, timeout)
+    except ClaudeTooOld:
+        if update_claude():
+            try:
+                return _claude_code_once(*args, model, effort, timeout)
+            except ClaudeTooOld:
+                pass
+        if not _update.get("no_model"):
+            _update["no_model"] = True
+            print(f"  Using Claude Code's own default model for now (update Claude Code to use {model}).")
+        return _claude_code_once(*args, None, effort, timeout)
+
+
+def _claude_code_once(prompt: str, instruction: str, system: str, cwd: Path, schema: dict | None,
+                      read_files: bool, model: str | None, effort: str | None, timeout: int) -> dict:
     exe = find_claude()
     if not exe:
         raise BrainError("Claude Code is not installed. Open ReelVault and click 'Install Claude Code'.")
@@ -150,6 +200,8 @@ def claude_code(prompt: str, instruction: str, system: str, cwd: Path, schema: d
             raise BrainError("Claude Code is not signed in. Open ReelVault and click 'Sign in to Claude'.")
         if "limit" in low and ("usage" in low or "reached" in low):
             raise BrainError("Your Claude plan's usage limit is reached. ReelVault will continue after it resets.")
+        if "does not support this model" in low or "or newer is required" in low:
+            raise ClaudeTooOld(msg)
         raise BrainError(f"Claude Code failed: {msg[:500]}")
     return data
 

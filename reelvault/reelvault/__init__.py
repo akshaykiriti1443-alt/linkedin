@@ -1,3 +1,3 @@
 """ReelVault: saved Instagram reels -> transcripts, skeletons, scripts, knowledge base."""
 
-__version__ = "0.3.2"
+__version__ = "0.3.3"

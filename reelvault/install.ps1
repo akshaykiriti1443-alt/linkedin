@@ -89,7 +89,13 @@ if (-not $HaveClaude -and -not $SkipClaude) {
         Write-Host "    ReelVault still opens; it will show how to fix this." -ForegroundColor Yellow
     }
 }
-if ((Test-Path $ClaudeExe) -or (Get-Command claude -ErrorAction SilentlyContinue)) { Ok "Claude Code ready" }
+$ClaudeCmd = if (Test-Path $ClaudeExe) { $ClaudeExe } else { (Get-Command claude -ErrorAction SilentlyContinue).Source }
+if ($ClaudeCmd -and -not $SkipClaude) {
+    # Newer Claude models need a recent Claude Code; update it every time.
+    Write-Host "    Updating Claude Code..."
+    try { & $ClaudeCmd update 2>&1 | Select-Object -Last 1 | ForEach-Object { Write-Host "    $_" } } catch {}
+}
+if ($ClaudeCmd) { Ok ("Claude Code ready: " + ((& $ClaudeCmd --version) 2>$null)) }
 
 # ---------------------------------------------------------------- ReelVault
 Step "Installing ReelVault"
