@@ -24,6 +24,9 @@ class BrainError(RuntimeError):
 
 def find_claude() -> str | None:
     """Locate the Claude Code executable, including the Windows native install spot."""
+    native = Path.home() / ".local" / "bin" / "claude.exe"
+    if sys.platform == "win32" and native.exists():
+        return str(native)  # the real .exe: no cmd.exe shim and its 8191-character limit
     for name in ("claude", "claude.exe", "claude.cmd"):
         p = shutil.which(name)
         if p:
@@ -53,6 +56,42 @@ def strict_schema(schema: dict) -> dict:
     return schema
 
 
+def compact_schema(schema: dict) -> dict:
+    """Schema without titles/descriptions, so the command line stays short on Windows
+    (cmd.exe allows only 8191 characters). The descriptions go into the prompt instead."""
+    def strip(node, is_properties=False):
+        if isinstance(node, dict):
+            if is_properties:  # keys here are field names (one is literally "title"): keep them all
+                return {k: strip(v) for k, v in node.items()}
+            return {k: strip(v, k in ("properties", "$defs")) for k, v in node.items()
+                    if k not in ("title", "description")}
+        if isinstance(node, list):
+            return [strip(v) for v in node]
+        return node
+    return strip(strict_schema(schema))
+
+
+def field_guide(schema: dict) -> str:
+    """'skeleton.hook.hook_type: One of ...' lines from the schema's descriptions."""
+    defs = schema.get("$defs", {})
+    lines: list[str] = []
+
+    def walk(node, path):
+        if "$ref" in node:
+            node = defs[node["$ref"].split("/")[-1]]
+        if node.get("type") == "array" and "items" in node:
+            walk(node["items"], path + "[]")
+            return
+        for name, sub in (node.get("properties") or {}).items():
+            p = f"{path}.{name}" if path else name
+            if sub.get("description"):
+                lines.append(f"- {p}: {sub['description']}")
+            walk(sub, p)
+
+    walk(schema, "")
+    return "\n".join(lines)
+
+
 def _env() -> dict:
     env = dict(os.environ)
     # An API key in the environment would make Claude Code bill the API instead of the subscription.
@@ -68,10 +107,15 @@ def claude_code(prompt: str, instruction: str, system: str, cwd: Path, schema: d
     exe = find_claude()
     if not exe:
         raise BrainError("Claude Code is not installed. Open ReelVault and click 'Install Claude Code'.")
+    import tempfile
+
+    sys_file = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8")
+    sys_file.write(system)
+    sys_file.close()
     cmd = [
         exe, "-p", instruction,
         "--output-format", "json",
-        "--system-prompt", system,
+        "--system-prompt-file", sys_file.name,
         "--tools", "Read" if read_files else "",
         "--strict-mcp-config",
         "--setting-sources", "",
@@ -81,7 +125,7 @@ def claude_code(prompt: str, instruction: str, system: str, cwd: Path, schema: d
     if read_files:
         cmd += ["--allowedTools", "Read"]
     if schema:
-        cmd += ["--json-schema", json.dumps(schema)]
+        cmd += ["--json-schema", json.dumps(schema, separators=(",", ":"))]
     if model:
         cmd += ["--model", model]
     if effort:
@@ -92,6 +136,8 @@ def claude_code(prompt: str, instruction: str, system: str, cwd: Path, schema: d
                               cwd=str(cwd), env=_env(), timeout=timeout, creationflags=flags)
     except subprocess.TimeoutExpired:
         raise BrainError("Claude Code took too long and was stopped.")
+    finally:
+        Path(sys_file.name).unlink(missing_ok=True)
     out = proc.stdout.strip()
     try:
         data = json.loads(out.splitlines()[-1] if out else "{}")
@@ -111,7 +157,9 @@ def claude_code(prompt: str, instruction: str, system: str, cwd: Path, schema: d
 def structured(prompt: str, instruction: str, system: str, cwd: Path, model_cls, read_files: bool,
                model: str | None, effort: str | None):
     """Ask Claude Code for output matching a pydantic model; one retry on a bad shape."""
-    schema = strict_schema(model_cls.model_json_schema())
+    full = model_cls.model_json_schema()
+    schema = compact_schema(full)
+    system = system + "\n\n<field_guide>\nWhat each field of your answer means:\n" + field_guide(full) + "\n</field_guide>"
     last = None
     for attempt in range(2):
         data = claude_code(prompt, instruction, system, cwd, schema, read_files, model, effort)
