@@ -151,10 +151,11 @@ def build_app():
 
     @r.post("/__test/clear_cooldown")
     def clear_cooldown():
-        d = dev()
-        with db.tx() as conn:
-            st = dict(d.state or {}, cooldown_until=None, cooldown_reason=None, signed_in=True)
-            conn.execute(db.devices.update().where(db.devices.c.id == d.id).values(state=st))
+        with db.tx() as conn:  # every extension device of the member: a new pairing carries an active stop over
+            for d in conn.execute(select(db.devices).where(db.devices.c.user_id == uid,
+                                                           db.devices.c.kind == "extension")).all():
+                st = dict(d.state or {}, cooldown_until=None, cooldown_reason=None, signed_in=True)
+                conn.execute(db.devices.update().where(db.devices.c.id == d.id).values(state=st))
             conn.execute(db.jobs.update().where(db.jobs.c.user_id == uid, db.jobs.c.state == "waiting")
                          .values(run_after=None))
         return {"ok": True}

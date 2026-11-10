@@ -313,7 +313,7 @@ def test_copy_endpoint_fills_the_mcp_url_and_admin_overrides(member_client, admi
     assert "defaults" not in c
     steps = c["copy"]["connector_steps"]
     assert len(steps) == 5 and "http://localhost/mcp" in steps[2] and steps[1].startswith("Go to **Customize")
-    assert c["copy"]["claude_code_command"] == "claude mcp add --transport http reelvault http://localhost/mcp"
+    assert c["copy"]["claude_code_command"] == "claude mcp add --transport http --scope user reelvault http://localhost/mcp"
     assert admin_client.put("/api/admin/copy", json={"connector_steps": ["Open Claude.", "Add {MCP_URL}."]}
                             ).status_code == 200
     c = member_client.get("/api/copy").json()["copy"]
@@ -330,3 +330,55 @@ def test_source_cap(member_client, monkeypatch):
         assert member_client.post("/api/profile/sources", json={"kind": "paste", "text": f"t{i}"}).status_code == 201
     r = member_client.post("/api/profile/sources", json={"kind": "paste", "text": "t3"})
     assert r.status_code == 400 and "20 sources" in r.json()["error"]
+
+
+def test_read_again_after_pairing_and_for_a_failed_website(member_client, other_client, member, make_device,
+                                                            run_jobs, monkeypatch):
+    """WP7 addition: links added before Chrome is connected wait as needs_paste; "Read my links now" re-reads them."""
+    sk = member_client.post("/api/profile/sources", json={"kind": "skool", "url": "skool.com/@jane-doe"}).json()
+    li = member_client.post("/api/profile/sources", json={"kind": "linkedin_page"}).json()
+    ig = member_client.post("/api/profile/sources", json={"kind": "instagram_bio", "url": "@jane.doe"}).json()
+    pa = member_client.post("/api/profile/sources", json={"kind": "paste", "text": "I run Meta ads for clinics."}).json()
+    assert sk["source"]["status"] == "needs_paste"
+    # not paired yet: plain refusal; another member's id: 404 before anything else
+    r = member_client.post(f"/api/profile/sources/{sk['source']['id']}/read", json={})
+    assert r.status_code == 400 and "Chrome extension" in r.json()["error"]
+    assert other_client.post(f"/api/profile/sources/{sk['source']['id']}/read", json={}).status_code == 404
+    assert member_client.post(f"/api/profile/sources/{pa['source']['id']}/read", json={}).status_code == 400
+    _paired(make_device, member)
+    kinds = {}
+    for s in (sk, li, ig):
+        r = member_client.post(f"/api/profile/sources/{s['source']['id']}/read", json={})
+        assert r.status_code == 200, r.text
+        kinds[s["source"]["kind"]] = jobs.get(r.json()["job"]["id"])
+        assert r.json()["source"]["status"] == "waiting"
+    assert kinds["skool_profile"].kind == "page_read" and kinds["skool_profile"].payload["kind"] == "skool_profile"
+    assert kinds["linkedin_page"].payload["kind"] == "linkedin_self"
+    assert kinds["instagram_bio"].kind == "ig_profile" and kinds["instagram_bio"].payload["handle"] == "jane.doe"
+    # already waiting: busy
+    assert member_client.post(f"/api/profile/sources/{sk['source']['id']}/read", json={}).status_code == 409
+
+    # a website that failed can be read again on the server
+    calls = []
+
+    def fake(url, **kw):
+        calls.append(url)
+        if len(calls) == 1:
+            return website.SiteResult("needs_paste", error=website.NEEDS_PASTE)
+        return website.SiteResult("ok", text="We run Meta ads for dental clinics. " * 20, meta={"title": "Clinic Ads"})
+
+    monkeypatch.setattr(website, "fetch_site", fake)
+    w = member_client.post("/api/profile/sources", json={"kind": "website", "url": "clinicads.example"}).json()
+    run_jobs()
+    assert _src(member.id, w["source"]["id"]).status == "needs_paste"
+    r = member_client.post(f"/api/profile/sources/{w['source']['id']}/read", json={})
+    assert r.status_code == 200 and r.json()["source"]["status"] == "queued"
+    run_jobs()
+    assert _src(member.id, w["source"]["id"]).status == "ok" and len(calls) == 2
+
+
+def test_voice_words_drop_trailing_punctuation():
+    from reelvault.importers import merge
+
+    d = merge.build_digest({"q10": {"value": ["direct"], "text": "Always: patients. Never: leads."}})
+    assert d["voice"]["always"] == ["patients"] and d["voice"]["never"] == ["leads"]

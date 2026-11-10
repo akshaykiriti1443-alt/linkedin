@@ -17,15 +17,13 @@ from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
 from . import db, jobs, outputs, security, work
-from .errors import ApiError, bad_input, not_found
+from .errors import ApiError, bad_input, not_found, read_body
 
 router = APIRouter()
 
 
 async def _json(request: Request, limit: int = 512 * 1024) -> dict:
-    raw = await request.body()
-    if len(raw) > limit:
-        raise ApiError(413, "too_large", "That request is too big.")
+    raw = await read_body(request, limit)
     if not raw:
         return {}
     try:

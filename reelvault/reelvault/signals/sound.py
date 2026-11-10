@@ -191,6 +191,9 @@ def stft_feats(x: np.ndarray, hop_s: float = DSP_HOP_S, n_fft: int = N_FFT) -> d
         "pk": 20 * np.log10(np.abs(raw).max(1) + 1e-9),
         "centroid": (mag * freqs).sum(1) / (mag.sum(1) + 1e-9),
         "flux": np.maximum(0, np.diff(logm, axis=0, prepend=logm[:1])).sum(1),
+        # kick-drum band (40-160 Hz): a music bed's beat stays visible here under a voice
+        "lflux": np.maximum(0, np.diff(logm[:, (freqs >= 40) & (freqs <= 160)], axis=0,
+                                       prepend=logm[:1, (freqs >= 40) & (freqs <= 160)])).sum(1),
         "hf": 10 * np.log10(p2[:, (freqs >= 3000) & (freqs <= 12000)].sum(1) + 1e-10),
     }
 
@@ -525,6 +528,97 @@ def on_beat_grid(t: float, onsets: list[float], period: float | None, tol: float
 
 RELIABLE = {"ding", "typing", "camera_shutter", "cash_register", "click", "laughter", "applause"}
 ONSET_TOL = 0.12
+SPEECH_LEAD = 0.2        # an onset this close before a speech span belongs to the first syllable ("S" of "Step")
+SPEECH_SFX_SCORE = 0.5   # inside speech, only a reliable ML label this sure is kept as an SFX (fix round 1)
+
+
+def flux_beat_grid(raw: "SoundRaw") -> tuple[float, float, float] | None:
+    """(period_s, phase_s, typical beat flux) of the music bed from the spectral-flux envelope of the WHOLE track
+    inside music spans, beats under speech included. Isolated-transient grids (beat_period) miss a ducked bed:
+    under the voice its kicks are too quiet to be onsets, so only a few intro kicks remain and look like SFX."""
+    t, flux = raw.feats.get("t"), raw.feats.get("lflux")
+    spans = raw.music_spans() if raw.groups else []
+    if t is None or flux is None or len(t) < 300 or not spans:
+        return None
+    m = np.zeros(len(t), bool)
+    for a, b in spans:
+        m |= (t >= a) & (t <= b)
+    if m.sum() < 300:
+        return None
+    env = flux - _rolling_median(flux, 25)
+    env = np.where(m, np.maximum(env, 0.0), 0.0)
+    env = env - env[m].mean() * m
+    lo, hi = int(0.3 / DSP_HOP_S), int(1.0 / DSP_HOP_S)
+    r0 = float((env * env).sum())
+    if r0 <= 0 or len(env) <= hi * 3:
+        return None
+    ac = np.array([float((env[:-k] * env[k:]).sum()) / r0 for k in range(lo, hi + 1)])
+    k = int(np.argmax(ac))
+    if ac[k] < 0.2:
+        return None
+    lag = lo + k
+    # prefer the beat over a bar: a strong half-lag peak means lag is two beats
+    if lag // 2 >= lo and ac[lag // 2 - lo] >= 0.6 * ac[k]:
+        lag //= 2
+    pos = np.maximum(env, 0.0)
+    # refine to a fractional period (a 10 ms step drifts by a beat over a minute), with its phase
+    sm = np.convolve(pos, np.ones(5), mode="same")      # +-20 ms tolerance per beat
+    best = (0.0, float(lag), 0.0)
+    for per in np.arange(lag - 1.0, lag + 1.0001, 0.05):
+        for ph in range(int(np.ceil(per))):
+            idx = np.round(ph + per * np.arange(int((len(sm) - ph) / per))).astype(int)
+            idx = idx[idx < len(sm)]
+            sc = float(sm[idx].sum())
+            if sc > best[0]:
+                best = (sc, float(per), float(ph))
+    _, per, ph = best
+    idx = np.round(ph + per * np.arange(int((len(sm) - ph) / per))).astype(int)
+    idx = idx[idx < len(sm)]
+    if int((pos[idx] > 0).sum()) < 6:
+        return None
+    typical = float(np.median(flux[idx][m[idx]])) if m[idx].any() else 0.0
+    return per * DSP_HOP_S, float(t[0] + ph * DSP_HOP_S), typical
+
+
+def _lflux_at(raw: "SoundRaw", tt: float) -> float:
+    t, lf = raw.feats["t"], raw.feats["lflux"]
+    i = int(np.searchsorted(t, tt))
+    return float(lf[max(0, i - 2):i + 3].max()) if len(lf) else 0.0
+
+
+def _drum_like(raw: "SoundRaw", tt: float, grid, music: list, in_speech) -> bool:
+    """True when the bed's other beats outside speech are about as strong in the kick band as this transient: it
+    is one more kick. A few SFX hits that happen to be evenly spaced (a hook's 4 hits) stay hits, because the
+    beats after them are quiet."""
+    period, phase, _ = grid
+    lf = _lflux_at(raw, tt)
+    if lf <= 0:
+        return True
+    hit_ts = [d["t"] for d in raw.dsp if d["label"] == "hit"]
+    beats = []
+    for a, b in music:
+        k0 = int(np.ceil((a - phase) / period))
+        bt = phase + k0 * period
+        while bt <= b:
+            if abs(bt - tt) > period / 2 and not in_speech(bt):
+                beats.append(bt)
+            bt += period
+    if len(beats) >= 4 and sum(1 for bt in beats if _lflux_at(raw, bt) >= 0.5 * lf) >= 0.5 * len(beats):
+        return True
+    # Local check: the nearest plain beats (not themselves onsets) outside speech, within 4 beats. A kick is about
+    # as strong as they are; an SFX hit lands clearly harder (> 1.6x) in the kick band.
+    plain = [bt for bt in beats if abs(bt - tt) <= 4 * period and not any(abs(bt - h) <= 0.05 for h in hit_ts)]
+    plain.sort(key=lambda bt: abs(bt - tt))
+    if plain:
+        ref = max(_lflux_at(raw, bt) for bt in plain[:2])
+        return lf <= 1.6 * ref
+    return False
+
+
+def _on_flux_grid(tt: float, grid, tol: float = 0.04) -> bool:
+    period, phase, _ = grid
+    d = ((tt - phase) / period * 2) % 1.0               # beat or half beat
+    return min(d, 1 - d) * period / 2 <= tol
 
 
 def _in_spans(t: float, spans: list) -> bool:
@@ -567,6 +661,16 @@ def fuse(raw: SoundRaw, speech_spans: list | None = None) -> list[dict]:
     sg = raw.groups.get("speech")
     if sg is not None and len(sg):
         speech += [[float(raw.t0[i]) + 0.25, float(raw.t0[i]) + 0.75] for i in np.flatnonzero(sg >= SPEECH_ON)]
+
+    def in_speech(tt: float) -> bool:
+        """Inside speech, or just before a word starts (sibilants and plosives look like whooshes and clicks)."""
+        return any(a - SPEECH_LEAD <= tt <= b for a, b in speech)
+
+    def sure_in_speech(label: str, score: float) -> bool:
+        return label in RELIABLE and label != "click" and score >= SPEECH_SFX_SCORE
+
+    fgrid = flux_beat_grid(raw)
+    music = raw.music_spans() if raw.groups else []
     sweeps = [d for d in dsp if d["label"] in ("whoosh", "riser")]
     ml = ml_events(raw)
     spans = [e for e in ml if e["label"] in ("laughter", "applause", "crowd")]
@@ -592,6 +696,9 @@ def fuse(raw: SoundRaw, speech_spans: list | None = None) -> list[dict]:
         elif e["score"] >= SFX_CAP and e["label"] in RELIABLE:
             cand.append({"t": e["t"], "t_end": e["t_end"], "label": e["label"], "source": "ml", "score": e["score"],
                          "ratio": e["ratio"]})
+    # fix round 1: an ML+DSP "sound effect", click or whoosh on a syllable is the voice, not an SFX
+    cand = [c for c in cand if not (c["label"] in ("sound_effect", "click", "whoosh") and in_speech(c["t"])
+                                    and not sure_in_speech(c["label"], c["score"]))]
     cand.sort(key=lambda c: -c["ratio"])
     chosen: list[dict] = []
     for c in cand:
@@ -603,6 +710,8 @@ def fuse(raw: SoundRaw, speech_spans: list | None = None) -> list[dict]:
         out.append({"t": c["t"], "t_end": c["t_end"], "label": c["label"], "source": c["source"],
                     "confidence": conf, "score": round(c["score"], 3)})
     for s in sweeps:
+        if s["label"] == "whoosh" and in_speech(s["t"]) and s.get("ml", 0.0) < SPEECH_SFX_SCORE:
+            continue   # the hiss of an "S" or "sh": a DSP whoosh needs the tagger's strong agreement inside speech
         ev = {"t": s["t"], "t_end": s["t_end"], "label": s["label"],
               "source": "ml+dsp" if s.get("ml") else "dsp",
               "confidence": "high" if s.get("ml") or s["label"] == "riser" or s["strength"] >= 0.5 else "low",
@@ -620,6 +729,9 @@ def fuse(raw: SoundRaw, speech_spans: list | None = None) -> list[dict]:
             continue   # a transient inside a whoosh/riser is part of that sound (a hit AT a riser's end is kept)
         if _in_spans(h["t"], speech):
             continue   # plosives and syllable onsets
+        if fgrid and _in_spans(h["t"], music) and _on_flux_grid(h["t"], fgrid) and \
+                _drum_like(raw, h["t"], fgrid, music, in_speech):
+            continue   # a kick of a ducked music bed (its grid runs on under the voice)
         out.append({"t": h["t"], "t_end": h["t_end"], "label": "hit", "source": "dsp", "confidence": "low",
                     "score": round(h["strength"], 3)})
     for s in spans:

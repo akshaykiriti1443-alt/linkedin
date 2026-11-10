@@ -220,3 +220,28 @@ def test_local_fs_check(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "fs_type", lambda p: "fuse.sshfs")
     with pytest.raises(SystemExit):
         db.check_local_fs(tmp_path)
+
+
+def test_chunked_body_without_length_is_capped(client):
+    """Fix round 1: the body cap counts streamed bytes, so a chunked body (no Content-Length) gets 413 too."""
+    from reelvault.server import app as app_mod
+
+    def gen(mb):
+        yield b'{"email":"x@example.com","password":"'
+        for _ in range(mb):
+            yield b"a" * (1 << 20)
+        yield b'"}'
+
+    big = app_mod.MAX_JSON_BODY // (1 << 20) + 1
+    for path in ("/api/auth/login", "/api/auth/signup", "/api/ext/v2/pair/claim"):
+        r = client.post(path, content=gen(big), headers={"content-type": "application/json"})
+        assert r.status_code == 413 and r.json()["code"] == "too_large", (path, r.status_code, r.text[:200])
+    r = client.post("/api/ext/v2/pair/claim", content=gen(1), headers={"content-type": "application/json"})
+    assert r.status_code == 413  # the 4 KB device cap is counted while streaming as well
+
+
+def test_rotate_cli_refuses_with_only_one_key_loaded(rv_env, capsys):
+    """Fix round 1: after a plain `docker compose restart` the old env (one key) is still loaded; rotate said
+    "Re-encrypted 0" and the owner then removed the old key. Now it refuses and says what to do."""
+    assert security._main(["rotate"]) == 1
+    assert "Only one master key is loaded" in capsys.readouterr().out

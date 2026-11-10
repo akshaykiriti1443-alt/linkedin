@@ -157,3 +157,14 @@ WP7 notes:
 - The desktop card was tested through app.py's real HTTP handler (not in a browser) and the worker loop through
   `Worker.tick()`; the Windows `claude.cmd` path is covered only by the argv-length rule.
 - `outputs_per_day` counts every created output (also redo and quick actions), per the design.
+
+## Fix round 1 (2026-11-10)
+- Competitor report pain coverage matches a pain against topic slugs and labels only (`outputs._key_words`: content
+  words, filler and "reels that show" words dropped, plural s dropped so "ads" = "ad"), and counts only the chosen
+  competitors' quick-tagged reels inside the insight window.
+- Remake candidates carry `age_days` and `trend` (rising / fading from the sub_format, else visual_format row of the
+  snapshot or the fresh numbers). The prompt names both fields.
+- Cue sheets: `CueSheetRow.pattern` is optional (null when none fits); at save time a pattern that is not one of the
+  source reels' patterns (tags or sound-map hints) is blanked. The Sound column reads "music in · <plain label>",
+  never "hit (SD14)"; txt/csv use plain kinds.
+- Gemini costs under half a cent read "less than 1 cent" (`presets._money`).

@@ -328,3 +328,89 @@ def test_planted_format_is_found_from_priority_set_plus_weighted_sample():
     assert r["evidence"] == "strong"
     assert row(d, "visual_format", "VF01")["lift"] < 1.2
     assert d["cards"][0]["value"] == "VF04"
+
+
+def test_lift_under_one_never_reads_more_likely():
+    """Integration finding: a slideshow at 0.3x read '0.3x more likely to be an outlier' on Home."""
+    from reelvault import insights
+
+    assert insights.lift_phrase(2.62) == "2.6x more likely to be an outlier"
+    assert insights.lift_phrase(0.28) == "Less likely to be an outlier (0.3x)"
+
+
+# ---------------------------------------------------------------------------------------------- fix round 1
+
+def test_deep_reads_on_hits_do_not_change_lift(member):
+    """Lift must use ONE tagger for every unit (quick tags; member overrides win). Deep reads run almost only on
+    outliers, so letting their (different) answers replace the quick tags turned tagger habits into "lift"."""
+    from reelvault.server import db
+    from reelvault.server import jobs_score as js
+
+    uid = member.id
+    now = db.utcnow()
+    with db.tx() as conn:
+        ids = []
+        for a in range(3):
+            aid = f"acc_fix1_{a}"
+            conn.execute(db.accounts.insert().values(id=aid, user_id=uid, handle=f"comp{a}", role="competitor"))
+            for k in range(20):
+                rid = f"reel_fix1_{a}_{k:02d}"
+                hit = k < 3
+                conn.execute(db.reels.insert().values(
+                    id=rid, user_id=uid, account_id=aid, ig_pk=str(1000 + a * 100 + k), code=f"C{a}x{k:02d}abc",
+                    url=f"https://www.instagram.com/reel/C{a}x{k:02d}abc/", taken_at=now - timedelta(days=30 + k),
+                    score=5.0 if hit else 1.0, tier="priority", band="outlier" if hit else "normal"))
+                vf = "VF04" if hit or k % 4 == 0 else "VF01"
+                conn.execute(db.analyses.insert().values(
+                    id=db.new_id("ana"), reel_id=rid, user_id=uid, level="quick", visual_format=vf,
+                    sound_primary="SD05", hook_type="question", tag_quality="vision"))
+                ids.append((rid, hit))
+
+    def lifts():
+        with db.tx(immediate=False) as conn:
+            units, _ = js.build_units(conn, uid)
+        data = ins.compute(units, now=now) if "now" in ins.compute.__code__.co_varnames else ins.compute(units)
+        return {r["value"]: r["lift"] for r in data["rows"]["visual_format"]}, \
+            {r["value"]: r["lift"] for r in data["rows"]["sound"]}
+
+    before_vf, before_sd = lifts()
+    with db.tx() as conn:  # deep reads on the hits only, with answers the quick tagger never gives
+        for rid, hit in ids:
+            if hit:
+                conn.execute(db.analyses.insert().values(
+                    id=db.new_id("ana"), reel_id=rid, user_id=uid, level="deep", visual_format="VF09",
+                    sound_primary="SD01", hook_type="bold_claim", tag_quality="vision"))
+    after_vf, after_sd = lifts()
+    assert after_vf == before_vf and after_sd == before_sd
+    assert "VF09" not in after_vf and "SD01" not in after_sd
+    assert before_vf["VF04"] > 1.0
+    with db.tx(immediate=False) as conn:  # the reel page still shows the deep read's answer
+        assert js.effective_tags(conn, uid, [ids[0][0]], data=False)[ids[0][0]]["visual_format"] == "VF09"
+
+
+def test_sub_format_lift_uses_the_visual_format_base_rate():
+    """A sub-format holding every reel of one visual format gets that format's lift (it read 1.0x / was pulled
+    toward 1 because ungrouped reels fell out of the base)."""
+    us = []
+    for acc in ("a", "b", "c"):
+        for _ in range(2):
+            us.append(U(acc, 5.0, visual_format="VF04", sub_format="fmt_green"))
+        for _ in range(2):
+            us.append(U(acc, 1.0, w=4.0, visual_format="VF04", sub_format="fmt_green"))
+        us.append(U(acc, 5.0, visual_format="VF01"))
+        for _ in range(4):
+            us.append(U(acc, 1.0, visual_format="VF01"))
+        for _ in range(4):
+            us.append(U(acc, 1.0, visual_format="VF09"))
+    d = ins.compute(us, now=NOW)
+    vf = row(d, "visual_format", "VF04")
+    sf = row(d, "sub_format", "fmt_green")
+    assert sf["n"] == vf["n"] and sf["lift"] == vf["lift"] and vf["lift"] > 1.0
+    assert sf["usage"] == vf["usage"]
+    # one group that holds every outlier must beat normal
+    us2 = [U("a", 5.0, visual_format="VF04", sub_format="fmt_only") for _ in range(4)] + \
+          [U(acc, 1.0, visual_format="VF01") for acc in ("a", "b", "c") for _ in range(10)] + \
+          [U(acc, 1.0, visual_format="VF04", sub_format="fmt_only") for acc in ("b", "c") for _ in range(3)]
+    d2 = ins.compute(us2, now=NOW)
+    assert row(d2, "sub_format", "fmt_only")["lift"] > 1.0
+    assert all(r["value"] != "_none" for r in d2["rows"]["sub_format"])

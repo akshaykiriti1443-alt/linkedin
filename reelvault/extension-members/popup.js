@@ -12,6 +12,7 @@ function n(x) { return Number(x || 0).toLocaleString("en-US"); }
 
 function igText(ig) {
   if (!ig) return "Instagram: not checked yet.";
+  if (ig.waiting) return "Instagram asked us to slow down. ReelVault checks your Instagram account when the wait is over.";
   if (!ig.signed_in) return "You're signed out of Instagram in Chrome. Sign in at instagram.com, then open this again.";
   return `ReelVault reads Instagram as @${ig.username}.`;
 }
@@ -33,8 +34,11 @@ async function render() {
   show("s-cooldown", !!s.cooldown);
   if (s.cooldown) {
     const until = new Date(s.cooldown.until).toLocaleString([], {weekday: "short", hour: "2-digit", minute: "2-digit"});
-    $("s-cooldown").textContent = s.cooldown.reason === "signed_out"
+    const r = s.cooldown.reason;
+    $("s-cooldown").textContent = r === "signed_out"
       ? "You're signed out of Instagram in Chrome. Sign in at instagram.com, then press Try again in ReelVault."
+      : r === "suspended" ? "Instagram has limited your account. ReelVault stopped reading."
+      : r === "challenge" ? `Instagram wants you to confirm it's you. Open instagram.com and follow the steps. ReelVault waits until ${until}.`
       : `Instagram asked us to slow down. ReelVault waits until ${until}.`;
   }
   show("s-action", s.reason === "confirm_account" || s.reason === "update");

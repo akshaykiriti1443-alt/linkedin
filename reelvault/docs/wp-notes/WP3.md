@@ -221,3 +221,19 @@ jobs_media.reel_dir(user_id, reel_id) -> Path
   payload from these functions and checks that it stays under 90,000 characters.
 - **Not tested:** a GPU, Windows, and ffmpeg 7.x (cut timing). If scdet in ffmpeg 7.x stamps one frame late, cuts
   shift by 40 ms, which is still inside the 50 ms tolerance.
+
+## Fix round 1 (2026-11-10)
+- `sound.fuse`: inside speech or up to 0.2 s before a word, a DSP whoosh is dropped unless the tagger agrees
+  strongly (>= 0.5), and an ML+DSP sound_effect / click / whoosh is dropped unless it is a reliable label (not
+  click) with score >= 0.5. Sibilants and plosives no longer read as SFX.
+- Ducked music beds: `flux_beat_grid` finds the bed's beat from the kick-band (40-160 Hz) flux of the whole track
+  inside music spans (fractional period, phase); a DSP-only hit on that grid inside music is a kick when the bed's
+  other beats outside speech are about as strong (`_drum_like`: half of them >= 0.5x, or <= 1.6x the nearest plain
+  beats). The review clips: th_voice, vo_slideshow, th_broll, vo_broll and th_ducked give 0 SFX; hook_cuts keeps its
+  6 true hits and lost its 4 false ones; offcut_sfx and beat_cuts unchanged.
+- `soundmap`: SD09 needs a reason (a hit or music start within 0.3 s after the gap, or music on both sides);
+  laughter / crowd events count for SD16 (`summary.meme_events`).
+- New fixture clip `speech_ducked` (same gTTS voice over a 96 bpm bed ducked 14 dB) and
+  `test_voice_and_ducked_bed_give_no_sfx` (speech, speech_ducked: zero SFX, no SD15). Needs the speech source like
+  the existing speech clip (RV_FIXTURE_SPEECH or network).
+- `work.cue_list` (WP5) shows low-confidence events only as "SFX hit".

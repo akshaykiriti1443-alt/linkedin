@@ -466,6 +466,8 @@ def current_device(request: Request, kind: Literal["extension", "desktop"]):
         user = conn.execute(select(db.users).where(db.users.c.id == dev.user_id)).first() if dev else None
     if dev is None or dev.revoked_at is not None or dev.kind != kind or user is None or user.status != "active":
         raise ApiError(401, "not_signed_in", "Pair this device with ReelVault again.")
+    if reconfirm_due(user):  # 11.1 (c) for devices too; 403 (not 401) so the device stays paired (fix round 1)
+        raise ApiError(403, "reconfirm_needed", "Enter the current community code in ReelVault to keep going.")
     now = db.utcnow()
     if dev.last_seen_at is None or now - dev.last_seen_at >= DEVICE_SEEN_EVERY:
         with db.tx() as conn:
@@ -507,8 +509,15 @@ def _main(argv: list[str]) -> int:
         print(genkey(argv[1] if len(argv) > 1 else None))
         return 0
     if cmd == "rotate":
+        keys = _keys()
+        if len(keys) == 1:  # fix round 1: a container started before the .env change still has only the old key
+            print(f"Only one master key is loaded ({keys[0][0]}), so there is nothing to change to. If you just added "
+                  "a new key in deploy/.env, load it first with ./deploy/setup.sh update, then run rotate again. "
+                  "Don't remove the old key yet.")
+            return 1
         n = rotate_all()
-        print(f"Re-encrypted {n} saved keys with the current master key.")
+        print(f"Re-encrypted {n} saved keys with the current master key ({keys[0][0]}). You can now remove the "
+              "old key from RV_MASTER_KEYS and run ./deploy/setup.sh update.")
         return 0
     print("usage: python -m reelvault.server.security genkey [kid] | rotate")
     return 2

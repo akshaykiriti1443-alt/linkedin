@@ -46,7 +46,7 @@ from sqlalchemy import func, select
 from starlette.concurrency import run_in_threadpool
 
 from . import db, ratelimit, security
-from .errors import ApiError, bad_input
+from .errors import ApiError, bad_input, read_body
 from .settings import get_settings
 
 log = logging.getLogger("reelvault.oauth")
@@ -65,6 +65,8 @@ DCR_UNUSED = timedelta(days=30)
 CLAUDE_CALLBACKS = ("https://claude.ai/api/mcp/auth_callback", "https://claude.com/api/mcp/auth_callback")
 LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1")
 LOOPBACK_PATH = "/callback"
+# Claude Code uses /callback; the MCP Inspector (12.4 smoke test) uses /oauth/callback and /oauth/callback/debug.
+LOOPBACK_PATHS = (LOOPBACK_PATH, "/oauth/callback", "/oauth/callback/debug")
 _VERIFIER = re.compile(r"^[A-Za-z0-9\-._~]{43,128}$")
 _CHALLENGE = re.compile(r"^[A-Za-z0-9\-_]{43}$")
 NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
@@ -96,12 +98,20 @@ def _test_http_cimd() -> bool:
 class OAuthError(Exception):
     """An RFC 6749 error. `redirectable` = may be sent back to the client's redirect_uri."""
 
-    def __init__(self, error: str, description: str, status: int = 400, *, redirectable: bool = True):
+    def __init__(self, error: str, description: str, status: int = 400, *, redirectable: bool = True,
+                 member: str | None = None):
         super().__init__(f"{error}: {description}")
         self.error, self.description, self.status, self.redirectable = error, description, status, redirectable
+        self.member = member  # what a member reads on an error PAGE (plain words); description stays technical
 
     def body(self) -> dict:
         return {"error": self.error, "error_description": self.description}
+
+
+# What members read on the consent error page (fix round 1: no developer words, no dead-end loops).
+MEMBER_INCOMPLETE = "This link from Claude is not complete. Go back to Claude and press Connect again."
+MEMBER_UNKNOWN_APP = "In Claude, remove the ReelVault connector, add it again, then press Connect."
+MEMBER_CIMD = "We couldn't check this app with Claude right now. Try again in a minute."
 
 
 def _oauth_json(body: dict, status: int = 200, *, cors: bool = True, extra: dict | None = None) -> JSONResponse:
@@ -132,7 +142,7 @@ def protected_resource_metadata() -> dict:
 # ============================================================================================== redirect URIs
 
 def _loopback(p) -> bool:
-    return p.scheme == "http" and (p.hostname or "") in LOOPBACK_HOSTS and p.path == LOOPBACK_PATH
+    return p.scheme == "http" and (p.hostname or "") in LOOPBACK_HOSTS and p.path in LOOPBACK_PATHS
 
 
 def redirect_allowed(uri: str) -> bool:
@@ -189,12 +199,27 @@ class Client:
     def host(self) -> str:
         """What the consent page names: the client_id host for CIMD, else the redirect host."""
         if self.kind == "cimd":
-            return urlparse(self.client_id).hostname or self.client_id
+            if self.client_id in KNOWN_CIMD:
+                return KNOWN_CIMD[self.client_id]
+            p = urlparse(self.client_id)
+            if (p.hostname or "") in ("claude.ai", "claude.com"):
+                hosts = {urlparse(u).hostname or "" for u in self.redirect_uris}
+                return "Claude Code on your computer" if hosts and hosts <= set(LOOPBACK_HOSTS) \
+                    else "Claude (claude.ai or the desktop app)"
+            return p.hostname or self.client_id
         hosts = {urlparse(u).hostname or "" for u in self.redirect_uris}
         if hosts and hosts <= set(LOOPBACK_HOSTS):
             return "Claude Code on this computer"
         claude = {h for h in hosts if h in ("claude.ai", "claude.com")}
         return sorted(claude)[0] if claude else (sorted(hosts)[0] if hosts else "an app")
+
+
+# Anthropic's client metadata documents (Claude Code 2.1.3xx signs in with CIMD, not DCR): plain names so the
+# consent page and Settings > AI > Connected Claude apps tell them apart (fix round 1).
+KNOWN_CIMD = {
+    "https://claude.ai/oauth/mcp-oauth-client-metadata": "Claude (claude.ai or the desktop app)",
+    "https://claude.ai/oauth/claude-code-client-metadata": "Claude Code on your computer",
+}
 
 
 def is_cimd_id(client_id: str) -> bool:
@@ -215,23 +240,28 @@ def _fetch_cimd(url: str) -> dict:
                                   allow_private=allow_http, headers={"Accept": "application/json"})
     except security.FetchError as e:
         raise OAuthError("invalid_client", f"Could not read the client metadata document: {e}",
-                         redirectable=False) from None
+                         redirectable=False, member=MEMBER_CIMD) from None
     if res.status != 200 or res.redirects:
         raise OAuthError("invalid_client", "The client metadata document must answer 200 without redirects.",
-                         redirectable=False)
+                         redirectable=False, member=MEMBER_CIMD)
     try:
         doc = json.loads(res.content.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
-        raise OAuthError("invalid_client", "The client metadata document is not JSON.", redirectable=False) from None
+        raise OAuthError("invalid_client", "The client metadata document is not JSON.", redirectable=False,
+                         member=MEMBER_CIMD) from None
     if not isinstance(doc, dict):
-        raise OAuthError("invalid_client", "The client metadata document must be a JSON object.", redirectable=False)
+        raise OAuthError("invalid_client", "The client metadata document must be a JSON object.", redirectable=False,
+                         member=MEMBER_CIMD)
     if doc.get("client_id") != url:
-        raise OAuthError("invalid_client", "client_id in the document must equal its URL.", redirectable=False)
+        raise OAuthError("invalid_client", "client_id in the document must equal its URL.", redirectable=False,
+                         member=MEMBER_CIMD)
     uris = doc.get("redirect_uris")
     if not isinstance(uris, list) or not uris or not all(isinstance(u, str) for u in uris):
-        raise OAuthError("invalid_client", "The document needs redirect_uris.", redirectable=False)
+        raise OAuthError("invalid_client", "The document needs redirect_uris.", redirectable=False,
+                         member=MEMBER_CIMD)
     if doc.get("token_endpoint_auth_method") != "none":
-        raise OAuthError("invalid_client", "token_endpoint_auth_method must be none.", redirectable=False)
+        raise OAuthError("invalid_client", "token_endpoint_auth_method must be none.", redirectable=False,
+                         member=MEMBER_CIMD)
     keep = {k: doc[k] for k in ("client_id", "client_name", "client_uri", "logo_uri", "redirect_uris",
                                 "grant_types", "response_types", "token_endpoint_auth_method", "scope")
             if k in doc}
@@ -241,7 +271,7 @@ def _fetch_cimd(url: str) -> dict:
 def resolve_client(client_id: str, *, refresh: bool = False) -> Client:
     """CIMD URL (fetched, cached 24 h) or a registered DCR client. Raises OAuthError(invalid_client)."""
     if not client_id or not isinstance(client_id, str):
-        raise OAuthError("invalid_request", "client_id is missing.", redirectable=False)
+        raise OAuthError("invalid_request", "client_id is missing.", redirectable=False, member=MEMBER_INCOMPLETE)
     t = db.oauth_clients
     with db.read() as c:
         row = c.execute(select(t).where(t.c.client_id == client_id)).first()
@@ -269,7 +299,8 @@ def resolve_client(client_id: str, *, refresh: bool = False) -> Client:
                           update={"metadata": md, "redirect_uris": md["redirect_uris"]})
         return Client(client_id, "cimd", list(md.get("redirect_uris") or []), str(md.get("client_name") or ""), md)
     if row is None or row.kind != "dcr":
-        raise OAuthError("invalid_client", "This app is not registered. Connect it again.", redirectable=False)
+        raise OAuthError("invalid_client", "This app is not registered. Connect it again.", redirectable=False,
+                         member=MEMBER_UNKNOWN_APP)
     md = dict(row.metadata or {})
     return Client(client_id, "dcr", list(row.redirect_uris or []), str(md.get("client_name") or ""), md)
 
@@ -328,9 +359,18 @@ def _revoke_family(conn, family_id: str) -> int:
                         .values(revoked_at=db.utcnow())).rowcount
 
 
+RECONFIRM_GRANT = "Enter the current community code in ReelVault first, then connect again."
+
+
 def _user_active(conn, user_id: str) -> bool:
     u = conn.execute(select(db.users.c.status).where(db.users.c.id == user_id)).first()
     return bool(u and u.status == "active")
+
+
+def _reconfirm_due(conn, user_id: str) -> bool:
+    """11.1 (c): a member whose community code check is due gets no new codes or tokens (fix round 1)."""
+    u = conn.execute(select(db.users).where(db.users.c.id == user_id)).first()
+    return bool(u is not None and security.reconfirm_due(u))
 
 
 def grant_authorization_code(form: dict) -> dict:
@@ -371,8 +411,19 @@ def grant_authorization_code(form: dict) -> dict:
         conn.execute(c_t.update().where(c_t.c.code_hash == h, c_t.c.used_at.is_(None)).values(used_at=now))
         if not _user_active(conn, row.user_id):
             raise OAuthError("invalid_grant", "This ReelVault account is turned off.")
+        if _reconfirm_due(conn, row.user_id):
+            raise OAuthError("invalid_grant", RECONFIRM_GRANT)
         out = _issue(conn, client_id=client_id, user_id=row.user_id, family_id=_family_for_code(h),
                      resource=resource)
+        # A member who has picked no AI yet and connects Claude means "use my Claude plan" (fix round 1): set it
+        # and hand the waiting AI jobs to the connector, so step 5 ("Analyze my new ReelVault reels") works.
+        mode = conn.execute(select(db.users.c.ai_mode).where(db.users.c.id == row.user_id)).scalar()
+        if mode is None:
+            from . import work
+
+            conn.execute(db.users.update().where(db.users.c.id == row.user_id, db.users.c.ai_mode.is_(None))
+                         .values(ai_mode="claude_connector"))
+            work.resume_ai_jobs(row.user_id, conn=conn)
     out.pop("_refresh_hash", None)
     return out
 
@@ -403,6 +454,8 @@ def grant_refresh(form: dict) -> dict:
             err = OAuthError("invalid_grant", "This refresh token has expired. Connect again.")
         elif not _user_active(conn, row.user_id):
             err = OAuthError("invalid_grant", "This ReelVault account is turned off.")
+        elif _reconfirm_due(conn, row.user_id):
+            err = OAuthError("invalid_grant", RECONFIRM_GRANT)
         else:
             err = None
             out = _issue(conn, client_id=row.client_id, user_id=row.user_id, family_id=row.family_id,
@@ -542,6 +595,13 @@ def _error_page(message: str, status: int = 400) -> HTMLResponse:
                  "message the community admin.</p>", status=status)
 
 
+def _reconfirm_page() -> HTMLResponse:
+    return _page("Enter the community code", "<h1>Enter the community code first</h1>"
+                 "<p>ReelVault needs the current community code before it connects to Claude.</p>"
+                 "<p><a href=\"/#login\">Open ReelVault and enter the code</a>. Then go back to Claude and press "
+                 "Connect again.</p>", status=403)
+
+
 FIELDS = ("response_type", "client_id", "redirect_uri", "code_challenge", "code_challenge_method", "state", "scope",
           "resource")
 
@@ -562,9 +622,10 @@ def _check_request(params: dict) -> AuthRequest:
     redirect_uri = params.get("redirect_uri") or ""
     client = resolve_client(client_id)
     if not redirect_uri:
-        raise OAuthError("invalid_request", "redirect_uri is missing.", redirectable=False)
+        raise OAuthError("invalid_request", "redirect_uri is missing.", redirectable=False, member=MEMBER_INCOMPLETE)
     if not redirect_allowed(redirect_uri) or not redirect_matches(client.redirect_uris, redirect_uri):
-        raise OAuthError("invalid_request", "This app's return address is not allowed.", redirectable=False)
+        raise OAuthError("invalid_request", "This app's return address is not allowed.", redirectable=False,
+                         member=MEMBER_INCOMPLETE)
     state = params.get("state") or ""
     if len(state) > 1000:
         raise OAuthError("invalid_request", "state is too long.")
@@ -605,12 +666,15 @@ def _authorize_get(request: Request) -> Response:
         ar = _check_request(params)
     except OAuthError as e:
         if not e.redirectable or not params.get("redirect_uri"):
-            return _error_page(e.description, e.status)
+            log.info("authorize refused: %s", e.description)
+            return _error_page(e.member or MEMBER_INCOMPLETE, e.status)
         return _redirect_with(params["redirect_uri"], {"error": e.error, "error_description": e.description,
                                                        "state": params.get("state")})
     user = security.optional_user(request)
     if user is None:
         return _login_redirect(request)
+    if security.reconfirm_due(user):
+        return _reconfirm_page()
     try:
         ratelimit.hit("oauth_authorize", user.id, AUTHORIZE_PER_MEMBER_HOUR, "hour")
     except ratelimit.TooMany:
@@ -638,6 +702,8 @@ def _authorize_post(request: Request, form: dict) -> Response:
     user = security.optional_user(request)
     if user is None:
         return _error_page("Your sign-in ended. Go back to Claude and press Connect again.", 401)
+    if security.reconfirm_due(user):
+        return _reconfirm_page()
     sess = request.state.session
     if not _same_origin(request) or not security.consteq(form.get("csrf_token"), sess.csrf_token):
         return _error_page("This page expired. Go back to Claude and press Connect again.", 403)
@@ -646,7 +712,8 @@ def _authorize_post(request: Request, form: dict) -> Response:
         ar = _check_request(params)
     except OAuthError as e:
         if not e.redirectable:
-            return _error_page(e.description, e.status)
+            log.info("authorize refused: %s", e.description)
+            return _error_page(e.member or MEMBER_INCOMPLETE, e.status)
         return _redirect_with(params["redirect_uri"], {"error": e.error, "error_description": e.description,
                                                        "state": params.get("state")})
     if form.get("decision") != "allow":
@@ -737,7 +804,7 @@ def _register_sync(request: Request, body: Any) -> JSONResponse:
     bad = [u for u in uris if not redirect_allowed(u)]
     if bad:
         return _oauth_json({"error": "invalid_redirect_uri",
-                            "error_description": "Only Claude's callback or a loopback /callback is allowed."}, 400)
+                            "error_description": "Only Claude's callback or a loopback /callback (or /oauth/callback) is allowed."}, 400)
     method = body.get("token_endpoint_auth_method") or "none"
     if method not in ("none", "client_secret_post", "client_secret_basic"):
         return _oauth_json({"error": "invalid_client_metadata",
@@ -783,7 +850,7 @@ def _register_sync(request: Request, body: Any) -> JSONResponse:
 @router.post("/oauth/register", include_in_schema=False)
 async def register(request: Request):
     try:
-        body = json.loads((await request.body()) or b"null")
+        body = json.loads((await read_body(request, 64 * 1024)) or b"null")
     except ValueError:
         body = None
     return await run_in_threadpool(_register_sync, request, body)

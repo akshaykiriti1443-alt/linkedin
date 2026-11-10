@@ -417,6 +417,35 @@ def test_cookie_fields_are_refused_and_logged(ext, member):
 
 # ============================================================================================== stops, cooldown, budget
 
+def test_cooldown_survives_disconnect_and_repair(ext, member, member_client, anon):
+    """Fix round 1 (5.7): a 24 h stop is per member. Pairing a new extension (Disconnect + Connect, or a
+    reinstall) keeps the stop and the day's Instagram call counts."""
+    aid, jid, _ = leased_pull(ext, member)
+    pull_pages(ext, jid, 1)
+    assert ext.post(f"/jobs/{jid}/fail", {"code": "rate_limited", "http_status": 429}).json()["cooldown_until"]
+    used = member_client.get("/api/ext/status").json()
+    code = member_client.post("/api/ext/pair", json={}).json()["code"]
+    c = anon.post("/api/ext/v2/pair/claim", json={"code": code, "name": "Chrome", "version": "2.0.0",
+                                                  "kind": "extension"})
+    assert c.status_code == 200, c.text
+    assert c.json()["cooldown_until"] and c.json()["cooldown_reason"] == "rate_limited"
+    e2 = Ext(anon, {"Authorization": "Bearer " + c.json()["token"]})
+    confirm(c.json()["device_id"])
+    h = e2.post("/hello", {"version": "2.0.0"}).json()
+    assert h["cooldown_reason"] == "rate_limited"
+    with db.tx() as conn:
+        conn.execute(db.jobs.update().where(db.jobs.c.id == jid).values(run_after=None))
+    lz = e2.lease()
+    assert lz["job"] is None and lz["reason"] == "cooldown"
+    st = member_client.get("/api/ext/status").json()
+    assert st["device"]["cooldown_until"] and st["device"]["cooldown_reason"] == "rate_limited"
+    assert jobs_ig.ig_scope(member.id) == f"igu:{member.id}"
+    with db.tx(immediate=False) as conn:
+        dev = conn.execute(select(db.devices).where(db.devices.c.id == c.json()["device_id"])).first()
+        assert jobs_ig.budget_view(conn, dev)["day_used"] >= 1  # the day's counts are per member, not per device
+    assert used["paired"]
+
+
 def test_rate_limit_cooldown_keeps_cursor_and_resumes(ext, member, make_user):
     aid, jid, _ = leased_pull(ext, member)
     pull_pages(ext, jid, 1)  # 50 stored
@@ -502,7 +531,7 @@ def test_budget_refusal(ext, member):
     lz = ext.lease(["ig_pull"], budget={"hour_used": 120, "day_used": 130, "cdn_day_used": 0})
     assert lz["job"] is None and lz["reason"] == "budget"
     # Server-side counts also refuse, whatever the extension reports.
-    db.bump(db.usage_counters, {"scope": ext.device_id, "key": "ig_calls",
+    db.bump(db.usage_counters, {"scope": jobs_ig.ig_scope(member.id), "key": "ig_calls",
                                 "window": jobs_ig.ratelimit.window_key("day")}, count=400)
     lz = ext.lease(["ig_pull"], budget={"hour_used": 0, "day_used": 0, "cdn_day_used": 0})
     assert lz["reason"] == "budget"

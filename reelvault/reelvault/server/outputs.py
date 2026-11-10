@@ -527,12 +527,46 @@ def report_numbers(user_id: str, account_ids: list[str] | None) -> dict:
             nums["data_note"] = {**fresh["data_note"], "saves_line": fresh["data_note"].get("saves_line", SAVES_LINE)}
         if isinstance(fresh.get("rows"), dict):
             nums["recent"] = _recent(fresh["rows"])
+            _fill_trends(nums.get("remake_candidates") or [], fresh["rows"])
         for k in ("remake_candidates", "topic_coverage"):
             if fresh.get(k):
                 nums[k] = fresh[k]
         if isinstance(fresh.get("accounts"), list) and fresh["accounts"] and isinstance(fresh["accounts"][0], dict):
             nums["accounts"] = fresh["accounts"]
     return nums
+
+
+STOPWORDS = set("""a about after again all also an and any are as at be been before being but by can cant could
+did do does dont each even for from get gets getting go goes going got had has have how i if in into is it its just
+keep like make makes many more most much my need needs never no not now of off on one only or other our out over own
+really reel reels same see show shows so some still stop such than that the their them then there these they this
+those through to too two up us very want wants was way we were what when where which while who why will with without
+work working would you your yours made making video videos content post posts thing things""".split())
+
+
+def _key_words(text: str) -> set[str]:
+    """Content words of a pain or a topic name: 3+ letters, no filler words, a plural 's' dropped (ads = ad)."""
+    out = set()
+    for w in re.findall(r"[a-z]{2,}", (text or "").lower()):
+        if w.endswith("s") and len(w) >= 3 and not w.endswith(("ss", "us", "is")):
+            w = w[:-1]
+        if len(w) >= 2 and w not in STOPWORDS and (len(w) >= 3 or w == "ad"):
+            out.add(w)
+    return out
+
+
+def _aware(dt):
+    from datetime import timezone
+
+    return dt.replace(tzinfo=timezone.utc) if dt is not None and dt.tzinfo is None else dt
+
+
+def _fill_trends(cands: list[dict], rows: dict) -> None:
+    """A remake candidate's trend = the rising/fading flag of its sub-format row, else of its visual format."""
+    by = {(dim, row.get("value")): row.get("trend") for dim in ("sub_format", "visual_format")
+          for row in (rows or {}).get(dim) or []}
+    for cnd in cands:
+        cnd["trend"] = by.get(("sub_format", cnd.get("format_id"))) or by.get(("visual_format", cnd.get("vf")))
 
 
 def _recent(rows: dict) -> dict:
@@ -603,8 +637,9 @@ def _fallback_numbers(user_id: str, account_ids: list[str] | None) -> dict:
         ).all()
         handles = {x.id: x.handle for x in accounts}
         cands = []
+        now = db.utcnow()
         for y in cand_rows:
-            if y.taken_at is not None and y.taken_at < cutoff:
+            if y.taken_at is not None and _aware(y.taken_at) < cutoff:
                 continue
             cm = _can_make(y.visual_format, caps)
             cands.append(
@@ -614,6 +649,7 @@ def _fallback_numbers(user_id: str, account_ids: list[str] | None) -> dict:
                     "url": y.url,
                     "thumb": _thumb(user_id, y),
                     "score": round(y.score or 0, 1),
+                    "age_days": None if y.taken_at is None else max(0, (now - _aware(y.taken_at)).days),
                     "trend": None,
                     "format_id": y.format_id,
                     "vf": y.visual_format,
@@ -621,21 +657,25 @@ def _fallback_numbers(user_id: str, account_ids: list[str] | None) -> dict:
                     "weaknesses": list((y.deep or {}).get("weaknesses") or []),
                 }
             )
+        _fill_trends(cands, sd.get("rows") or {})
         cands.sort(key=lambda z: (0 if z["can_make"]["ok"] else 1, -z["score"]))
         topics = c.execute(
             select(db.topics).where(db.topics.c.user_id == user_id, db.topics.c.status == "active")
         ).all()
+        # Pain coverage (fix round 1): match a pain against each topic's SLUG and LABEL only (the descriptions all
+        # read "reels that show ...", which matched every pain), ignoring filler words, and count only the chosen
+        # competitors' reels inside the insight window.
+        topic_rows = []
+        if topics and ids:
+            topic_rows = c.execute(
+                select(a.c.topics).select_from(r.join(a, (a.c.reel_id == r.c.id) & (a.c.level == "quick")))
+                .where(r.c.user_id == user_id, r.c.account_id.in_(ids),
+                       (r.c.taken_at.is_(None)) | (r.c.taken_at >= cutoff))).all()
         cover = []
         for pain in d.get("top_pains") or []:
-            words = {w for w in re.findall(r"[a-z]{4,}", pain.lower())}
-            hit = [
-                t.slug for t in topics if words & set(re.findall(r"[a-z]{4,}", f"{t.label} {t.description}".lower()))
-            ]
-            n = 0
-            if hit:
-                for row in c.execute(select(a.c.topics).where(a.c.user_id == user_id, a.c.level == "quick")):
-                    if set(row.topics or []) & set(hit):
-                        n += 1
+            words = _key_words(pain)
+            hit = [t.slug for t in topics if words & _key_words(f"{t.slug.replace('-', ' ')} {t.label}")]
+            n = sum(1 for row in topic_rows if set(row.topics or []) & set(hit)) if hit else 0
             cover.append({"pain": pain, "covered_by_topics": hit, "competitor_reels": n})
     note = dict(sd.get("data_note") or {})
     note.setdefault("saves_line", SAVES_LINE)
@@ -1110,10 +1150,13 @@ def _check_script(c, user_id: str, out, s: dict, d: dict) -> dict:
     urls = {x.id: x.url for x in c.execute(select(r.c.id, r.c.url).where(r.c.user_id == user_id, r.c.id.in_(srcs)))}
     eb = s.get("editor_brief") or {}
     eb["references"] = [_fill_ref(x, srcs, urls) for x in eb.get("references") or []]
+    pats = _source_patterns(c, user_id, srcs)
     for row in s.get("sound_cue_sheet") or []:
         row["ref"] = _fill_ref(row.get("ref"), srcs, urls)
         if not row.get("source_hint"):
             row["source_hint"] = taxonomy.sfx_source(row.get("kind"))
+        if row.get("pattern") and row["pattern"] not in pats:
+            row["pattern"] = None  # not a pattern of the source reels: blank it, don't show a wrong one
     if s.get("sub_format"):
         if db.get_owned(c, db.formats, user_id, s["sub_format"]) is None:
             s["sub_format"] = ""
@@ -1312,7 +1355,23 @@ def render_numbers(c, user_id: str, out, data: dict) -> dict:
         .select_from(r.join(acc, acc.c.id == r.c.account_id, isouter=True))
         .where(r.c.user_id == user_id, r.c.id.in_(list(set(ids))))
     ).all()
-    return {"reels": {x.id: {"url": x.url, "score": x.score, "handle": x.handle} for x in rows}}
+    return {"reels": {x.id: {"url": x.url, "score": x.score, "handle": x.handle} for x in rows},
+            "sound_patterns": sorted(_source_patterns(c, user_id, ids))}
+
+
+def _source_patterns(c, user_id: str, ids) -> set[str]:
+    """The sound patterns (SD ids) the source reels really have: their tags and their sound map's hints."""
+    pats: set[str] = set()
+    ids = list(set(ids or []))
+    if not ids:
+        return pats
+    a, rs = db.analyses, db.reel_signals
+    for x in c.execute(select(a.c.sound_primary, a.c.sound_secondary).where(
+            a.c.user_id == user_id, a.c.reel_id.in_(ids))).all():
+        pats.update(p for p in [x.sound_primary, *(x.sound_secondary or [])] if isinstance(p, str))
+    for x in c.execute(select(rs.c.sound).where(rs.c.user_id == user_id, rs.c.reel_id.in_(ids))).all():
+        pats.update(p for p in ((x.sound or {}).get("pattern_hints") or []) if isinstance(p, str))
+    return pats
 
 
 def redo(user_id: str, out_id: str, notes: str | None) -> tuple[str, str]:
@@ -1398,12 +1457,25 @@ def _ref_text(ref: dict | None, numbers: dict) -> str:
     return f"▶ @{h or '?'} {ref.get('start', '')}-{ref.get('end', '')}"
 
 
+def _cue_sound(r: dict, numbers: dict) -> str:
+    """'music in' or 'hit · Hit or music drop on the hook': plain words, and the pattern only when the source
+    reels really have it (editors can't read 'SD14', and models filled in unrelated patterns)."""
+    from .. import insights
+
+    kind = _plain(r.get("kind")) or "sound"
+    pat = r.get("pattern")
+    known = numbers.get("sound_patterns")
+    if pat and (known is None or pat in known):
+        return f"{kind} · {insights.sd_label(pat)}"
+    return kind
+
+
 def _cue_rows(rows: list[dict], numbers: dict) -> list[list[Any]]:
     return [
         [
             r.get("t"),
             r.get("until"),
-            f"{r.get('kind')} ({r.get('pattern')})",
+            _cue_sound(r, numbers),
             r.get("what"),
             r.get("purpose"),
             r.get("level"),
@@ -1417,6 +1489,23 @@ def _cue_rows(rows: list[dict], numbers: dict) -> list[list[Any]]:
 CUE_HEAD = ["Time", "Until", "Sound", "What", "Why", "Level", "Where to get it", "Hear it in the original"]
 
 
+def _plain(v) -> str:
+    """An id like word_by_word_highlight in plain words for the editor."""
+    return str(v or "").replace("_", " ").strip()
+
+
+def _join(parts) -> str:
+    return ", ".join(str(p).strip() for p in parts if p not in (None, "") and str(p).strip()) or "none"
+
+
+def _music_line(m: dict) -> str:
+    """Integration finding: an empty music block printed "none, ,  BPM, " in the editor brief."""
+    if not m or str(m.get("type") or "").lower() in ("", "none"):
+        return "none (voice only)" if not m.get("notes") else "none"
+    bpm = f"{m['bpm_range']} BPM" if m.get("bpm_range") else ""
+    return _join([_plain(m.get("type")), m.get("mood"), bpm, _plain(m.get("level"))])
+
+
 def _brief_md(eb: dict, numbers: dict) -> str:
     m = eb.get("music") or {}
     lines = [
@@ -1424,9 +1513,9 @@ def _brief_md(eb: dict, numbers: dict) -> str:
         f"{eb.get('length_s')} s",
         f"- How to shoot it: {eb.get('format_recipe')}",
         f"- Pace: {eb.get('pace')}",
-        f"- Captions: {eb.get('caption_style')}, {eb.get('caption_look')}",
+        "- Captions: " + _join([_plain(eb.get("caption_style")), eb.get("caption_look")]),
         f"- Color and look: {eb.get('color_look')}",
-        f"- Music: {m.get('type')}, {m.get('mood')}, {m.get('bpm_range')} BPM, {m.get('level')}"
+        "- Music: " + _music_line(m)
         + (f". Options: {', '.join(m.get('options') or [])}" if m.get("options") else "")
         + (f". {m.get('notes')}" if m.get("notes") else ""),
     ]
@@ -1719,7 +1808,7 @@ def render_text(kind: str, data: dict | None, numbers: dict | None = None) -> st
             lines += ["", "SOUND CUES"]
             for r in s.get("sound_cue_sheet") or []:
                 lines.append(
-                    f"{r.get('t')}{('-' + r['until']) if r.get('until') else ''}  {r.get('kind')} "
+                    f"{r.get('t')}{('-' + r['until']) if r.get('until') else ''}  {_plain(r.get('kind'))} "
                     f"({r.get('level')}): {r.get('what')}. Why: {r.get('purpose')}. Get it: "
                     f"{r.get('source_hint')}"
                     + (
@@ -1751,7 +1840,7 @@ def render_csv(kind: str, data: dict | None, numbers: dict | None = None) -> str
                         b.get("say"),
                         b.get("on_screen_text"),
                         b.get("visual"),
-                        "; ".join(f"{r.get('t')} {r.get('kind')}: {r.get('what')}" for r in inb),
+                        "; ".join(f"{r.get('t')} {_plain(r.get('kind'))}: {r.get('what')}" for r in inb),
                         "; ".join(r.get("source_hint") or "" for r in inb),
                         "; ".join((r.get("ref") or {}).get("url") or "" for r in inb if r.get("ref")),
                     ]

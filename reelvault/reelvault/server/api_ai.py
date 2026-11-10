@@ -26,7 +26,7 @@ from .. import ai
 from ..ai import base as aib
 from ..ai import presets
 from . import db, jobs, ratelimit, security, work
-from .errors import ApiError, bad_input, not_found
+from .errors import ApiError, bad_input, not_found, read_body
 from .settings import get_settings
 
 log = logging.getLogger("reelvault.api_ai")
@@ -44,9 +44,7 @@ NO_VISION_WARNING = (
 
 
 async def _json(request: Request, limit: int = 64 * 1024) -> dict:
-    raw = await request.body()
-    if len(raw) > limit:
-        raise ApiError(413, "too_large", "That request is too big.")
+    raw = await read_body(request, limit, "That request is too big.")  # counted while streaming (chunked bodies too)
     if not raw:
         return {}
     try:

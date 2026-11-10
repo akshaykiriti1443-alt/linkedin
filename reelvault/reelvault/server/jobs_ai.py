@@ -24,7 +24,7 @@ from .. import ai
 from .. import schema_members as S
 from ..ai import base as aib
 from . import db, jobs, security, work
-from .jobs import Fail, Pause, Retry, handler, on_lease_expired
+from .jobs import Fail, Pause, Retry, handler, on_lease_expired, on_retry
 
 log = logging.getLogger("reelvault.jobs_ai")
 
@@ -341,6 +341,36 @@ def _tag_expired(conn, job):
     payload = dict(job.payload or {})
     payload.pop("reel_ids", None)
     conn.execute(db.jobs.update().where(db.jobs.c.id == job.id).values(payload=payload))
+
+
+@on_retry("tag_reels")
+def _tag_retry(conn, job):
+    """Retry of a failed tag batch (integration finding: it re-ran an empty batch, because its reels stayed
+    tag_state='failed', and on the executor of the old AI mode). Its reels go back to the queue and the member's
+    current tag slot (API key, Claude or desktop) takes them."""
+    ids = list((job.payload or {}).get("reel_ids") or [])
+    r = db.reels
+    if ids:
+        conn.execute(r.update().where(r.c.user_id == job.user_id, r.c.id.in_(ids),
+                                      r.c.tag_state.in_(("failed", "leased")))
+                     .values(tag_state="queued", tag_batch=None))
+    conn.execute(r.update().where(r.c.user_id == job.user_id, r.c.tag_batch == job.id).values(tag_batch=None))
+    conn.execute(db.jobs.update().where(db.jobs.c.id == job.id).values(
+        state="canceled", dedupe_key=None, finished_at=db.utcnow()))
+    return work.ensure_tag_slot(job.user_id, conn=conn)
+
+
+def _retry_on_current_executor(conn, job):
+    """A retried AI job runs on the member's CURRENT AI (they may have switched mode since it failed)."""
+    ex = work.ai_executor(job.user_id, job.kind, conn=conn)
+    if ex and ex != job.executor:
+        conn.execute(db.jobs.update().where(db.jobs.c.id == job.id).values(
+            executor=ex, state="queued" if ex == "server" else "waiting"))
+    return None
+
+
+for _k in ("analyze_reel", "make_output", "draft_profile", "suggest_topics", "retag_topics", "name_formats"):
+    on_retry(_k)(_retry_on_current_executor)
 
 
 @on_lease_expired("retag_topics")

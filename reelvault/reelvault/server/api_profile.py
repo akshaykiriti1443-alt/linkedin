@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func, select
 
 from . import db, jobs, ratelimit, security, storage
-from .errors import ApiError, bad_input, not_found
+from .errors import ApiError, bad_input, not_found, read_body
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -34,7 +34,7 @@ APPROVE_MSG = "Answer questions 1, 3, 7 and 12 first."
 # ============================================================================================== helpers
 
 async def _body(request: Request) -> dict:
-    raw = await request.body()
+    raw = await read_body(request, 8 * 1024 * 1024)
     if not raw:
         return {}
     try:
@@ -505,6 +505,72 @@ async def paste_source(source_id: str, request: Request, user=Depends(security.c
     return {"source": source_json(src)}
 
 
+@router.post("/api/profile/sources/{source_id}/read")
+def read_again(source_id: str, user=Depends(security.current_user)):
+    """Read a link again (WP7 addition, see docs/wp-notes/WP7.md). Used after the member connects Chrome in
+    onboarding step 2 ("Read my links now"), and as "Try again" on a failed website. Same routing as a new source:
+    Skool / LinkedIn / Instagram bio through the paired extension (Skool falls back to the server fetch when
+    `skool_fetch` is on); website and PDF on the server."""
+    with db.tx(immediate=False) as conn:
+        src = _read_source(conn, user.id, source_id)
+        if src is None:
+            raise not_found()
+        paired = _extension_paired(conn, user.id)
+    if src.status in ("queued", "waiting"):
+        raise ApiError(409, "busy", "We're already reading that link.")
+    kind = src.kind
+    if kind in ("paste", "linkedin_text"):
+        raise bad_input("There is nothing to read again. Paste new text instead.")
+    no_ext = "Connect the Chrome extension first, or paste the text."
+    job_id = None
+    if kind in ("website", "linkedin_pdf"):
+        ratelimit.hit("profile_import", user.id, 20, "day",
+                      message="You added 20 links today. Paste text instead, or try again tomorrow.")
+        if kind == "linkedin_pdf" and not src.file_path:
+            raise bad_input("Upload the PDF again.")
+        with db.tx() as conn:
+            job_id = jobs.enqueue(user.id, "import_source", {"source_id": src.id}, executor="server", priority=10,
+                                  dedupe_key=f"import_source:{src.id}", conn=conn,
+                                  progress={"done": 0, "total": 1, "message": "Reading your link"})
+            conn.execute(db.profile_sources.update().where(db.profile_sources.c.id == src.id).values(
+                status="queued", via="server" if kind == "website" else "upload", error=None, job_id=job_id))
+    elif kind in ("skool_group", "skool_profile"):
+        if paired:
+            job_id = _page_read(user.id, src.id, kind, src.url or "")
+        elif db.get_setting("skool_fetch"):
+            ratelimit.hit("skool_fetch", user.id, 5, "day",
+                          message="You can read 5 Skool pages a day. Paste the text instead.")
+            with db.tx() as conn:
+                job_id = jobs.enqueue(user.id, "import_source", {"source_id": src.id}, executor="server",
+                                      priority=10, dedupe_key=f"import_source:{src.id}", conn=conn,
+                                      progress={"done": 0, "total": 1, "message": "Reading your Skool page"})
+                conn.execute(db.profile_sources.update().where(db.profile_sources.c.id == src.id).values(
+                    status="queued", via="server", error=None, job_id=job_id))
+        else:
+            raise bad_input(no_ext)
+    elif kind == "linkedin_page":
+        if not paired:
+            raise bad_input(no_ext)
+        job_id = _page_read(user.id, src.id, "linkedin_self", "https://www.linkedin.com/in/me/")
+    elif kind == "instagram_bio":
+        if not paired:
+            raise bad_input(no_ext)
+        from ..importers import instagram
+        from . import jobs_ig
+
+        try:
+            handle = instagram.normalize_handle(src.url or "")
+        except ValueError as e:
+            raise bad_input(str(e)) from None
+        job_id = jobs_ig.request_profile(user.id, handle, "member_bio", source_id=src.id)
+    with db.read() as conn:
+        src = _read_source(conn, user.id, source_id)
+    out: dict[str, Any] = {"source": source_json(src)}
+    if job_id:
+        out["job"] = _job_json(job_id)
+    return out
+
+
 # ============================================================================================== topics
 
 def _slugify(text: str) -> str:
@@ -768,3 +834,40 @@ def get_copy(user=Depends(security.current_user)):
     if user.role == "admin":
         out["defaults"] = {k: v for k, v in copy_defaults().items() if not k.startswith("_")}
     return out
+
+
+# ============================================================================================== taxonomy lists for the UI
+
+RECIPE_CHOICES = {
+    "broll_share": ["none", "light", "medium", "heavy"],
+    "setting": ["studio", "desk", "car", "walk_and_talk", "kitchen", "stage", "event", "outdoors", "screen_only", "other"],
+    "framing": ["close", "medium", "wide", "none"],
+}
+
+
+def _nice(s: str) -> str:
+    s = (s or "").replace("_", " ").strip()
+    return s[:1].upper() + s[1:]
+
+
+@router.get("/api/taxonomy")
+def get_taxonomy(user=Depends(security.current_user)):
+    """Ids and labels for the "Fix tags" editor and the reel filters (WP7 addition; reads WP5's taxonomy.json).
+    Labels only: no cues, no prompt text."""
+    from .. import taxonomy
+
+    t = taxonomy.load()
+
+    def ids(key: str) -> list[dict]:
+        out = []
+        for item in t.get(key) or []:
+            if isinstance(item, dict) and item.get("id"):
+                out.append({"id": item["id"], "label": item.get("label") or item["id"],
+                            **({"needs": item["needs"]} if item.get("needs") is not None else {})})
+            elif isinstance(item, str):
+                out.append({"id": item, "label": _nice(item)})
+        return out
+
+    return {"version": t.get("version"), "visual_format": ids("visual_format"), "sound_design": ids("sound_design"),
+            "hook_types": ids("hook_types"), "cta_types": ids("cta_types"), "caption_styles": ids("caption_styles"),
+            **{k: [{"id": v, "label": _nice(v)} for v in vals] for k, vals in RECIPE_CHOICES.items()}}

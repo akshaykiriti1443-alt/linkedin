@@ -40,7 +40,8 @@ W, H, FPS = 540, 960, 25
 SR = 48000
 HERE = Path(__file__).resolve().parent
 DEFAULT_OUT = HERE / "media"
-CLIPS = ("sfx_cuts", "talking_head", "screen", "split", "greenscreen", "slideshow", "noaudio", "speech")
+CLIPS = ("sfx_cuts", "talking_head", "screen", "split", "greenscreen", "slideshow", "noaudio", "speech",
+         "speech_ducked")
 
 
 # ============================================================================================== sound synthesis
@@ -603,9 +604,52 @@ def clip_speech(out: Path) -> dict | None:
             "expect_vf": "VF01", "speech": [1.0, round(1.0 + len(sp) / SR, 2)]}
 
 
+def clip_speech_ducked(out: Path) -> dict | None:
+    """Fix round 1: the same voice over a music bed that is loud in the intro and the pauses and ducked 14 dB under
+    the voice (kicks every beat). True SFX: none. Sibilants, plosives and the bed's intro kicks must not read as
+    whooshes, clicks or hits."""
+    with tempfile.TemporaryDirectory() as td:
+        src = _speech_source(Path(td))
+        if src is None:
+            return None
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(src), "-f", "f32le", "-ac", "1", "-ar", str(SR), "-"],
+                             capture_output=True, check=True).stdout
+    sp = np.frombuffer(raw, np.float32).copy()[:int(30 * SR)]
+    sp /= np.abs(sp).max() + 1e-9
+    lead = 2.0
+    d = round(len(sp) / SR + lead + 1.5, 2)
+    cuts = [round(x, 2) for x in np.arange(3.3, d - 1.0, 3.3)]
+    # duck envelope: -14 dB while the voice is on (50 ms attack, 300 ms release)
+    env = np.zeros(int(d * SR), np.float32)
+    a = int(lead * SR)
+    lvl = np.convolve(np.abs(sp), np.ones(int(0.05 * SR)) / int(0.05 * SR), mode="same")
+    env[a:a + len(sp)] = (lvl[:len(env) - a] > 0.02).astype(np.float32)
+    held = np.convolve(env, np.ones(int(0.3 * SR)), mode="full")[:len(env)] > 0      # 300 ms release
+    gain = np.where(held, _db(-14), 1.0).astype(np.float32)
+    gain = np.convolve(gain, np.ones(int(0.05 * SR)) / int(0.05 * SR), mode="same")  # 50 ms ramps
+    bed = music(d, bpm=96, hats=False)
+    n = min(len(bed), len(gain))
+    bed = bed[:n] * gain[:n] * _db(-8)
+
+    def frames():
+        for i in range(int(d * FPS)):
+            t = i / FPS
+            k = scene_index(t, cuts)
+            img = gradient_bg((70, 80, 95), (35, 40, 50))
+            draw_face(img, 270, 430, s=1.0 if k % 2 == 0 else 1.12, mouth=0.5 + 0.5 * np.sin(t * 13))
+            yield img
+
+    tr = Track(d)
+    tr.add(bed, 0.0, None)
+    tr.add(sp, lead, "speech", gain_db=-2)
+    encode(out, frames(), int(d * FPS), tr.done())
+    return {"duration": d, "cuts": cuts, "events": tr.truth, "layout": "talking head, ducked music bed",
+            "expect_vf": "VF01", "expect_sd": "SD03", "sfx": 0, "speech": [lead, round(lead + len(sp) / SR, 2)]}
+
+
 BUILDERS = {"sfx_cuts": clip_sfx_cuts, "talking_head": clip_talking_head, "screen": clip_screen,
             "split": clip_split, "greenscreen": clip_greenscreen, "slideshow": clip_slideshow,
-            "noaudio": clip_noaudio, "speech": clip_speech}
+            "noaudio": clip_noaudio, "speech": clip_speech, "speech_ducked": clip_speech_ducked}
 
 
 # ============================================================================================== entry points

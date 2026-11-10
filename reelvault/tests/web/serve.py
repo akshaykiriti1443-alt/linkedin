@@ -1,6 +1,6 @@
 """Seeded ReelVault Members server for the web UI tests (WP7). Not a test module.
 
-    python tests/web/serve.py --port 9241 --data-dir /tmp/somewhere [--fake-ai-port 9251]
+    python tests/web/serve.py --port 9241 --data-dir /tmp/somewhere [--fake-ai-port 9251] [--control-port 9242]
 
 Seeds, through the real APIs where it can (extension API for pulls, jobs for scoring/insights, WP5's fake
 OpenAI-compatible server for outputs):
@@ -9,6 +9,10 @@ OpenAI-compatible server for outputs):
   the top 3 outliers, covers, topics, an approved profile, insights + named formats, a discovery run with
   candidates, and one finished output of each kind.
 Then serves web + worker (role "all") on --port, prints one line `READY {json}` and runs until SIGTERM.
+--control-port runs a FAKE EXTENSION on 127.0.0.1 for the UI tests (FakeExtension below): POST /claim {"code"}
+pairs a device with the code the UI shows and reports "signed in as @member.reader"; POST /work {"device_id"}
+leases and finishes every waiting Instagram job with the WP2 fixtures (pulls, profiles, discovery, checks, pages).
+Videos are never served (SERVER_CDN_FETCH=0 and ig_videos jobs end with nothing uploaded).
 All made-up data; nothing leaves this machine (the fake AI listens on 127.0.0.1).
 """
 from __future__ import annotations
@@ -254,14 +258,185 @@ def seed(fake_port: int) -> dict:
     return out
 
 
+# ============================================================================================== fake extension
+
+class FakeExtension:
+    """Talks to the live server over HTTP exactly like the real extension (device token, /api/ext/v2/*)."""
+
+    IG_USER_ID, IG_USERNAME = "61000777", "member.reader"
+
+    def __init__(self, base: str):
+        import httpx
+
+        self.base = base
+        self.http = httpx.Client(base_url=base, timeout=30)
+        self.tokens: dict[str, str] = {}
+        self.mk = _mk()
+
+    def _post(self, token: str, path: str, body: dict) -> dict:
+        r = self.http.post("/api/ext/v2" + path, json=body, headers={"Authorization": f"Bearer {token}"})
+        if r.status_code >= 400:
+            raise RuntimeError(f"{path}: {r.status_code} {r.text[:300]}")
+        return r.json()
+
+    def claim(self, code: str) -> dict:
+        r = self.http.post("/api/ext/v2/pair/claim", json={"code": code, "name": "Chrome on Test", "version": "2.0.0",
+                                                           "kind": "extension"})
+        if r.status_code >= 400:
+            raise RuntimeError(f"claim: {r.status_code} {r.text[:300]}")
+        d = r.json()
+        self.tokens[d["device_id"]] = d["token"]
+        self.hello(d["device_id"])
+        return {"device_id": d["device_id"]}
+
+    def hello(self, device_id: str) -> dict:
+        import datetime as dt
+
+        return self._post(self.tokens[device_id], "/hello", {"version": "2.0.0", "ig": {
+            "signed_in": True, "user_id": self.IG_USER_ID, "username": self.IG_USERNAME,
+            "checked_at": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")}})
+
+    def _trimmed(self, raw_list):
+        from reelvault import igparse
+
+        return [igparse.trim_media(m) for m in igparse.parse_ig_json(self.mk.dumps({"items": raw_list}))["items"]]
+
+    def _user(self, u: dict, followers: int = 120_000):
+        from reelvault import igparse
+
+        raw = self.mk.web_profile_info(u, followers=followers)["data"]["user"]
+        return igparse.trim_user(igparse.parse_ig_json(self.mk.dumps(raw)))
+
+    def _owner(self, handle: str) -> dict:
+        mk = self.mk
+        for u in (mk.TARGET, mk.OTHER, mk.PARTNER):
+            if u["username"] == handle:
+                return u
+        return {"pk": 70_000_000 + sum(map(ord, handle)), "username": handle, "full_name": handle.title()}
+
+    def work(self, device_id: str, max_jobs: int = 20) -> dict:
+        tok = self.tokens[device_id]
+        self.hello(device_id)
+        done = []
+        budget = {"hour_used": 0, "day_used": 0, "cdn_day_used": 0}
+        for _ in range(max_jobs):
+            lz = self._post(tok, "/jobs/lease", {"kinds": ["ig_pull", "ig_profile", "ig_videos", "ig_discover", "ig_check",
+                                                            "page_read"], "budget": budget})
+            job = lz.get("job")
+            if not job:
+                return {"done": done, "reason": lz.get("reason")}
+            jid, kind, p = job["id"], job["kind"], job["payload"]
+            if kind == "ig_pull":
+                owner = self._owner(p["handle"])
+                timeline = self.mk.account_timeline(120, owner=owner, seed=sum(map(ord, p["handle"])) % 50)
+                for i, off in enumerate((0, 50)):
+                    body = {"page": i + 1, "paging": {"max_id": self.mk.cursor_for(off + 50), "more_available": True,
+                                                      "source": "clips"}, "items": self._trimmed(timeline[off:off + 50])}
+                    if i == 0:
+                        body["account"] = self._user(owner)
+                    if self._post(tok, f"/jobs/{jid}/items", body).get("stop"):
+                        break
+                self._post(tok, f"/jobs/{jid}/done", {"stop_reason": "target_reached"})
+            elif kind == "ig_profile":
+                u = self._owner(p["handle"])
+                if p.get("purpose") == "member_bio":
+                    self._post(tok, "/ig-user", {"job_id": jid, "user": self._user(u, 4_000)})
+                else:
+                    self._post(tok, f"/jobs/{jid}/items", {"account": self._user(u), "items": []})
+                self._post(tok, f"/jobs/{jid}/done", {"stop_reason": "no_more", "result": {"found": True}})
+            elif kind == "ig_discover":
+                mk = self.mk
+                users = [dict(self._user(u), source=p.get("mode") or "search") for u in (mk.PARTNER, mk.OTHER, mk.TARGET)]
+                self._post(tok, f"/jobs/{jid}/done", {"stop_reason": "no_more", "result": {"users": users}})
+            elif kind == "ig_check":
+                mk = self.mk
+                for c in p.get("candidates") or []:
+                    u = self._owner(c["handle"])
+                    raw = [mk.media(u, mk.FIXTURE_NOW - k * 2 * mk.DAY, 1000 + k, views=90_000 + 1000 * k, likes=3000,
+                                    comments=40) for k in range(12)]
+                    self._post(tok, f"/jobs/{jid}/items", {"candidate": {"cand_id": c["cand_id"]}, "account": self._user(u),
+                                                          "items": self._trimmed(raw),
+                                                          "paging": {"source": "clips", "max_id": None,
+                                                                     "more_available": True}})
+                self._post(tok, f"/jobs/{jid}/done", {"stop_reason": "no_more"})
+            elif kind == "page_read":
+                if p.get("kind") == "linkedin_self":
+                    page = {"final_url": "https://www.linkedin.com/in/new-member/", "title": "New Member | LinkedIn",
+                            "text": "New Member About I run Meta ads for dental clinics. Experience Clinic Ads Co Founder"}
+                else:
+                    nd = json.loads((ROOT / "tests" / "fixtures" / "skool" / "page_read_group.json").read_text())
+                    page = {"final_url": p["url"], "title": "Skool", "next_data": nd}
+                self._post(tok, f"/jobs/{jid}/page", page)
+                self._post(tok, f"/jobs/{jid}/done", {"stop_reason": "done"})
+            else:  # ig_videos: this test server never serves videos
+                items = p.get("items") or []
+                self._post(tok, f"/jobs/{jid}/done", {"stop_reason": "no_more", "result": {
+                    "uploaded": 0, "failed": [i.get("reel_id") for i in items]}})
+            done.append(kind)
+        return {"done": done}
+
+
+def control_server(port: int, fake: FakeExtension):
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    lock = threading.Lock()
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            n = int(self.headers.get("content-length") or 0)
+            try:
+                body = json.loads(self.rfile.read(n) or b"{}")
+                with lock:
+                    if self.path == "/claim":
+                        out, status = fake.claim(body["code"]), 200
+                    elif self.path == "/work":
+                        out, status = fake.work(body["device_id"]), 200
+                    else:
+                        out, status = {"error": "unknown"}, 404
+            except Exception as e:  # noqa: BLE001 - report to the test
+                out, status = {"error": str(e)}, 500
+            data = json.dumps(out).encode()
+            self.send_response(status)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    srv = ThreadingHTTPServer(("127.0.0.1", port), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def _raise_member_minute_limit() -> None:
+    """The screen sweep loads about 60 screens a minute as ONE member, more than the 300 API calls a minute a real
+    member may make (security.current_user). Test server only: that one limit is raised to 5,000."""
+    from reelvault.server import ratelimit
+
+    real = ratelimit.hit
+
+    def hit(scope, key, limit, window, *a, **kw):
+        if scope == "user" and window == "minute":
+            limit = max(limit, 5000)
+        return real(scope, key, limit, window, *a, **kw)
+
+    ratelimit.hit = hit
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--data-dir", required=True)
     ap.add_argument("--fake-ai-port", type=int, default=0)
+    ap.add_argument("--control-port", type=int, default=0)
     a = ap.parse_args(argv)
-    if not 9240 <= a.port <= 9259:
-        raise SystemExit("WP7 web tests use ports 9240-9259.")
+    for p in (a.port, a.fake_ai_port or a.port + 10, a.control_port or a.port + 1):
+        if p == 8765 or not 9000 <= p <= 9999:  # default 9240-9259; other runs pass their own range
+            raise SystemExit("Web tests use ports 9000-9999 (default 9240-9259), never 8765.")
+    os.environ["SERVER_CDN_FETCH"] = "0"
     from reelvault.server import api_admin, db, dev
 
     info = dev.configure(a.port, a.data_dir)
@@ -270,11 +445,15 @@ def main(argv=None) -> int:
     from reelvault.server.app import create_app, prepare_runtime
 
     prepare_runtime()
+    _raise_member_minute_limit()
     seeded = seed(a.fake_ai_port or (a.port + 10))
     with db.tx() as conn:
         info["community_code"] = api_admin.create_community_code(conn)
     info.update({"member_email": dev.MEMBER_EMAIL, "member_password": MEMBER_PASSWORD, "port": a.port})
     info.update({k: v for k, v in seeded.items() if k != "fake_ai"})
+    ctl_port = a.control_port or a.port + 1
+    info["control_port"] = ctl_port
+    control_server(ctl_port, FakeExtension(f"http://127.0.0.1:{a.port}"))
     print("READY " + json.dumps(info), flush=True)
 
     def _exit(*_a):

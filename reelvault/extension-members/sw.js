@@ -192,10 +192,17 @@ async function closeReadingTab() {
 function classify(r, path, {allowNonJson = false} = {}) {
   const apiPath = path.startsWith("/api/");
   const where = String(r.url || "");
-  if (r.type === "opaqueredirect" || (r.status >= 300 && r.status < 400)) throw new IgStop("signed_out", {http_status: r.status, message: "redirect"});
-  if (/\/accounts\/suspended/.test(where)) throw new IgStop("challenge", {message: "Instagram sent /accounts/suspended/"});
-  if (/\/challenge\//.test(where)) throw new IgStop("challenge", {http_status: r.status});
-  if (/\/accounts\/login/.test(where)) throw new IgStop("signed_out", {http_status: r.status});
+  let wherePath = where;
+  try { wherePath = new URL(where).pathname; } catch { /* keep the raw string */ }
+  // Redirects are followed (reader.js), so r.url is where Instagram sent us (5.7).
+  if (/\/accounts\/suspended/.test(wherePath)) throw new IgStop("challenge", {http_status: r.status, message: "Instagram sent /accounts/suspended/"});
+  if (/\/challenge\//.test(wherePath)) throw new IgStop("challenge", {http_status: r.status, message: "redirect to /challenge/"});
+  if (/\/accounts\/login/.test(wherePath)) throw new IgStop("signed_out", {http_status: r.status, message: "redirect to login"});
+  // A redirect we can't see, or to a place we don't know: treat it as a checkpoint (24 h, no Try again), not as
+  // "signed out" (30 min). Being careful costs a day; guessing wrong could cost the account.
+  if (r.type === "opaqueredirect" || (r.status >= 300 && r.status < 400) || (r.redirected && apiPath)) {
+    throw new IgStop("challenge", {http_status: r.status, message: "redirect to an unknown page"});
+  }
   if (r.status === 429) throw new IgStop("rate_limited", {http_status: 429});
   if (r.status === 0 || r.status >= 500) return {retry: true, status: r.status};
   let data = null, isJson = false;
@@ -474,6 +481,11 @@ async function runVideos(job) {
     if (!v || !isCdnUrl(v.url)) { st.failed.push({reel_id: it.reel_id, reason: "no_video"}); continue; }
     await take("cdn");
     const got = await download(v.url, VIDEO_MAX);
+    // 5.7: a CDN 429 is the same stop as an API 429 (24 h). Three CDN 403s in a row also stop. The reels that
+    // are left stay waiting for a later try on the server (finish/fail never mark them failed for good).
+    if (got.error === "http_429") throw new IgStop("rate_limited", {http_status: 429, message: "cdn 429"});
+    st.cdn403 = got.error === "http_403" ? (st.cdn403 || 0) + 1 : 0;
+    if (st.cdn403 >= 3) throw new IgStop("rate_limited", {http_status: 403, message: "cdn 403 x3"});
     if (got.error) { st.failed.push({reel_id: it.reel_id, reason: got.error}); await saveState(); continue; }
     let cover = null;
     const c = job.payload.want_cover ? coverOf(m) : null;
@@ -489,7 +501,7 @@ async function runVideos(job) {
     await saveState();
     await progress(st.i + 1, items.length, `Saved ${st.uploaded} of ${items.length} videos`);
   }
-  return {stop_reason: "no_more", result: {uploaded: st.uploaded, failed: st.failed}};
+  return {stop_reason: "no_more", result: {uploaded: st.uploaded, failed: st.failed, media_info: st.media_info}};
 }
 
 async function runDiscover(job) {
@@ -669,6 +681,9 @@ async function runJob(raw, resumed) {
       if (typeof e.message === "string" && e.message !== e.code) body.message = e.message.slice(0, 300);
       if (Array.isArray(e.raw_keys)) body.raw_keys = e.raw_keys.slice(0, 50).map(String);
       if (Number.isFinite(e.cooldown_s)) body.cooldown_s = e.cooldown_s;
+      if (job.kind === "ig_videos" && curJob && curJob.state) {   // the server counts these Instagram calls too
+        body.media_info = curJob.state.media_info || 0;
+      }
       let until = null;
       try {
         const r = await api(`/jobs/${job.id}/fail`, body);
@@ -785,13 +800,22 @@ async function claim(link) {
   if (r.status !== 200 || !data || !data.token) {
     return {ok: false, error: (data && data.error) || "That code didn't work. Make a new link in ReelVault and paste it again."};
   }
-  const keep = await local.get(["budget", "debug_sent"]);
+  // An Instagram stop (cooldown) and the budget survive a new pairing (5.7): Disconnect + Connect must not
+  // clear "ReelVault waits until tomorrow".
+  const keep = await local.get(["budget", "debug_sent", "cooldown", "ig"]);
   await local.clear();
+  if (data.cooldown_until) keep.cooldown = {until: Date.parse(data.cooldown_until), reason: data.cooldown_reason || ""};
+  if (!(keep.cooldown && keep.cooldown.until > Date.now())) delete keep.ig;   // the last check, only during a stop
   await put({...keep, pair: {server: pl.origin, host: pl.host, token: data.token, device_id: data.device_id,
                              user_name: (data.user && data.user.name) || ""}});
   let igs = {signed_in: false};
   try { await hello(); } catch { /* pacing stays at the safe defaults */ }
-  try { igs = await signInCheck(); } catch (e) { console.warn("sign-in check failed", e); }
+  const cd = await get("cooldown");
+  if (cd && cd.until > Date.now() && cd.reason !== "signed_out") {
+    igs = (await get("ig")) || {signed_in: false, waiting: true};   // no Instagram call during a stop
+  } else {
+    try { igs = await signInCheck(); } catch (e) { console.warn("sign-in check failed", e); }
+  }
   try { await hello(); } catch { /* the next tick says hello */ }
   setTimeout(() => tick("now"), 500);
   return {ok: true, name: (data.user && data.user.name) || "", ig: igs, host: pl.host};
@@ -814,7 +838,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       case "status": return statusForPopup();
       case "claim": return claim(msg.link);
       case "disconnect": {                        // deletes local storage and calls nothing else (5.2)
-        const keep = await local.get(["budget"]);
+        const keep = await local.get(["budget", "cooldown", "ig", "debug_sent"]);   // a stop outlives Disconnect (5.7)
+        if (!(keep.cooldown && keep.cooldown.until > Date.now())) { delete keep.cooldown; delete keep.ig; }
         await local.clear(); await put(keep); await closeReadingTab(); badge("");
         return {ok: true};
       }

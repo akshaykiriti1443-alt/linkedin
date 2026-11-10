@@ -509,3 +509,15 @@ def test_new_tags_refresh_insights_even_without_a_call(ext, member_client, membe
     with db.read() as conn:
         assert conn.execute(select(func.count()).select_from(db.jobs).where(
             db.jobs.c.kind == "refresh_insights", db.jobs.c.state == "queued")).scalar() == 0
+
+
+def test_accounts_say_when_chrome_is_not_connected(member_client, member):
+    """Fix round 1: with no extension paired the page said "Reading now". The list now carries the extension state
+    and the pull job says it waits for Chrome."""
+    r = member_client.post("/api/accounts", json={"handles": ["@some.agency"], "pull": True})
+    assert r.status_code == 201, r.text
+    d = member_client.get("/api/accounts").json()
+    assert d["extension"] == {"paired": False, "online": False}
+    acc = d["accounts"][0]
+    assert acc["pulling"] and acc["pull_job"]["state"] != "running"
+    assert "Waiting for Chrome" in (acc["pull_job"]["progress"] or {}).get("message", "")

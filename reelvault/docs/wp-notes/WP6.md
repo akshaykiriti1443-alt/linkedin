@@ -142,5 +142,31 @@ All 18 tools of the design plus 2 (see deviations): `get_my_profile`, `list_pend
 - **MCP Inspector smoke test**: `npx @modelcontextprotocol/inspector`, transport "Streamable HTTP", URL
   `https://HOST/mcp`, connection type "Via Proxy" (the direct browser mode sends an Origin we don't allow), then
   "Open Auth Settings" > "Quick OAuth Flow". Expect the ReelVault consent page, then `tools/list` with 20 tools.
-- **Claude Code**: `claude mcp add --transport http reelvault https://HOST/mcp`, then `/mcp` > Authenticate. It
-  registers with DCR and a `http://localhost:<port>/callback` redirect.
+- **Claude Code**: `claude mcp add --transport http --scope user reelvault https://HOST/mcp`, then `/mcp` >
+  Authenticate. Claude Code 2.1.3xx signs in with CIMD (`client_id=https://claude.ai/oauth/claude-code-client-metadata`,
+  loopback `/callback`), not DCR; the consent page and Settings > AI name it "Claude Code on your computer"
+  (fix round 1). Older versions register with DCR and a `http://localhost:<port>/callback` redirect.
+
+
+## Fix round 1 (2026-11-10)
+- Reconfirm gate (11.1 c) now covers the connector: the consent page shows "Enter the community code first" (403,
+  link to `/#login`), the code and refresh grants answer `invalid_grant`, and every MCP tool returns a plain
+  ToolFail (`mcp_server._call` checks status + reconfirm for each call). Device tokens get 403 `reconfirm_needed`
+  (not 401, so the extension and desktop app stay paired).
+- First successful code exchange with `users.ai_mode` NULL sets `claude_connector` and moves waiting AI jobs to
+  `mcp` (`work.resume_ai_jobs`). `list_pending_work` says "click Use my Claude plan" when the mode is still unset;
+  the connector panel shows "Connected, not in use" while another mode is chosen; connector.json notes say to click it.
+- A tag batch or deep read leased by a chat that stopped before saving is handed out again first
+  (`work._held_mcp`, same batch id, lease renewed), like `get_next_task` already did.
+- CIMD names: the two known claude.ai metadata URLs map to "Claude (claude.ai or the desktop app)" and "Claude Code
+  on your computer"; other claude.ai/claude.com CIMD ids are named by loopback vs https redirect.
+- Loopback redirect paths `/oauth/callback` and `/oauth/callback/debug` are accepted (MCP Inspector), loopback
+  only. Consent error pages show plain lines (`oauth.MEMBER_*`); the technical text goes to the log and to
+  `error_description` for redirectable errors.
+- `save_output.data` is a plain object checked on the server against the output kind's model; `get_output_brief`
+  returns that model's JSON Schema as `schema`. tools/list went from about 60,000 to about 35,700 characters
+  (`test_mcp_fix1.py::test_tools_list_stays_small` asserts < 40,000). Not done: trimming the long field
+  descriptions of `save_analysis` / `save_tags` (they double as the deep-read field guide).
+- The plugin ZIP link is hidden in Settings > AI (no plain install steps for a marketplace-less ZIP yet; the
+  connector alone is enough, 7.3.5). `/download/claude-plugin.zip` still works.
+- `claude mcp add` commands use `--scope user`.

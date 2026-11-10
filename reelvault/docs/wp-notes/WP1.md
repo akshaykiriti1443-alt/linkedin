@@ -271,3 +271,30 @@ raises `TooMany` (an `ApiError` 429 with `Retry-After`).
 - Postgres: the suite has a Postgres switch and a CI job (continue-on-error), never run here (no Postgres server).
 - GitHub raw downloads are blocked from this box, so fetch_models.sh fell back to the Hugging Face mirror for YuNet
   (same sha256 pin). Both URLs are in the script.
+
+## Fix round 1 (2026-11-10)
+- Login, password change, reset and the wrong-code throttles count the attempt atomically BEFORE the slow check
+  (`ratelimit.hit`, the `db.bump` upsert) and give it back on success (`ratelimit.refund`), so only failures use up
+  the 5/email and 20/IP per 15 min. Concurrent guesses can no longer all pass a read-only `check()`
+  (30 parallel guesses: 5 x 401, 25 x 429). `reset_password` hashes the new password only for a valid link.
+- Body cap: `EdgeMiddleware` counts streamed bytes in its receive wrapper and raises a 413 HTTPException when the
+  running total passes the cap (a chunked body has no Content-Length). Content-Length stays as a fast path. The
+  `_json` helpers read through `errors.read_body(request, limit)`, which also counts while streaming.
+- `prepare_runtime` turns a PermissionError on `/data` into one plain line. New `deploy/entrypoint.sh` (under tini):
+  as root it gives `/data` to uid 10001 (once) and drops to it with setpriv; as uid 10001 it just runs the command.
+  The Dockerfile has `ARG RV_RUN_USER=reelvault` (default stays non-root); the PaaS guide sets root per platform
+  (Fly `[build.args]`, Railway `RAILWAY_RUN_UID=0`, Render `RV_RUN_USER=root`). Not run in Docker here (no daemon);
+  the entrypoint is tested natively as root (`test_deploy_kit.py`).
+- `setup.sh`: plain-words stop when `compose build`/`up` fails; a re-run with an existing `deploy/.env` prints the
+  sign-in address, email and where the first password is; `setup.sh domain` (or `RV_DOMAIN=... setup.sh` after
+  `--local`) switches PUBLIC_URL, RV_DOMAIN and COMPOSE_PROFILES=https. Checked with a fake docker/curl on PATH.
+- `backup.sh`: `restore`/`restore-files` exit 1 when the restore fails (after restarting the app); new
+  `copy-in FILE`. CI round trip now changes data after the backup (a second login), restores, checks the change is
+  gone, and checks that restoring a missing name fails. DEPLOY.md has "Move to a new server, or recover a dead one",
+  exact master-key steps (`setup.sh update`, not `restart`), and the domain switch. `security rotate` refuses when
+  only one key is loaded.
+- `.env.example` no longer suggests an in-container rclone `BACKUP_COPY_CMD`; a failed copy logs at error level and
+  Admin > Health shows "The off-site copy failed". `/api/admin/community-formats` answers 200 `{"enabled": false}`
+  when community stats are off (the Health page logged a 404 each time).
+- Windows CI runs only the desktop tests (same --ignore list as the Linux desktop step), and `tests/conftest.py`
+  skips the server-side folders when fastapi/sqlalchemy are missing (desktop venv: 51 passed, no collection error).

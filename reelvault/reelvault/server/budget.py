@@ -8,12 +8,13 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from . import db
 from .settings import get_settings
 
 DEFAULT_SEC_PER_REEL = 28.0
+DEFAULT_SEC_PER_FETCH = 4.0
 
 
 def today() -> str:
@@ -71,16 +72,25 @@ def member_share(user_id: str, day: str | None = None) -> int:
     return int(row.media_left + row.media_used) if row else 0
 
 
-def sec_per_reel() -> float:
-    """Measured seconds per process_reel job (mean of the last 50), else the 12.5 default."""
+def _mean_secs(kind: str, default: float) -> float:
     j = db.jobs
     with db.tx(immediate=False) as conn:
         rows = conn.execute(select(j.c.started_at, j.c.finished_at).where(
-            j.c.kind == "process_reel", j.c.state == "done", j.c.started_at.is_not(None),
+            j.c.kind == kind, j.c.state == "done", j.c.started_at.is_not(None),
             j.c.finished_at.is_not(None)).order_by(j.c.finished_at.desc()).limit(50)).all()
     secs = [(r.finished_at - r.started_at).total_seconds() for r in rows if r.finished_at and r.started_at]
     secs = [x for x in secs if x > 0]
-    return max(1.0, round(sum(secs) / len(secs), 1)) if secs else DEFAULT_SEC_PER_REEL
+    return max(1.0, round(sum(secs) / len(secs), 1)) if secs else default
+
+
+def sec_per_reel() -> float:
+    """Measured seconds per process_reel job (mean of the last 50), else the 12.5 default."""
+    return _mean_secs("process_reel", DEFAULT_SEC_PER_REEL)
+
+
+def sec_per_fetch() -> float:
+    """Measured seconds per fetch_video job (download + the 2-5 s CDN gap it waits in its media lane), else 4."""
+    return _mean_secs("fetch_video", DEFAULT_SEC_PER_FETCH)
 
 
 def _hours_text(hours: float) -> str:
@@ -98,6 +108,11 @@ def eta(user_id: str, job=None) -> dict | None:
     """{"text": "Ready in about 3 hours", "at": iso} for the member's queued media work, or the plain waiting
     line for Claude/desktop jobs; None when nothing is queued."""
     if job is not None and job.executor == "mcp":
+        oid = (job.payload or {}).get("output_id") if job.kind == "make_output" else None
+        if oid:   # integration finding: an output's job told the member to say "Analyze my new reels"
+            return {"text": f"Waiting for Claude. Open Claude and say: Write my ReelVault output {oid}", "at": None}
+        if job.kind == "draft_profile":
+            return {"text": "Waiting for Claude. Open Claude and say: Draft my ReelVault profile", "at": None}
         return {"text": "Waiting for Claude. Open Claude and say: Analyze my new ReelVault reels.", "at": None}
     if job is not None and job.executor == "desktop":
         return {"text": "Waiting for the desktop app. Open ReelVault on your computer.", "at": None}
@@ -106,16 +121,28 @@ def eta(user_id: str, job=None) -> dict | None:
     j, mb = db.jobs, db.member_budget
     s = get_settings()
     with db.tx(immediate=False) as conn:
-        q = conn.execute(select(func.count()).where(j.c.user_id == user_id, j.c.job_class == "media",
-                                                    j.c.executor == "server", j.c.state == "queued")).scalar() or 0
+        by_kind = dict(conn.execute(select(j.c.kind, func.count()).where(
+            j.c.user_id == user_id, j.c.job_class == "media", j.c.executor == "server", j.c.state == "queued")
+            .group_by(j.c.kind)).all())
+        q = sum(by_kind.values())
         if not q:
             return None
         members = conn.execute(select(func.count(func.distinct(j.c.user_id))).where(
             j.c.job_class == "media", j.c.executor == "server", j.c.state == "queued")).scalar() or 1
-        row = conn.execute(select(mb.c.media_left).where(mb.c.user_id == user_id, mb.c.day == today())).first()
-    left_today = int(row[0]) if row else 0
+        row = conn.execute(select(mb.c.media_left, mb.c.media_used).where(mb.c.user_id == user_id,
+                                                                         mb.c.day == today())).first()
+    # What can still run today. media_left is recomputed only every minute while new jobs keep arriving, so a
+    # stale share must not push the whole queue to "tomorrow" (integration finding: "Ready in about 19 hours" for
+    # 4 minutes of work). The room is the member's fair cap for today minus what they already used.
+    cap_member = int(db.get_setting("member_media_per_day") or 150)
+    used = int(row.media_used) if row else 0
+    fair = min(cap_member, max(1, s.server_media_per_day // max(1, members)))
+    left_today = max(int(row.media_left) if row else 0, fair - used)
     lanes = max(1, s.whisper_concurrency)
-    per_hour_server = lanes * 3600.0 / sec_per_reel()
+    # Downloads share the media lanes, so a reel still to download costs its fetch AND its processing.
+    n_fetch = int(by_kind.get("fetch_video", 0))
+    sec_avg = (n_fetch * (sec_per_fetch() + sec_per_reel()) + (q - n_fetch) * sec_per_reel()) / q
+    per_hour_server = lanes * 3600.0 / sec_avg
     per_hour = max(1.0, per_hour_server / max(1, members))
     now = db.utcnow()
     if row is None or q <= left_today:  # no share computed yet, or it all fits in today's share
@@ -143,3 +170,16 @@ def has_queued_media() -> bool:
     with db.tx(immediate=False) as conn:
         return conn.execute(select(j.c.id).where(j.c.job_class == "media", j.c.executor == "server",
                                                  j.c.state == "queued").limit(1)).first() is not None
+
+
+def missing_share() -> bool:
+    """True when a member has queued reel processing but no usable share: no row for today yet, or a share used up
+    while the member is still under the daily cap (work queued after the last recompute). The worker then
+    recomputes within seconds instead of up to a minute (integration finding: new reels sat waiting)."""
+    j, mb = db.jobs, db.member_budget
+    cap = int(db.get_setting("member_media_per_day") or 150)
+    with db.tx(immediate=False) as conn:
+        ok = select(mb.c.user_id).where(mb.c.day == today(), or_(mb.c.media_left > 0, mb.c.media_used >= cap))
+        return conn.execute(select(j.c.id).where(
+            j.c.job_class == "media", j.c.kind == "process_reel", j.c.executor == "server", j.c.state == "queued",
+            j.c.user_id.is_not(None), j.c.user_id.not_in(ok)).limit(1)).first() is not None

@@ -161,12 +161,22 @@ jobs:
           (cd deploy && docker compose exec -T app sh -c 'ls /opt/reelvault/models/ced-tiny /opt/reelvault/models/yunet')
           (cd deploy && docker compose exec -T app id -u) | grep -qv '^0$'   # not root
 
-      - name: Backup and restore round trip
+      - name: Backup and restore round trip (the data really goes back; a failed restore fails)
         run: |
+          set -e
+          sessions() { (cd deploy && docker compose exec -T app sqlite3 /data/db/reelvault.sqlite "select count(*) from sessions") | tr -d '\r'; }
           ./deploy/backup.sh backup
           ./deploy/backup.sh list
+          before="$(sessions)"
+          PW="$(grep -E '^ADMIN_PASSWORD=' deploy/.env | cut -d= -f2-)"
+          curl -fsS -o /dev/null -H 'Content-Type: application/json' \
+            -d "{\"email\":\"ci-admin@example.com\",\"password\":\"$PW\"}" http://127.0.0.1:8000/api/auth/login
+          test "$(sessions)" -gt "$before"          # changed after the backup
           name="db-$(date -u +%Y-%m-%d).sqlite"
           printf 'y\n' | ./deploy/backup.sh restore "$name"
+          test "$(sessions)" = "$before"            # the change is gone
+          curl -fsS http://127.0.0.1:8000/healthz
+          if printf 'y\n' | ./deploy/backup.sh restore db-1999-01-01.sqlite; then echo "a missing backup restored?"; exit 1; fi
           curl -fsS http://127.0.0.1:8000/healthz
 
       - name: Restart keeps data (volume) and survives a killed worker

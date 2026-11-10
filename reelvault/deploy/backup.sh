@@ -5,6 +5,7 @@
 #   ./deploy/backup.sh                    make a backup now
 #   ./deploy/backup.sh list               show the backups on this server
 #   ./deploy/backup.sh copy-out DIR       copy every backup from the container into DIR on this server
+#   ./deploy/backup.sh copy-in FILE       copy a saved backup (db-....sqlite or users-....tar.zst) into the container
 #   ./deploy/backup.sh restore db-2026-11-09.sqlite         put that database back (stops and restarts the app)
 #   ./deploy/backup.sh restore-files users-2026-45.tar.zst  put member files back (frames, sheets, PDFs)
 #
@@ -55,6 +56,15 @@ case "$cmd" in
     docker cp "$cid:/data/backups/." "$dest/"
     echo "Copied the backups to $dest"
     ;;
+  copy-in)
+    src="${2:-}"; [ -n "$src" ] && [ -f "$src" ] || die "Give the backup file to copy in, e.g. ./deploy/backup.sh copy-in /root/rv-backups/db-2026-11-09.sqlite"
+    name="$(basename "$src")"
+    safe_name "$name" || die "$name is not a ReelVault backup name (db-YYYY-MM-DD.sqlite or users-YYYY-WW.tar.zst)."
+    cid="$(compose ps -q app)"; [ -n "$cid" ] || die "The app is not running. Start it with ./deploy/setup.sh first."
+    docker cp "$src" "$cid:/data/backups/$name"
+    compose exec -T --user root app chown 10001:10001 "/data/backups/$name"
+    echo "Copied $name in. Now run: ./deploy/backup.sh restore $name   (or restore-files for users-...)"
+    ;;
   restore|restore-files)
     name="${2:-}"
     safe_name "$name" || die "Give a backup file name from './deploy/backup.sh list', e.g. db-2026-11-09.sqlite"
@@ -62,16 +72,19 @@ case "$cmd" in
     if [ "$cmd" = restore-files ]; then what="member files"; sub="restore-files"; fi
     confirm "Restore the $what from $name? The app stops for a minute." || die "Nothing was changed."
     stop_app
+    rc=0
     if compose run --rm --no-deps -T app python -m reelvault.server.storage "$sub" "/data/backups/$name"; then
       echo "Restored. Starting the app again..."
     else
-      echo "The restore failed. Starting the app again with the old data..."
+      rc=1
+      echo "The restore failed (the lines above say why). Starting the app again with the old data..."
     fi
     start_app
     wait_healthy && echo "The app is running." || die "The app did not come back. Run ./deploy/setup.sh logs"
+    [ "$rc" = 0 ] || die "Nothing was restored. The app runs with the data it had before."
     ;;
   *)
-    sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     exit 2
     ;;
 esac

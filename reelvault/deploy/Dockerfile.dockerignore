@@ -5,9 +5,11 @@
 !reelvault/
 !migrations/
 !extension-members/
+!plugin/
 !deploy/requirements.lock
 !deploy/fetch_models.sh
 !deploy/build_extension.py
+!deploy/entrypoint.sh
 **/__pycache__
 **/*.pyc
 **/.env

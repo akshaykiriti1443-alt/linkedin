@@ -10,9 +10,10 @@
     "In a new chat, say: **Analyze my new ReelVault reels**."
   ],
   "connector_notes": [
+    "If ReelVault uses another AI now, click **Use my Claude plan** at the bottom of this box.",
     "Free Claude plans allow one custom connector.",
     "On Team or Enterprise plans, your Claude owner must add it first.",
-    "Claude Code users: claude mcp add --transport http reelvault {MCP_URL}"
+    "Claude Code users: claude mcp add --transport http --scope user reelvault {MCP_URL}"
   ],
   "connector_estimate_line": "About 8 Claude chats to finish your first 5 competitors. Nothing runs until you open Claude. Want it faster? Add a free Gemini key just for tagging.",
   "connector_prompts": [
@@ -20,12 +21,20 @@
     "Draft my ReelVault profile",
     "Write my ReelVault output"
   ],
-  "claude_code_command": "claude mcp add --transport http reelvault {MCP_URL}",
+  "claude_code_command": "claude mcp add --transport http --scope user reelvault {MCP_URL}",
   "desktop_steps": [
-    "Install the ReelVault desktop app on your Windows computer and sign in to Claude Code there.",
+    "Install the ReelVault desktop app on your Windows computer and sign in to Claude Code there. The steps are under **Get the desktop app** below.",
     "In the desktop app, open **Settings** and find **Use my Claude for ReelVault Members**.",
     "Click **Get a code** below and type the code into the desktop app.",
     "Keep the desktop app open. It does the AI work while it runs."
+  ],
+  "desktop_install_command": "irm https://raw.githubusercontent.com/akshaykiriti1443-alt/linkedin/claude/kind-dijkstra-0o03in/reelvault/install.ps1 | iex",
+  "desktop_install_steps": [
+    "On your Windows computer, click Start, type **PowerShell** and open it.",
+    "Copy the line below, paste it into PowerShell and press Enter. It installs everything for your user only (no admin needed) and puts a **ReelVault** icon on your desktop.",
+    "When it asks, sign in to Claude Code with your Claude account (Pro or Max).",
+    "Open ReelVault from the desktop icon. In **Settings**, find **Use my Claude for ReelVault Members**.",
+    "Back here, open **Settings > AI > Use the ReelVault desktop app**, click **Get a code** and type the code into the desktop app."
   ],
   "key_steps": [
     "Pick a provider. Gemini has a free key in most countries.",

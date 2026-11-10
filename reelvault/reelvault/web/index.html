@@ -3,11 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>ReelVault Members</title>
+<link rel="icon" href="/static/img/logo.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/app.css">
+<script src="/static/theme.js"></script>
 </head>
 <body>
-<main id="app"><p>ReelVault Members is starting. Refresh in a moment.</p></main>
-<script src="/static/app.js"></script>
+<div id="root"><main class="plain"><p>Loading ReelVault Members…</p></main></div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<noscript><p class="plain">ReelVault Members needs JavaScript. Turn it on in your browser and reload.</p></noscript>
+<script type="module" src="/static/app.js"></script>
 </body>
 </html>

@@ -178,7 +178,7 @@ def pattern_hints(m: dict) -> list[str]:
         hints.append("SD14")
     if (s["first_sfx_s"] is not None and s["first_sfx_s"] <= 1.5) or s.get("music_starts_s") is not None:
         hints.append("SD15")
-    if sum(counts.get(k, 0) for k in MEME_LABELS) >= 1:
+    if s.get("meme_events", sum(counts.get(k, 0) for k in MEME_LABELS)) >= 1:
         hints.append("SD16")
     return hints
 
@@ -210,13 +210,27 @@ def build(raw: SoundRaw, events: list[dict], cuts: list[float], *, duration: flo
     counts: dict[str, int] = {}
     for e in sfx:
         counts[e["label"]] = counts.get(e["label"], 0) + 1
+    # laughter / crowd are span groups, not SFX: count them from all events for the SD16 meme rule
+    meme = sum(1 for e in events if e["label"] in MEME_LABELS)
     first = min((anchor(e) for e in sfx), default=None)
     accents_off = sum(1 for e in sfx if e["label"] in ACCENT_LABELS and on_cut_ids.get(id(e)) is None)
     risers = [e for e in sfx if e["label"] == "riser"]
     lands = [e["t"] for e in sfx if e["label"] in ("hit", "whoosh", "pop", "sound_effect") and e["label"] != "riser"]
     riser_into_hit = any(any(0 <= x - r["t_end"] <= 0.3 for x in lands + list(cuts)) or
                          any(abs(c - r["t_end"]) <= 0.3 for c in cuts) for r in risers)
-    silence_beat = any(0.3 <= b - a <= 1.5 and a >= 1.0 and b <= dur - 1.0 for a, b in silences)
+    # A silence is a "beat" (SD09) only with a reason: a hit lands right after it, or the music drops out for it
+    # (music on both sides). Plain pauses between sentences of a voice-only reel are not one (fix round 1).
+    lands_after = [anchor(e) for e in sfx] + [a for a, _ in music]
+
+    def _is_beat(a: float, b: float) -> bool:
+        if not (0.3 <= b - a <= 1.5 and a >= 1.0 and b <= dur - 1.0):
+            return False
+        if any(b - 0.1 <= x <= b + 0.3 for x in lands_after):
+            return True
+        return any(ma <= a - 0.2 for ma, mb in music if mb >= a - 0.05) and \
+            any(ma <= b + 0.05 and mb >= b + 0.2 for ma, mb in music)
+
+    silence_beat = any(_is_beat(a, b) for a, b in silences)
     music_starts = next((a for a, b in music if 0.25 < a <= 1.5), None)
     amb = raw.groups.get("ambient")
     crowd = raw.groups.get("crowd")
@@ -247,6 +261,7 @@ def build(raw: SoundRaw, events: list[dict], cuts: list[float], *, duration: flo
             "accents_off_cut": accents_off,
             "riser_into_hit": riser_into_hit,
             "silence_beat": silence_beat,
+            "meme_events": meme,
             "music_starts_s": music_starts,
             "cuts_on_beat_pct": None,
             "beat_bpm": None,

@@ -145,25 +145,53 @@ def find_forbidden_keys(obj: Any, depth: int = 0) -> str | None:
     return None
 
 
-def _counter_key(device_id: str, what: str) -> dict:
-    return {"scope": device_id, "key": what}
+def ig_scope(dev_or_user_id) -> str:
+    """Counter scope for a member's Instagram calls. Keyed by MEMBER, not device (fix round 1): a new pairing or a
+    reinstalled extension must not start the day's counts from zero."""
+    uid = dev_or_user_id if isinstance(dev_or_user_id, str) else dev_or_user_id.user_id
+    return f"igu:{uid}"
 
 
-def _server_count(conn, device_id: str, what: str, window: str) -> int:
+def _server_count(conn, scope: str, what: str, window: str) -> int:
     t = db.usage_counters
-    row = conn.execute(select(t.c.count).where(t.c.scope == device_id, t.c.key == what,
+    row = conn.execute(select(t.c.count).where(t.c.scope == scope, t.c.key == what,
                                                t.c.window == ratelimit.window_key(window))).first()
     return int(row[0]) if row else 0
 
 
-def _bump_calls(device_id: str, *, ig: int = 0, cdn: int = 0, conn=None) -> None:
-    """Server-side count of Instagram calls it can infer (pages, profile lookups, videos), 5.6."""
+def _bump_calls(dev, *, ig: int = 0, cdn: int = 0, conn=None) -> None:
+    """Server-side count of Instagram calls it can infer (pages, profile lookups, videos), 5.6. Per member."""
+    scope = ig_scope(dev)
     for window in ("hour", "day"):
         wk = ratelimit.window_key(window)
         if ig:
-            db.bump(db.usage_counters, {"scope": device_id, "key": "ig_calls", "window": wk}, conn=conn, count=ig)
+            db.bump(db.usage_counters, {"scope": scope, "key": "ig_calls", "window": wk}, conn=conn, count=ig)
         if cdn and window == "day":
-            db.bump(db.usage_counters, {"scope": device_id, "key": "cdn", "window": wk}, conn=conn, count=cdn)
+            db.bump(db.usage_counters, {"scope": scope, "key": "cdn", "window": wk}, conn=conn, count=cdn)
+
+
+CARRY_KEYS = ("cooldown_until", "cooldown_reason", "budget")
+
+
+def carried_state(conn, user_id: str) -> dict:
+    """Device state a NEW extension pairing starts with (fix round 1, 5.7): the member's active Instagram stop
+    (the latest cooldown of any of their extension devices, revoked ones included) and the last reported budget.
+    Disconnect + Connect, or a reinstall, must not clear a 24-hour stop."""
+    st = dict(db.DEVICE_STATE_DEFAULT)
+    now = _now()
+    rows = conn.execute(select(db.devices).where(db.devices.c.user_id == user_id, db.devices.c.kind == "extension")
+                        .order_by(db.devices.c.created_at.desc())).all()
+    best = None
+    for row in rows:
+        ds = device_state(row)
+        cd = _parse_dt(ds.get("cooldown_until"))
+        if cd and cd > now and (best is None or cd > best[0]):
+            best = (cd, ds.get("cooldown_reason"))
+    if best:
+        st["cooldown_until"], st["cooldown_reason"] = db.iso(best[0]), best[1]
+    if rows:
+        st["budget"] = dict(db.DEVICE_STATE_DEFAULT["budget"], **(device_state(rows[0]).get("budget") or {}))
+    return st
 
 
 def _clean_budget(b: Any) -> dict:
@@ -193,11 +221,11 @@ def budget_view(conn, dev, state: dict | None = None) -> dict:
     st = state or device_state(dev)
     rep = st["budget"]
     p = pacing()
-    return {"hour_used": max(int(rep.get("hour_used") or 0), _server_count(conn, dev.id, "ig_calls", "hour")),
+    return {"hour_used": max(int(rep.get("hour_used") or 0), _server_count(conn, ig_scope(dev), "ig_calls", "hour")),
             "hour_max": p["hour_max"],
-            "day_used": max(int(rep.get("day_used") or 0), _server_count(conn, dev.id, "ig_calls", "day")),
+            "day_used": max(int(rep.get("day_used") or 0), _server_count(conn, ig_scope(dev), "ig_calls", "day")),
             "day_max": p["day_max"],
-            "cdn_day_used": max(int(rep.get("cdn_day_used") or 0), _server_count(conn, dev.id, "cdn", "day")),
+            "cdn_day_used": max(int(rep.get("cdn_day_used") or 0), _server_count(conn, ig_scope(dev), "cdn", "day")),
             "cdn_day_max": p["cdn_day_max"]}
 
 
@@ -294,12 +322,16 @@ def start_pull(user_id: str, account_id: str, mode: str, *, run_after=None, prio
             return active[0]
         payload = _pull_payload(acc, mode)
         pull_id = db.new_id("pul")
+        paired = conn.execute(select(db.devices.c.id).where(
+            db.devices.c.user_id == user_id, db.devices.c.kind == "extension",
+            db.devices.c.revoked_at.is_(None))).first() is not None
+        msg = ("Keep Chrome open. ReelVault reads in a pinned Instagram tab; you can keep using Chrome." if paired
+               else "Waiting for Chrome. Connect the extension in Settings > Chrome extension, then it reads these "
+                    "reels.")
         job_id = jobs.enqueue(user_id, "ig_pull", payload, executor="extension", priority=priority,
                               dedupe_key=f"ig_pull:{account_id}", run_after=run_after,
                               max_attempts=IG_MAX_ATTEMPTS, conn=conn,
-                              progress={"done": 0, "total": PULL_TARGET,
-                                        "message": "Keep Chrome open. ReelVault reads in a pinned Instagram tab; "
-                                                   "you can keep using Chrome."})
+                              progress={"done": 0, "total": PULL_TARGET, "message": msg})
         conn.execute(db.pulls.insert().values(id=pull_id, user_id=user_id, account_id=account_id, job_id=job_id,
                                               mode=mode, from_max_id=payload.get("max_id"), run_after=run_after))
         if run_after is not None and run_after > _now() and acc.status == "new":
@@ -921,7 +953,7 @@ def _ingest_profile(dev, job, body: dict) -> dict:
         acc = _account(conn, dev.user_id, p["account_id"])
         _check_account_upload(acc, a)
         _apply_account(conn, dev.user_id, acc, a)
-    _bump_calls(dev.id, ig=1)
+    _bump_calls(dev, ig=1)
     return {"ok": True, "accepted": 0, "known_hit": False, "stop": True}
 
 
@@ -943,7 +975,7 @@ def _ingest_check(dev, job, body: dict) -> dict:
         raise not_found()
     if a.username != crow.handle and (crow.pk and a.pk != crow.pk):
         raise bad_input("This profile is not the candidate of this job.")
-    _bump_calls(dev.id, ig=2)
+    _bump_calls(dev, ig=2)
     items = [x.to_dict() for x in reels_in]
     try:
         from . import jobs_score
@@ -1056,7 +1088,7 @@ def _ingest_pull(dev, job, body: dict) -> dict:
         if res["pk_conflicts"]:
             db.audit("ig_pk_conflict", user_id=user_id, detail={"job": job.id, "count": res["pk_conflicts"]},
                      conn=conn)
-    _bump_calls(dev.id, ig=1)
+    _bump_calls(dev, ig=1)
     stop = bool(res["cut"] or new_total >= target or (mode == "refresh" and res["known_hit"]) or pages >= PAGE_CAP)
     out = {"ok": True, "accepted": res["new"], "known_hit": res["known_hit"], "stop": stop and resume is None}
     if resume is not None:
@@ -1109,7 +1141,7 @@ def save_video(dev, job_id: str, reel_id: str, video_tmp, video_size: int, cover
         conn.execute(db.jobs.update().where(db.jobs.c.id == job.id).values(
             result=res, progress={"done": len(up), "total": len(items),
                                   "message": f"Saved {len(up)} of {len(items)} videos"}))
-    _bump_calls(dev.id, ig=1, cdn=1)
+    _bump_calls(dev, ig=1, cdn=1)
     _advance(dev.user_id, reel_id)
     return {"ok": True}
 
@@ -1225,7 +1257,7 @@ def save_member_bio(dev, body: dict) -> dict:
         raise bad_input(f"The profile is not in the expected shape: {e}.") from None
     if a.username != p.get("handle"):
         raise bad_input("This profile is not the account of this job.")
-    _bump_calls(dev.id, ig=1)
+    _bump_calls(dev, ig=1)
     try:
         from ..importers import instagram
 
@@ -1319,6 +1351,18 @@ def _queue_score(user_id: str, account_id: str, *, conn=None) -> None:
                  dedupe_key=f"score_account:{account_id}", conn=conn)
 
 
+VIDEO_FAIL_FOR_GOOD = ("not_found", "mismatch", "no_video", "too_big")
+
+
+def _bump_media_info(dev, media_info, n_items: int, n_uploaded: int) -> None:
+    """Count the extension's mediaInfo calls that no upload counted (save_video counts 1 per upload), 5.6."""
+    if not isinstance(media_info, int) or isinstance(media_info, bool):
+        return
+    extra = min(max(media_info, 0), 2 * max(n_items, 1)) - n_uploaded
+    if extra > 0:
+        _bump_calls(dev, ig=extra)
+
+
 def finish(dev, job_id: str, body: dict) -> dict:
     """POST /jobs/<id>/done."""
     job = leased_job(dev, job_id)
@@ -1347,7 +1391,7 @@ def finish(dev, job_id: str, body: dict) -> dict:
                 acc = _account(conn, user_id, p["account_id"])
                 _check_account_upload(acc, a)
                 _apply_account(conn, user_id, acc, a)
-            _bump_calls(dev.id, ig=1)
+            _bump_calls(dev, ig=1)
             found = True
         jobs.complete(job.id, {"found": found or bool(result.get("found", True))}, owner=dev.id)
         return {"ok": True}
@@ -1356,8 +1400,11 @@ def finish(dev, job_id: str, body: dict) -> dict:
         ids = {it["reel_id"] for it in items}
         up = set((job.result or {}).get("uploaded_ids") or [])
         failed = [f for f in (result.get("failed") or []) if isinstance(f, dict) and f.get("reel_id") in ids]
-        failed_ids = {f["reel_id"] for f in failed} - up
+        # Only reasons that can't change later fail a reel for good; a CDN error, a network drop or an upload
+        # error leaves it waiting for another try (fix round 1: a short CDN throttle lost the whole batch).
+        failed_ids = {f["reel_id"] for f in failed if str(f.get("reason") or "") in VIDEO_FAIL_FOR_GOOD} - up
         rest = ids - up - failed_ids
+        _bump_media_info(dev, result.get("media_info"), len(items), len(up))
         with db.tx() as conn:
             r = db.reels
             if failed_ids:
@@ -1516,6 +1563,10 @@ def fail(dev, job_id: str, body: dict) -> dict:
         return out
 
     cooldown_code = "suspended" if suspended else code
+    if job.kind == "ig_videos":
+        items = p.get("items", [])
+        up = (job.result or {}).get("uploaded_ids") or []
+        _bump_media_info(dev, body.get("media_info"), len(items), len(up))
     if code == "budget":
         cs = body.get("cooldown_s")
         cs = int(cs) if isinstance(cs, (int, float)) and not isinstance(cs, bool) else 3600
@@ -1584,6 +1635,14 @@ def _wait_again(conn, job, run_after: datetime, message: str) -> None:
                 attempts=func.max(db.jobs.c.attempts - 1, 0) if db.is_sqlite() else func.greatest(db.jobs.c.attempts - 1, 0))
     if job.kind == "ig_pull":
         vals["payload"] = _resume_payload(conn, job)
+    if job.kind == "ig_videos":  # after the wait, only the reels not uploaded yet (no repeat mediaInfo calls)
+        cur = conn.execute(select(db.jobs.c.result).where(db.jobs.c.id == job.id)).first()
+        up = set(((cur[0] if cur else None) or {}).get("uploaded_ids") or [])
+        p = dict(job.payload or {})
+        left = [it for it in p.get("items", []) if it.get("reel_id") not in up]
+        if up and left:
+            p["items"] = left
+            vals["payload"] = p
     conn.execute(db.jobs.update().where(db.jobs.c.id == job.id).values(**vals))
 
 
@@ -1607,7 +1666,10 @@ def try_again(user_id: str) -> dict:
         st = device_state(dev)
         if st.get("cooldown_reason") != "signed_out":
             raise bad_input("Try again works after you sign in to Instagram. Other pauses end by themselves.")
-        _set_device_state(conn, dev.id, cooldown_until=None, cooldown_reason=None)
+        for d in conn.execute(select(db.devices).where(db.devices.c.user_id == user_id,
+                                                       db.devices.c.kind == "extension")).all():
+            if device_state(d).get("cooldown_reason") == "signed_out":  # old pairings too (carried_state)
+                _set_device_state(conn, d.id, cooldown_until=None, cooldown_reason=None)
         n = conn.execute(db.jobs.update().where(db.jobs.c.user_id == user_id, db.jobs.c.kind.in_(IG_KINDS),
                                                 db.jobs.c.state == "waiting", db.jobs.c.run_after > now)
                          .values(run_after=now, error_message=None)).rowcount

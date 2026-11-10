@@ -377,7 +377,7 @@ class CueSheetRow(AIModel):
     what: Short[100] = D("e.g. 'soft whoosh into the screenshot'.")
     purpose: Short[100] = D("e.g. 'marks the jump to proof'.")
     level: Literal["subtle", "normal", "loud"] = D("How loud.")
-    pattern: SDId = D("Which sound pattern this cue belongs to.")
+    pattern: SDId | None = D("The source reels' sound pattern this cue belongs to, or null if none fits.")
     source_hint: Short[120] = D("Where to get it: search terms for CapCut sounds, Pixabay or free SFX libraries.")
     ref: RefClip | None = D("The source reel moment that has this cue, or null.")
 

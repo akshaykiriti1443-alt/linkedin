@@ -459,3 +459,55 @@ def test_mcp_output_brief_and_chunked_save(world, member):
         work.output_brief(uid, oid)
     res = work.mcp_save(uid, "draft_profile", fake_answer("ProfileDraft", ""))
     assert res["ok"] and res["filled"] >= 2
+
+
+def test_editor_brief_music_and_caption_lines_read_plainly():
+    """Integration finding: an empty music block printed "Music: none, ,  BPM, " and caption ids leaked."""
+    from reelvault.server import outputs
+
+    assert outputs._music_line({"type": "none", "mood": "", "bpm_range": "", "level": ""}) == "none (voice only)"
+    assert outputs._music_line({"type": "lofi_bed", "mood": "calm", "bpm_range": "80-90", "level": "low"}) == \
+        "lofi bed, calm, 80-90 BPM, low"
+    assert outputs._join([outputs._plain("word_by_word_highlight"), ""]) == "word by word highlight"
+
+
+def test_pain_coverage_matches_topic_names_and_remake_rows_carry_age(world):
+    """Fix round 1: "reels that show ..." descriptions matched every pain, "ads" (3 letters) matched nothing, and
+    remake candidates had no age or trend for "prefer recent, rising"."""
+    uid = world["uid"] if "uid" in world else None
+    if uid is None:
+        with db.read() as c:
+            uid = c.execute(select(db.users.c.id).where(db.users.c.email == "member@example.com")).scalar()
+    with db.tx() as c:
+        c.execute(db.topics.update().where(db.topics.c.user_id == uid, db.topics.c.slug == "ad-creative").values(
+            label="Ad creative", description="reels that show ad creative or design work being made"))
+        c.execute(db.topics.update().where(db.topics.c.user_id == uid, db.topics.c.slug == "client-results").values(
+            label="Client results", description="reels that show results for clients"))
+    from datetime import timedelta
+
+    with db.tx() as c:
+        for k, rid in enumerate(world["rids"]):
+            c.execute(db.reels.update().where(db.reels.c.id == rid).values(
+                taken_at=db.utcnow() - timedelta(days=(10, 200, 300)[k])))
+    nums = outputs.report_numbers(uid, None)
+    cover = {p["pain"]: p for p in nums["topic_coverage"]["pains"]}
+    assert cover["Ads stop working after two weeks"]["covered_by_topics"] == ["ad-creative"]
+    assert cover["Ads stop working after two weeks"]["competitor_reels"] == 3
+    assert cover["Leads never pick up the phone"]["covered_by_topics"] == []
+    assert cover["Agencies take money and vanish"]["covered_by_topics"] == []
+    ages = {cnd["reel_id"]: cnd["age_days"] for cnd in nums["remake_candidates"]}
+    assert ages[world["rids"][0]] == 10 and ages[world["rids"][1]] == 200
+    assert all("trend" in cnd for cnd in nums["remake_candidates"])
+
+
+def test_cue_sheet_reads_plainly():
+    numbers = {"reels": {}, "sound_patterns": ["SD15"]}
+    rows = outputs._cue_rows([{"t": "00:01.0", "kind": "music_in", "pattern": "SD15", "what": "x", "purpose": "y",
+                               "level": "normal"},
+                              {"t": "00:02.0", "kind": "hit", "pattern": "SD14", "what": "x", "purpose": "y",
+                               "level": "normal"},
+                              {"t": "00:03.0", "kind": "whoosh", "pattern": None, "what": "x", "purpose": "y",
+                               "level": "subtle"}], numbers)
+    sounds = [r[2] for r in rows]
+    assert sounds[0].startswith("music in · ") and "SD15" not in sounds[0]
+    assert sounds[1] == "hit" and sounds[2] == "whoosh"

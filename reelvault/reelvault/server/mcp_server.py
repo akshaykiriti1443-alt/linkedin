@@ -28,7 +28,7 @@ from pydantic import AnyHttpUrl, Field
 
 from .. import schema_members as S
 from ..ai import untrusted
-from . import db, jobs, oauth, ratelimit
+from . import db, jobs, oauth, ratelimit, security
 from .errors import ApiError
 
 log = logging.getLogger("reelvault.mcp")
@@ -73,11 +73,17 @@ def _member_id() -> str:
     return tok.subject
 
 
+RECONFIRM_MSG = ("ReelVault needs the current community code first. Open ReelVault in your browser, enter the code "
+                 "from the community, then come back and try again.")
+
+
 def _user(uid: str):
     with db.read() as c:
         u = c.execute(db.users.select().where(db.users.c.id == uid)).first()
     if u is None or u.status != "active":
         raise ToolFail("This ReelVault account is turned off. Message the community admin.")
+    if security.reconfirm_due(u):  # 11.1 (c): the connector is gated like the web app (fix round 1)
+        raise ToolFail(RECONFIRM_MSG)
     return u
 
 
@@ -91,6 +97,7 @@ async def _call(fn, *args, **kwargs):
         uid = _member_id()
         ratelimit.hit("mcp_member", uid, MEMBER_CALLS_PER_MINUTE, "minute",
                       message="Too many ReelVault calls this minute. Wait a minute and go on.")
+        await anyio.to_thread.run_sync(_user, uid)  # status + reconfirm gate for every tool
         return await anyio.to_thread.run_sync(partial(fn, uid, *args, **kwargs))
     except ToolFail as e:
         raise ToolError(str(e)) from None
@@ -229,7 +236,10 @@ def pending(uid: str) -> dict:
     chats = max(1, math.ceil(calls / 12)) if calls else 0
     if not calls:
         hint = "Nothing is waiting for Claude right now."
-        if u.ai_mode != "claude_connector":
+        if u.ai_mode is None:
+            hint = ("ReelVault doesn't know to use Claude yet. In ReelVault, open Settings > AI and click "
+                    "Use my Claude plan. Then ask again.")
+        elif u.ai_mode != "claude_connector":
             hint += " This member's ReelVault uses another AI (Settings > AI), so jobs run there."
     else:
         hint = f"About {chats} more chat{'s' if chats != 1 else ''} to finish."
@@ -470,8 +480,35 @@ def t_output_brief(uid: str, output_id: str | None, kind: str | None, options: d
     task = work.build_task(uid, row, dest="mcp")
     chunk = task.get("chunk") or {"index": 0, "of": 1}
     brief = task["system"] + "\n\n" + task["prompt"]
+    model = S.MODELS.get(task["schema_name"]) or S.MODELS.get(OUTPUT_MODELS.get(out.kind, ""))
     return {"output_id": out.id, "kind": out.kind, "title": out.title, "brief": brief,
-            "schema_name": task["schema_name"], "chunk": chunk, "save_with": "save_output"}
+            "schema_name": task["schema_name"], "schema": model.model_json_schema() if model else None,
+            "chunk": chunk, "save_with": "save_output"}
+
+
+OUTPUT_MODELS = {"reel_script": "ReelScriptPack", "meta_ads": "MetaAdPack", "content_plan": "ContentPlanChunk",
+                 "competitor_report": "CompetitorReport"}
+
+
+def _output_data(kind: str, data: Any):
+    """save_output takes `data` as a plain object (fix round 1: the typed union made tools/list ~25K characters
+    bigger in every chat). It is checked here against the kind's model; get_output_brief returns that schema."""
+    from pydantic import TypeAdapter, ValidationError
+
+    from . import work
+
+    if not isinstance(data, dict):
+        raise work.Invalid("data must be a JSON object shaped like the schema from get_output_brief.")
+    if data.get("kind") != kind:
+        raise ToolFail(f"This output is a {kind}. Send data with kind '{kind}'.")
+    try:
+        return TypeAdapter(S.OutputData).validate_python(data)
+    except ValidationError as e:
+        parts = []
+        for err in e.errors()[:8]:
+            loc = ".".join(str(x) for x in err.get("loc", ()) if x != kind)
+            parts.append(f"{loc}: {err.get('msg')}")
+        raise work.Invalid("; ".join(parts) or "The data doesn't match the schema.") from None
 
 
 def t_save_output(uid: str, output_id: str, chunk_index: int | None, data: Any) -> dict:
@@ -480,8 +517,7 @@ def t_save_output(uid: str, output_id: str, chunk_index: int | None, data: Any) 
     out, row = _output_job(uid, output_id)
     if out.status == "done":
         raise ToolFail("This output is already finished.")
-    if data.kind != out.kind:
-        raise ToolFail(f"This output is a {out.kind}. Send data with kind '{out.kind}'.")
+    data = _output_data(out.kind, data if not hasattr(data, "model_dump") else data.model_dump())
     done = int((out.inputs or {}).get("chunks_done") or 0)
     if chunk_index is not None and int(chunk_index) != done:
         raise ToolFail(f"Write chunk {done} next: call get_output_brief for {output_id} again.")
@@ -710,7 +746,8 @@ def build():
     @mcp.tool(annotations=rw)
     async def save_output(
             output_id: Annotated[str, Field(max_length=40)],
-            data: Annotated[S.OutputData, Field(description="One chunk; kind must match the output.")],
+            data: Annotated[dict[str, Any], Field(description="One chunk as a JSON object shaped like the `schema` "
+                                                              "from get_output_brief; kind must match the output.")],
             chunk_index: Annotated[int | None, Field(ge=0, le=10)] = None) -> dict[str, Any]:
         """Save one chunk of an output. When next_chunk comes back, call get_output_brief again."""
         return await _call(t_save_output, output_id, chunk_index, data)

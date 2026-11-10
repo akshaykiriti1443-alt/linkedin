@@ -146,9 +146,35 @@ def test_dockerfile_essentials():
                 "RV_EXTENSION_DIR=/opt/reelvault/extension-members"):
         assert env in s, env
     assert "COPY migrations /opt/reelvault/migrations" in s
-    assert "USER reelvault" in s and 'VOLUME ["/data"]' in s
+    assert "ARG RV_RUN_USER=reelvault" in s and "USER ${RV_RUN_USER}" in s and 'VOLUME ["/data"]' in s
+    assert 'ENTRYPOINT ["tini", "--", "/opt/reelvault/deploy/entrypoint.sh"]' in s
     assert 'CMD ["reelvault-start"]' in s and "HEALTHCHECK" in s and '"reelvault-start", "health"' in s
     assert "ADMIN_PASSWORD" not in s and "RV_MASTER_KEYS" not in s     # secrets come from the host, never baked
+
+
+def test_entrypoint_gives_a_root_owned_volume_to_uid_10001():
+    """Fix round 1: a platform volume mounted owned by root (Fly, Railway, Render) crashed the non-root image. Run
+    as root, the entrypoint chowns /data once and drops to uid 10001 before the app starts."""
+    import os
+    import shutil
+    import subprocess
+
+    if os.geteuid() != 0 or not shutil.which("setpriv"):
+        pytest.skip("needs root and setpriv")
+    import tempfile
+
+    base = Path(tempfile.mkdtemp(prefix="rv-entry-"))   # pytest's tmp folders are 0700: uid 10001 can't reach them
+    os.chmod(base, 0o755)
+    data = base / "data"
+    (data / "db").mkdir(parents=True)
+    os.chown(data, 0, 0)
+    out = subprocess.run(["sh", str(DEPLOY / "entrypoint.sh"), "sh", "-c", "id -u; touch $DATA_DIR/db/x && echo ok"],
+                         env={**os.environ, "DATA_DIR": str(data)}, capture_output=True, text=True, timeout=30,
+                         cwd="/")
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.split()[-2:] == ["10001", "ok"] and os.stat(data).st_uid == 10001
+    assert os.stat(data / "db" / "x").st_uid == 10001
+    shutil.rmtree(base, ignore_errors=True)
 
 
 def test_dockerignore_keeps_private_files_out():

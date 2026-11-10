@@ -75,7 +75,12 @@ def prepare_runtime(*, migrate: bool = True) -> None:
     problems = s.problems()
     if problems:
         raise SystemExit("\n".join(problems))
-    storage.ensure_dirs()
+    try:
+        storage.ensure_dirs()
+    except PermissionError as e:
+        raise SystemExit(f"ReelVault cannot write to {s.data_dir}. Give the volume to user 10001 (the reelvault "
+                         f"user), or run the container as root once so it can do that itself. "
+                         f"See deploy/hosts/paas-with-volume.md. ({e.strerror}: {e.filename})") from None
     if s.is_sqlite:
         db.check_local_fs(storage.db_dir())
     db.init()
@@ -146,15 +151,26 @@ class EdgeMiddleware:
 
         cl = headers.get("content-length", "")
         ctype = headers.get("content-type", "")
-        if cl.isdigit():
-            n = int(cl)
-            limit = MAX_ANY_BODY if ctype.startswith("multipart/") else MAX_JSON_BODY
-            if n > limit:
-                body = json.dumps({"error": "That file or request is too big.", "code": "too_large"}).encode()
-                await send({"type": "http.response.start", "status": 413,
-                            "headers": [(b"content-type", b"application/json")]})
-                await send({"type": "http.response.body", "body": body})
-                return
+        limit = MAX_ANY_BODY if ctype.startswith("multipart/") else MAX_JSON_BODY
+        if cl.isdigit() and int(cl) > limit:  # fast path only: the real cap is counted in receive_capped below
+            body = json.dumps({"error": "That file or request is too big.", "code": "too_large"}).encode()
+            await send({"type": "http.response.start", "status": 413,
+                        "headers": [(b"content-type", b"application/json")]})
+            await send({"type": "http.response.body", "body": body})
+            return
+
+        seen = [0]
+
+        async def receive_capped():
+            # Count the bytes as they stream in: a chunked body (no Content-Length) must not get past the cap.
+            # An HTTPException (413) raised here passes through FastAPI's body parsing (it re-raises
+            # HTTPException) and our _http_error handler renders the usual JSON {"code": "too_large"}.
+            message = await receive()
+            if message.get("type") == "http.request":
+                seen[0] += len(message.get("body", b"") or b"")
+                if seen[0] > limit:
+                    raise StarletteHTTPException(413)
+            return message
 
         https = get_settings().is_https
 
@@ -177,7 +193,7 @@ class EdgeMiddleware:
                 message = {**message, "headers": hs}
             await send(message)
 
-        await self.app(scope, receive, send_wrapped)
+        await self.app(scope, receive_capped, send_wrapped)
 
 
 # ============================================================================================== error handlers
@@ -190,7 +206,8 @@ def _install_errors(app: FastAPI) -> None:
     @app.exception_handler(StarletteHTTPException)
     async def _http_error(_req: Request, e: StarletteHTTPException):
         code = STATUS_CODES.get(e.status_code, "server" if e.status_code >= 500 else "bad_input")
-        msg = {404: "We couldn't find that.", 405: "That action is not allowed here."}.get(e.status_code)
+        msg = {404: "We couldn't find that.", 405: "That action is not allowed here.",
+               413: "That file or request is too big."}.get(e.status_code)
         body = ApiError(e.status_code, code, msg).body()
         return JSONResponse(body, status_code=e.status_code, headers=getattr(e, "headers", None) or {})
 

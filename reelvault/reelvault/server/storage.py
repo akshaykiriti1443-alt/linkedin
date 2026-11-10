@@ -232,6 +232,8 @@ def backup() -> dict:
     if s.backup_copy_cmd:
         res = subprocess.run(s.backup_copy_cmd, shell=True, check=False, capture_output=True, timeout=3600)
         out["copy_ok"] = res.returncode == 0
+        if not out["copy_ok"]:  # fix round 1: this failed silently; Admin > Health shows it too
+            log.error("BACKUP_COPY_CMD failed (exit %s): the off-site copy did not happen", res.returncode)
     db.set_setting("internal.last_backup", {"at": db.iso(now), **out})
     return out
 

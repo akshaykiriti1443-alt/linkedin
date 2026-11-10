@@ -125,6 +125,20 @@ def on_lease_expired(kind: str):
     return deco
 
 
+_RETRY_HOOKS: dict[str, list[Callable]] = {}
+
+
+def on_retry(kind: str):
+    """Decorator: fn(conn, job_row) -> str | None runs inside the transaction of a member's Retry of a `kind` job,
+    after the row is back to queued/waiting. Return another job id when the work moved to a new job (WP5: a failed
+    tag batch puts its reels back in the queue for the member's current tag slot)."""
+    def deco(fn):
+        _RETRY_HOOKS.setdefault(kind, []).append(fn)
+        return fn
+
+    return deco
+
+
 HANDLER_MODULES = ("reelvault.server.jobs_ig", "reelvault.server.jobs_media", "reelvault.server.jobs_score",
                    "reelvault.server.jobs_ai", "reelvault.server.jobs_profile")
 
@@ -201,6 +215,11 @@ def _ts(v):
     return literal(v, db.UTCDateTime())
 
 
+# The media share counts processed reels (3.13.3: "reels/day"), so only process_reel spends it. fetch_video is a
+# paced network download; charging it too made every reel cost 2 of the member's 150 a day (integration finding).
+BUDGET_KINDS = frozenset({"process_reel"})
+
+
 def lease_server(job_class: str, owner: str, *, lease_s: int | None = None):
     """Atomically lease the next due server job of this class, round-robin across members (3.13.2). Row|None."""
     j, t, mb = db.jobs, db.job_turns, db.member_budget
@@ -210,8 +229,9 @@ def lease_server(job_class: str, owner: str, *, lease_s: int | None = None):
            .select_from(j.outerjoin(t, (t.c.user_id == j.c.user_id) & (t.c.job_class == j.c.job_class)))
            .where(j.c.state == "queued", j.c.executor == "server", j.c.job_class == job_class,
                   or_(j.c.run_after.is_(None), j.c.run_after <= now)))
-    if job_class == "media":
-        sub = sub.where(j.c.user_id.in_(select(mb.c.user_id).where(mb.c.day == today, mb.c.media_left > 0)))
+    if job_class == "media":   # only the reel's processing spends the share; a CDN download (or its skip) does not
+        sub = sub.where(or_(j.c.kind.not_in(BUDGET_KINDS),
+                            j.c.user_id.in_(select(mb.c.user_id).where(mb.c.day == today, mb.c.media_left > 0))))
     sub = sub.order_by(t.c.last_served_at.asc().nulls_first(), j.c.priority.asc(), j.c.created_at.asc()).limit(1)
     if not db.is_sqlite():
         sub = sub.with_for_update(skip_locked=True, of=j)
@@ -227,7 +247,7 @@ def lease_server(job_class: str, owner: str, *, lease_s: int | None = None):
         if row.user_id:
             db.upsert(conn, t, {"user_id": row.user_id, "job_class": job_class, "last_served_at": now},
                       update={"last_served_at": now})
-            if job_class == "media":
+            if job_class == "media" and row.kind in BUDGET_KINDS:
                 conn.execute(mb.update().where(mb.c.user_id == row.user_id, mb.c.day == today)
                              .values(media_left=mb.c.media_left - 1, media_used=mb.c.media_used + 1))
         return row
@@ -380,6 +400,11 @@ def retry(job_id: str, user_id: str | None = None):
                 state="queued" if row.executor == "server" else "waiting", attempts=0, error_code=None,
                 error_message=None, run_after=None, finished_at=None, lease_owner=None, lease_until=None,
                 dedupe_key=key))
+            load_handlers()
+            for hook in _RETRY_HOOKS.get(row.kind, []):
+                moved = hook(c, c.execute(select(j).where(j.c.id == job_id)).first())
+                if moved and moved != job_id:
+                    job_id = moved
         return c.execute(select(j).where(j.c.id == job_id)).first()
 
 
@@ -529,7 +554,14 @@ def to_api(row, *, include_result: bool = False, with_eta: bool = True) -> dict:
 def _sweep(job, ctx):
     from . import storage
 
-    return storage.sweep_storage()
+    out = storage.sweep_storage()
+    try:   # expired OAuth codes/tokens and unused connector clients (WP6); otherwise only done on OAuth traffic
+        from . import oauth
+
+        out = dict(out or {}, oauth=oauth.cleanup())
+    except Exception:  # noqa: BLE001 - housekeeping must never fail the sweep
+        log.exception("oauth cleanup in the daily sweep failed")
+    return out
 
 
 @handler("backup", job_class="light")
@@ -615,7 +647,8 @@ def run_worker(stop: threading.Event | None = None, *, pools: dict[str, int] | N
                 if now - last["expire"] >= 15:
                     requeue_expired()
                     last["expire"] = now
-                if now - last["budget"] >= 600 or (now - last["budget"] >= 60 and budget.has_queued_media()):
+                if now - last["budget"] >= 600 or (now - last["budget"] >= 60 and budget.has_queued_media()) \
+                        or (now - last["budget"] >= 15 and budget.missing_share()):
                     budget.recompute_shares()
                     last["budget"] = now
                 if now - last["renew"] >= 60:

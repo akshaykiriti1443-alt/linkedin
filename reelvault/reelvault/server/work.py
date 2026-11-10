@@ -28,10 +28,11 @@ import logging
 import re
 import threading
 import time
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 
 from .. import schema_members as S
 from .. import taxonomy
@@ -202,8 +203,10 @@ def enqueue_ai(
     state: str | None = None,
     message: str | None = None,
     error_code: str | None = None,
+    run_after=None,
 ) -> str:
-    """Enqueue an AI job on the member's executor; no AI yet -> paused with 'Choose how ReelVault uses AI'."""
+    """Enqueue an AI job on the member's executor; no AI yet -> paused with 'Choose how ReelVault uses AI'.
+    run_after(executor) may return a start time (only server jobs use it)."""
 
     def run(c) -> str:
         ex = ai_executor(user_id, kind, conn=c)
@@ -221,6 +224,7 @@ def enqueue_ai(
             parent_id=parent_id,
             state=st,
             message=msg,
+            run_after=run_after(ex) if callable(run_after) else run_after,
         )
         if code:
             c.execute(
@@ -322,13 +326,35 @@ def _queued_tags(c, user_id: str) -> int:
     )
 
 
+TAG_GATHER_S = 45   # an API-key slot waits this long for more reels while the member's media work still runs
+
+
+def _media_pending(c, user_id: str) -> bool:
+    r = db.reels
+    return c.execute(select(r.c.id).where(
+        r.c.user_id == user_id, r.c.tag_state == "none",
+        or_(r.c.signals_state == "queued", r.c.media_state.in_(("queued", "fetching")))).limit(1)).first() is not None
+
+
 def ensure_tag_slot(user_id: str, *, conn=None) -> str | None:
-    """One tag_reels 'slot' job per member while reels wait for quick tags (3.13.2)."""
+    """One tag_reels 'slot' job per member while reels wait for quick tags (3.13.2).
+
+    API-key members pay per call, so a server slot with less than a full batch waits TAG_GATHER_S while more reels
+    are still being processed (integration finding: a steady trickle gave 1-reel calls, 36 calls for 37 reels).
+    Claude and desktop slots never wait: the member is looking at them."""
 
     def run(c):
-        if not _queued_tags(c, user_id):
+        n = _queued_tags(c, user_id)
+        if not n:
             return None
-        return enqueue_ai(user_id, "tag_reels", {}, priority=60, dedupe_key=f"tag_reels:{user_id}", conn=c)
+
+        def gather(ex):
+            if ex == "server" and n < API_TAG_BATCH and _media_pending(c, user_id):
+                return db.utcnow() + timedelta(seconds=TAG_GATHER_S)
+            return None
+
+        return enqueue_ai(user_id, "tag_reels", {}, priority=60, dedupe_key=f"tag_reels:{user_id}", conn=c,
+                          run_after=gather)
 
     if conn is not None:
         return run(conn)
@@ -523,9 +549,11 @@ def cue_list(sound: dict | None, limit: int = 40) -> list[str]:
     for e in sound.get("events") or []:
         lab = e.get("label") or "hit"
         conf = e.get("confidence") or "low"
-        name = lab if conf == "high" else f"SFX hit (likely {lab}, low confidence)"
+        # A low-confidence event is only "a sound here": naming it (whoosh, click) made models build cue sheets
+        # and briefs on guesses (fix round 1).
+        name = lab if conf == "high" else "SFX hit"
         where = " on cut" if e.get("on_cut") is not None else ""
-        span = f"-{mmss(e.get('t_end'))}" if e.get("t_end") and lab in ("whoosh", "riser") else ""
+        span = f"-{mmss(e.get('t_end'))}" if e.get("t_end") and lab in ("whoosh", "riser") and conf == "high" else ""
         out.append((float(e.get("t") or 0), f"{mmss(e.get('t'))}{span} {name}{where} ({conf})"))
     for a, b in sound.get("silences") or []:
         out.append((float(a), f"{mmss(a)}-{mmss(b)} silence"))
@@ -1472,8 +1500,21 @@ def save_quick_tags(user_id: str, job_row, batch: S.QuickTagBatch, made_by: dict
         remaining = _queued_tags(c, user_id)
     for rid in ids:
         pipeline.advance(user_id, rid)
+    if saved:
+        _queue_insights(user_id)
     _maybe_topics_from_reels(user_id)
     return {"tagged": saved, "remaining": remaining}
+
+
+def _queue_insights(user_id: str) -> None:
+    """New tags change what works: WP4's debounced refresh (60 s, one job per member). Integration finding: without
+    it, insights and named formats only refreshed when the member opened Home, never while tagging ran."""
+    try:
+        from . import jobs_score
+
+        jobs_score.queue_insights(user_id)
+    except Exception:  # noqa: BLE001 - a missed refresh is caught by jobs_score.maybe_refresh on the next visit
+        log.exception("queue_insights failed for %s", user_id)
 
 
 def _maybe_topics_from_reels(user_id: str) -> None:
@@ -1707,6 +1748,7 @@ def save_retag(user_id: str, job_row, batch: S.TopicRetagBatch, made_by: dict) -
         ).scalar()
         if left:
             enqueue_ai(user_id, "retag_topics", {}, priority=50, dedupe_key=f"retag_topics:{user_id}", conn=c)
+    _queue_insights(user_id)   # topic lift changed
     return {"retagged": len(got), "remaining": int(left or 0)}
 
 
@@ -1834,11 +1876,33 @@ def _b64_len(n: int) -> int:
     return 4 * ((n + 2) // 3)
 
 
+def _held_mcp(user_id: str, kind: str):
+    """A job of `kind` this member's Claude already holds (leased, not saved): a chat that got cut off or hit
+    its message limit. It is handed out again first (same batch id), so the next chat finishes it instead of
+    hearing "Nothing to tag" for 30 minutes (fix round 1)."""
+    from datetime import timedelta
+
+    j = db.jobs
+    with db.tx() as c:
+        row = c.execute(db.scoped(c, j, user_id).where(j.c.kind == kind, j.c.state == "running",
+                                                       j.c.lease_owner == "mcp")
+                        .order_by(j.c.priority, j.c.created_at).limit(1)).first()
+        if row is None:
+            return None
+        c.execute(j.update().where(j.c.id == row.id, j.c.state == "running")
+                  .values(lease_until=db.utcnow() + timedelta(seconds=LEASE_MCP_S)))
+        return c.execute(select(j).where(j.c.id == row.id)).first()
+
+
 def mcp_tag_batch(user_id: str):
     """Lease the next tag batch for the member's Claude, sized by bytes: reels are added one at a time while
-    3,000 + sum(b64(sheet) + text) < 90,000; max 3, at least 1 (6.1.1). Returns (batch_id, text, [Image]) or None."""
+    3,000 + sum(b64(sheet) + text) < 90,000; max 3, at least 1 (6.1.1). Returns (batch_id, text, [Image]) or None.
+    A batch an earlier chat leased but never saved comes back first."""
     from ..signals import frames
 
+    held = _held_mcp(user_id, "tag_reels")
+    if held is not None:
+        return _tag_batch_text(user_id, held)
     r = db.reels
     with db.read() as c:
         cands = [
@@ -1875,6 +1939,10 @@ def mcp_tag_batch(user_id: str):
     job = jobs.lease_external(user_id, "mcp", ["tag_reels"], "mcp", LEASE_MCP_S, prepare=prep)
     if job is None:
         return None
+    return _tag_batch_text(user_id, job)
+
+
+def _tag_batch_text(user_id: str, job):
     task = build_task(user_id, job, dest="mcp")
     images = task_images(user_id, job, "mcp")
     text = (
@@ -1942,7 +2010,7 @@ def mcp_reel_task(user_id: str, reel_id: str | None = None):
         if job is None:
             job = row
     else:
-        job = jobs.lease_external(
+        job = _held_mcp(user_id, "analyze_reel") or jobs.lease_external(
             user_id, "mcp", ["analyze_reel"], "mcp", LEASE_MCP_S, prepare=prepare_external(user_id, "mcp")
         )
         if job is None:

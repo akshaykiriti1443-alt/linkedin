@@ -203,6 +203,71 @@ def test_topics_from_reels_after_30_tags(rv_env, member):
     )
     st = active(uid, "suggest_topics")
     assert len(st) == 1 and st[0].payload == {"from": "reels"}
+    # new tags queue WP4's debounced insights refresh (integration finding: insights only refreshed on page opens)
+    assert len(active(uid, "refresh_insights")) == 1
     with db.read() as c:
         u = c.execute(select(db.users).where(db.users.c.id == uid)).first()
     assert u.settings["topics_from_reels_at"] == 30
+
+
+def test_api_tag_slot_gathers_a_batch_while_media_work_runs(rv_env, member):
+    """Integration finding: with reels finishing one by one, every API tag call carried 1 reel. A server slot with
+    less than a full batch now waits TAG_GATHER_S while the member still has reels in media work; Claude and desktop
+    slots never wait."""
+    aid = add_account(member.id)
+    set_mode(member.id, "api")
+    ready = add_reel(member.id, aid, tier="priority", media_state="have", signals_state="done", tag_state="queued")
+    busy = add_reel(member.id, aid, tier="sample", media_state="have", signals_state="queued")
+    slot = work.ensure_tag_slot(member.id)
+    assert job(slot).executor == "server" and job(slot).run_after is not None
+    assert job(slot).run_after > db.utcnow() + timedelta(seconds=work.TAG_GATHER_S - 5)
+    with db.tx() as c:   # the last media job finished: no reason to wait any more
+        c.execute(db.jobs.update().where(db.jobs.c.id == slot).values(state="canceled", dedupe_key=None))
+        c.execute(db.reels.update().where(db.reels.c.id == busy).values(signals_state="done", tag_state="queued"))
+    slot2 = work.ensure_tag_slot(member.id)
+    assert job(slot2).run_after is None
+    with db.tx() as c:
+        c.execute(db.jobs.update().where(db.jobs.c.id == slot2).values(state="canceled", dedupe_key=None))
+    set_mode(member.id, "claude_connector")
+    add_reel(member.id, aid, tier="sample", media_state="have", signals_state="queued")
+    slot3 = work.ensure_tag_slot(member.id)
+    assert job(slot3).executor == "mcp" and job(slot3).run_after is None
+    assert ready
+
+
+def test_retry_of_a_failed_tag_batch_requeues_its_reels_on_the_current_ai(rv_env, member):
+    """Integration finding: Retry on a failed tag batch re-ran an empty batch (its reels stayed 'failed') on the
+    executor of the member's old AI mode."""
+    uid = member.id
+    aid = add_account(uid)
+    set_mode(uid, "api")
+    rids = [add_reel(uid, aid, media_state="have", signals_state="done", tag_state="failed") for _ in range(2)]
+    jid = jobs.enqueue(uid, "tag_reels", {"reel_ids": rids}, executor="server")
+    with db.tx() as c:
+        c.execute(db.jobs.update().where(db.jobs.c.id == jid).values(state="failed", error_code="invalid_output"))
+    set_mode(uid, "claude_connector")
+    got = jobs.retry(jid, uid)
+    assert got.id != jid and got.kind == "tag_reels" and got.executor == "mcp" and got.state == "waiting"
+    assert all(reel(r).tag_state == "queued" for r in rids)
+    assert job(jid).state == "canceled"
+    # another AI job simply moves to the current executor
+    aj = jobs.enqueue(uid, "make_output", {"output_id": "out_x"}, executor="server")
+    with db.tx() as c:
+        c.execute(db.jobs.update().where(db.jobs.c.id == aj).values(state="failed"))
+    again = jobs.retry(aj, uid)
+    assert again.id == aj and again.executor == "mcp" and again.state == "waiting"
+
+
+def test_failed_tags_are_not_left_to_tag_forever(rv_env, member):
+    """Integration finding: reels whose tag batch failed were counted as 'left to tag' and the pill never cleared."""
+    from reelvault.server import api_reels
+
+    aid = add_account(member.id)
+    set_mode(member.id, "api")
+    add_reel(member.id, aid, tier="priority", tag_state="failed")
+    add_reel(member.id, aid, tier="sample", tag_state="done")
+    with db.read() as c:
+        u = c.execute(select(db.users).where(db.users.c.id == member.id)).first()
+        p = api_reels.pipeline_state(c, u)
+    assert p["left_to_tag"] == 0 and p["failed_tags"] == 1
+    assert p["line"] == "1 reel could not be tagged. Press Retry on the failed job to try again."

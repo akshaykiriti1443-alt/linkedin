@@ -2,6 +2,7 @@
 
     ratelimit.hit("ip", ip, 20, "quarter")           # counts one hit; raises TooMany (HTTP 429) over the limit
     ratelimit.check("email", email, 5, "quarter")    # raises if already at the limit, counts nothing
+    ratelimit.refund("email", email, "quarter")      # gives one hit back (a login that turned out right)
     ratelimit.count("email", email, "quarter")       # current count
 
 Windows: "minute" (in memory, per process), "quarter" (15 min), "hour", "day" (stored with the atomic
@@ -125,6 +126,15 @@ def hit(scope: str, key: str, limit: int, window: Window, *, message: str | None
     if c > limit:
         raise TooMany(message or _default_message(window), seconds_left(window), code)
     return c
+
+
+def refund(scope: str, key: str, window: Window, *, n: int = 1) -> None:
+    """Give back hits counted up front with hit(). Throttles that count FAILURES (login, codes) count every attempt
+    atomically first, so concurrent requests cannot all slip past a check, then refund the ones that succeeded."""
+    if window == "minute":
+        _mem_hit(scope, key, -n)
+        return
+    db.bump(db.usage_counters, {"scope": scope, "key": key, "window": window_key(window)}, count=-n)
 
 
 # ============================================================================================== client keys

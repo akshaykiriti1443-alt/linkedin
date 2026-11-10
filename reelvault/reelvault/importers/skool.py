@@ -179,9 +179,10 @@ def parse_next_data(next_data: Any) -> dict:
     if got:
         lines, meta = got
     u = pp.get("currentUser") if isinstance(pp.get("currentUser"), dict) else {}
-    # On a group page currentUser is the VIEWER (often the member themself); only a profile page carries
-    # profileData, so only then is it the person the page is about.
-    if u and u.get("profileData") is not None and not got:
+    # On a group page currentUser is the VIEWER (often the member themself). It is the person the page is about
+    # when it carries profileData (a profile page), or when the page has no group at all (page_read uploads of
+    # the member's own @profile may leave profileData out).
+    if u and not got and (u.get("profileData") is not None or not g):
         person = _person(u)
         if person:
             lines, meta = person

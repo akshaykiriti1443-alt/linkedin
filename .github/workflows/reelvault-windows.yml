@@ -34,7 +34,9 @@ jobs:
           $rv = "$env:USERPROFILE\ReelVault"
           $env:PATH = "$rv\tools\ffmpeg\bin;$env:PATH"
           & "$rv\app-env\Scripts\python.exe" -m pip install pytest --quiet
-          & "$rv\app-env\Scripts\python.exe" -m pytest -q reelvault\tests
+          # Desktop app tests only: the server, MCP, web and extension suites need the [server] packages, node and
+          # Playwright, which the desktop install does not have (they run in reelvault-members.yml on Linux).
+          & "$rv\app-env\Scripts\python.exe" -m pytest -q reelvault\tests --ignore=reelvault\tests\server --ignore=reelvault\tests\mcp --ignore=reelvault\tests\web --ignore=reelvault\tests\ext --ignore=reelvault\tests\e2e --ignore=reelvault\tests\journey
           if ($LASTEXITCODE -ne 0) { throw "tests failed" }
 
       - name: Start the app the way the desktop icon does, and use it

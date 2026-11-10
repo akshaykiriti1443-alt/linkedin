@@ -9,11 +9,13 @@ export async function igFetch({method, path, form, appId, asbdId}) {
              "X-Requested-With": "XMLHttpRequest", "X-CSRFToken": csrf};
   if (method === "POST") h["Content-Type"] = "application/x-www-form-urlencoded";
   try {
+    // redirect "follow": the final URL tells a checkpoint (/challenge/), a suspended account (/accounts/suspended/)
+    // and a login wall (/accounts/login/) apart (5.7). With "manual" every redirect looked like "signed out".
     const r = await fetch(new URL(path, location.origin), {method, credentials: "include", headers: h,
-      redirect: "manual", body: method === "POST" ? new URLSearchParams(form).toString() : undefined});
+      redirect: "follow", body: method === "POST" ? new URLSearchParams(form).toString() : undefined});
     const text = r.type === "opaqueredirect" ? "" : await r.text();
-    return {status: r.status, type: r.type, url: r.url, ct: r.headers.get("content-type") || "",
-            text: text.slice(0, 3e6), page: location.href};
+    return {status: r.status, type: r.type, url: r.url, redirected: !!r.redirected,
+            ct: r.headers.get("content-type") || "", text: text.slice(0, 3e6), page: location.href};
   } catch (e) {
     return {status: 0, type: "error", url: path, ct: "", text: "", error: String(e && e.message || e), page: location.href};
   }

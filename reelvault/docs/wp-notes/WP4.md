@@ -188,3 +188,14 @@ land:
   fails to import the desktop package (`cannot import name '__version__' from 'reelvault'`): the cwd makes the
   outer `reelvault/` folder a namespace package. No WP4 file is involved. Use `pytest reelvault/tests` there, or
   run from the project root.
+
+## Fix round 1 (2026-11-10)
+- Insight units use ONE tagger: `build_units` calls `effective_tags(..., quick_only=True)` (member override ?? quick
+  column). Deep reads run almost only on outliers, so their tags made tagger habits look like lift. The reel page and
+  outputs still use override ?? deep ?? quick. On the journey copy the "Voice only 18.3x" / "Bold claim 15.2x"
+  artefacts are gone (SD05 214 reels at 1.0x) and the planted formats lead (VF04 9.5x, VF08 9.5x, VF05 8.0x).
+- `_lift_table` for `sub_format`: W and H0 come from every visual-ok unit with a visual_format (ungrouped reels count
+  in the base and as "not this format" within each creator, no row). A sub-format holding all reels of one VF now
+  gets that VF's lift (journey: 1.0x -> 1.78x). Tests: `test_deep_reads_on_hits_do_not_change_lift`,
+  `test_sub_format_lift_uses_the_visual_format_base_rate`.
+- `lift_phrase` < 0.05 reads "Rarely an outlier" (also in working.js), never "0x".

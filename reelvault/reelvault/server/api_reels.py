@@ -166,7 +166,10 @@ def _reel_cols():
 def pipeline_state(conn, user) -> dict:
     r = db.reels
     left = conn.execute(select(func.count()).where(r.c.user_id == user.id, r.c.tier.in_(("priority", "sample")),
-                                                   r.c.tag_state != "done")).scalar() or 0
+                                                   r.c.tag_state.not_in(("done", "failed")))).scalar() or 0
+    # Integration finding: failed tags were counted as "left to tag" forever. They wait for the member's Retry.
+    failed = conn.execute(select(func.count()).where(r.c.user_id == user.id, r.c.tier.in_(("priority", "sample")),
+                                                     r.c.tag_state == "failed")).scalar() or 0
     eta = None
     try:
         from . import budget
@@ -184,7 +187,10 @@ def pipeline_state(conn, user) -> dict:
         line = f"{left} reels left to tag · waiting for {who}"
     else:
         line = f"{left} reels left to tag" + (f" · {eta[0].lower()}{eta[1:]}" if eta else "")
-    return {"left_to_tag": int(left), "eta": eta, "line": line}
+    if failed:
+        msg = f"{failed} reel{'s' if failed != 1 else ''} could not be tagged. Press Retry on the failed job to try again."
+        line = f"{line} · {msg}" if line else msg
+    return {"left_to_tag": int(left), "failed_tags": int(failed), "eta": eta, "line": line}
 
 
 def list_reels(user, params: dict) -> dict:
@@ -857,6 +863,8 @@ def home_parts(user_id: str) -> dict:
         data = _snapshot_data(conn, user_id)
         cards, fcs = _fresh_cards(conn, user_id, data)
         pipe = pipeline_state(conn, user) if user is not None else None
+    # Home's "Formats that work in your niche": only formats that beat normal (or have no lift yet)
+    fcs = [f for f in fcs if f.get("lift") is None or f["lift"] >= 1]
     return {"new_outliers": new_out, "first_look": first, "cards": cards[:3], "formats": fcs[:3], "pipeline": pipe,
             "saves_line": SAVES_LINE}
 

@@ -8,7 +8,7 @@ and --ignore-certificate-errors, so every request still carries Host: www.instag
 cookies. Answers are built with tests/fixtures/ig/make_fixtures.py (the same shapes as the JSON fixtures).
 
 Control (Host 127.0.0.1:<port>):  POST /__ctl/scenario {"set": [...]} · POST /__ctl/reset · GET /__ctl/log
-Scenarios: 429_on_page2, login_redirect, checkpoint, feedback_required, html_200, page_size_12, page_size_400,
+Scenarios: 429_on_page2, login_redirect, challenge_redirect, suspended_redirect, cdn_429, checkpoint, feedback_required, html_200, page_size_12, page_size_400,
 stale_cursor, cursor_error, suggested_reels, collab, bigint_pk, ds_user_httponly (cookie set by the test),
 page_trap (robots.txt is an HTML page whose script patches window.fetch), big_video (2nd video is 60 MB),
 clips_404 (clips/user answers 404: the reader must switch to feed/user), slow (0.8 s per API answer).
@@ -236,6 +236,10 @@ class H(BaseHTTPRequestHandler):
         f = e["form"]
         if e["headers"].get("x-csrftoken") != e["cookies"].get("csrftoken") or not f.get("target_user_id"):
             return self._send(403, {"message": "CSRF token missing or incorrect", "status": "fail"})
+        if on("challenge_redirect"):  # what www pages do on a checkpoint
+            return self._send(302, b"", "text/html", {"Location": "https://www.instagram.com/challenge/123/abc/"})
+        if on("suspended_redirect"):
+            return self._send(302, b"", "text/html", {"Location": "https://www.instagram.com/accounts/suspended/"})
         if on("checkpoint"):
             return self._send(400, {"message": "checkpoint_required", "checkpoint_url": "/challenge/123/abc/",
                                     "lock": True, "status": "fail"})
@@ -287,6 +291,8 @@ class H(BaseHTTPRequestHandler):
     def _cdn(self, u):
         name = u.path.rsplit("/", 1)[-1]
         if name.endswith(".mp4"):
+            if on("cdn_429"):
+                return self._send(429, b"", "text/plain")
             pk = int(name.split("_")[0])
             if on("big_video") and pk == TIMELINE[1]["pk"]:
                 self.send_response(200)

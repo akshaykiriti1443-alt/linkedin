@@ -446,18 +446,25 @@ def _evidence(n: int, k: int) -> str:
 
 def _lift_table(units: list[Unit], dim: str, *, hit: float, alpha: float, any_hit: bool) -> tuple[dict, dict]:
     """Per value: weighted shrunk lift, within-creator typical, evidence. Returns (rows by value, base)."""
-    du = [(u, values_of(u, dim)) for u in units]
-    du = [(u, vs) for u, vs in du if vs]
-    W = sum(u.weight for u, _ in du)
-    hw = sum(u.weight for u, _ in du if _is_hit(u, hit, any_hit))
+    pairs = [(u, values_of(u, dim)) for u in units]
+    if dim == "sub_format":
+        # Only reels in a named group carry a sub_format. The base rate must still be ALL visual-ok reels (the
+        # visual_format base), else a group holding every outlier reads 1.0x (fix round 1). Ungrouped reels count
+        # in W/H0 and as "not this format" for each creator, but get no row.
+        pairs = [(u, vs) for u, vs in pairs if vs or values_of(u, "visual_format")]
+    else:
+        pairs = [(u, vs) for u, vs in pairs if vs]
+    du = [(u, vs) for u, vs in pairs if vs]
+    W = sum(u.weight for u, _ in pairs)
+    hw = sum(u.weight for u, _ in pairs if _is_hit(u, hit, any_hit))
     h0 = hw / W if W > 0 else 0.0
-    base = {"W": W, "H0": h0, "n": len(du)}
+    base = {"W": W, "H0": h0, "n": len(pairs)}
     by_val: dict[str, list[Unit]] = {}
     for u, vs in du:
         for v in vs:
             by_val.setdefault(v, []).append(u)
     by_creator: dict[str, list[tuple[Unit, list[str]]]] = {}
-    for u, vs in du:
+    for u, vs in pairs:
         by_creator.setdefault(u.account_id, []).append((u, vs))
     rows = {}
     for v, mem in by_val.items():
@@ -623,6 +630,16 @@ def _reel_ref(u: Unit) -> dict:
     return {"id": u.reel_id, "url": u.url, "thumb": u.thumb, "score": round(u.score, 1) if u.score else None}
 
 
+def lift_phrase(lift: float) -> str:
+    """'2.6x more likely to be an outlier', or for lift < 1 'Less likely to be an outlier (0.3x)'. Integration finding:
+    a slideshow at 0.3x read '0.3x more likely to be an outlier' on Home."""
+    if lift < 0.05:
+        return "Rarely an outlier"
+    if lift < 1:
+        return f"Less likely to be an outlier ({lift:.1f}x)"
+    return f"{lift:.1f}x more likely to be an outlier"
+
+
 def card_line(lift: float, n: int, k: int, accounts: int, evidence: str, trend: str | None = None) -> str:
     who = f"{k} of your {accounts} competitors" if accounts > 1 else f"{k} competitor{'s' if k != 1 else ''}"
     line = (f"{lift:.1f}x more likely to be an outlier · {n} reels from {who} · "
@@ -662,7 +679,7 @@ def format_cards(sub_rows: list[dict], formats: dict, by_id: dict, *, capabiliti
         vf = f.get("vf")
         cm = can_make(vf, capabilities)
         lift = r.get("lift")
-        line = (f"{lift:.1f}x more likely to be an outlier · " if lift is not None else "") + \
+        line = (lift_phrase(lift) + " · " if lift is not None else "") + \
             f"{r['n']} reels from {r['k']} competitor{'s' if r['k'] != 1 else ''}"
         if r.get("trend"):
             line += f" · {r['trend'].capitalize()}"

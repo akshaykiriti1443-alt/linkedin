@@ -169,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     path.write_bytes(data)
     print(f"Built {path} ({len(data) // 1024} KB) for {', '.join(a.server)}.")
     if a.build == "store":
-        print("Upload this ZIP in the Chrome Web Store developer dashboard (see deploy/DEPLOY.md, step 6).")
+        print("Upload this ZIP in the Chrome Web Store developer dashboard (see 'The Chrome extension' in deploy/DEPLOY.md).")
     return 0
 
 

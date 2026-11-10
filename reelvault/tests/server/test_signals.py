@@ -69,8 +69,8 @@ def processed(clips, tmp_path_factory) -> dict[str, tuple[signals.Signals, Path]
     try:
         for name, path in clips.items():
             d = base / name
-            asr = None if (name == "speech" and HAS_WHISPER) else fake_asr
-            out[name] = (signals.process(path, d, ig_audio={"type": "original"}, words=(name == "speech"),
+            asr = None if (name.startswith("speech") and HAS_WHISPER) else fake_asr
+            out[name] = (signals.process(path, d, ig_audio={"type": "original"}, words=name.startswith("speech"),
                                          whisper_model="base", transcribe=asr), d)
     finally:
         if old is None:
@@ -779,3 +779,43 @@ def test_cdn_host_rules():
     assert not cdn_url_ok("https://user:pw@scontent.cdninstagram.com/a.mp4")
     assert not cdn_url_ok(None)
     assert looks_like_mp4(b"\x00\x00\x00\x20ftypisom" + b"\x00" * 8) and not looks_like_mp4(b"<html>nope</html>")
+
+
+@pytest.mark.skipif(not (HAS_CED and HAS_WHISPER), reason="needs CED-tiny and whisper base")
+@pytest.mark.parametrize("name", ["speech", "speech_ducked"])
+def test_voice_and_ducked_bed_give_no_sfx(processed, name):
+    """Fix round 1: sibilants ("S" of "Step"), plosives and a ducked bed's intro kicks are not SFX. A voice-only
+    reel must keep its SD01 hint and give the deep read no made-up cue."""
+    if name not in processed:
+        pytest.skip("no speech source (RV_FIXTURE_SPEECH or network for gTTS)")
+    sig, _ = processed[name]
+    sfx = [e for e in sig.sound["events"] if e["label"] in soundmap.SFX_LABELS]
+    assert sfx == [], sfx
+    assert sig.sound["summary"]["sfx_per_10s"] == 0.0
+    assert "SD15" not in sig.sound["pattern_hints"]
+
+
+def test_silence_beat_needs_a_reason_and_laughter_gives_sd16():
+    """Fix round 1: plain pauses between sentences are not SD09; laughter / crowd events give SD16."""
+    import numpy as np
+
+    def raw_with(silences, music_on=False):
+        t0 = np.arange(0, 19, 0.25)
+        groups = {"music": np.full(len(t0), 0.9 if music_on else 0.0), "speech": np.full(len(t0), 0.6)}
+        dsp = [{"label": "silence", "t": a, "t_end": b, "source": "dsp", "strength": 1.0} for a, b in silences]
+        return sound.SoundRaw(duration=20.0, has_audio=True, detector="ced-tiny-int8+dsp", t0=t0, groups=groups,
+                              dsp=dsp)
+
+    tr = {"speech_spans": [[0.4, 7.3], [7.8, 10.9], [11.4, 19.5]]}
+    pauses = [[7.37, 7.8], [10.97, 11.44]]
+    m = soundmap.build(raw_with(pauses), [], [], duration=20.0, transcript=tr)
+    assert not m["summary"]["silence_beat"] and "SD09" not in m["pattern_hints"]
+    hit = [{"t": 7.85, "t_end": 7.9, "label": "hit", "source": "ml+dsp", "confidence": "high", "score": 0.5}]
+    m = soundmap.build(raw_with(pauses), hit, [], duration=20.0, transcript=tr)
+    assert m["summary"]["silence_beat"] and "SD09" in m["pattern_hints"]
+    m = soundmap.build(raw_with(pauses, music_on=True), [], [], duration=20.0, transcript=tr)
+    assert m["summary"]["silence_beat"]                 # the music drops out for the gap
+    laughs = [{"t": 4.0, "t_end": 5.5, "label": "laughter", "source": "ml", "confidence": "high", "score": 0.7},
+              {"t": 14.0, "t_end": 15.0, "label": "crowd", "source": "ml", "confidence": "high", "score": 0.6}]
+    m = soundmap.build(raw_with([]), laughs, [], duration=20.0, transcript=tr)
+    assert "SD16" in m["pattern_hints"] and m["summary"]["sfx_counts"] == {}

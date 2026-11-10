@@ -6,6 +6,7 @@
 #   ./deploy/setup.sh status     is it running and healthy?
 #   ./deploy/setup.sh logs       follow the logs (Ctrl+C to stop watching)
 #   ./deploy/setup.sh --local    no domain yet: run on http://localhost:8000 without Caddy (tunnel or testing)
+#   ./deploy/setup.sh domain     switch a --local install to your domain with HTTPS (keeps keys and data)
 #   --no-build                   use the reelvault-members:latest image that is already built (CI)
 #
 # Non-interactive (scripts, CI):  RV_DOMAIN=app.example.com ADMIN_EMAIL=you@example.com ./deploy/setup.sh --yes
@@ -20,11 +21,11 @@ YES=0
 NO_BUILD="${RV_NO_BUILD:-0}"
 for arg in "$@"; do
   case "$arg" in
-    update|status|logs|install) MODE="$arg" ;;
+    update|status|logs|install|domain) MODE="$arg" ;;
     --local) LOCAL=1 ;;
     --yes|-y) YES=1 ;;
     --no-build) NO_BUILD=1 ;;
-    -h|--help) sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $arg (try --help)"; exit 2 ;;
   esac
 done
@@ -119,8 +120,12 @@ wait_for() {  # wait_for URL SECONDS [curl options]
 
 start_and_wait() {
   say "Building and starting ReelVault. The first build downloads the AI models and can take 10-20 minutes."
-  if [ "$NO_BUILD" = 1 ]; then say "(using the image that is already built)"; else compose build; fi
-  compose up -d
+  if [ "$NO_BUILD" = 1 ]; then
+    say "(using the image that is already built)"
+  else
+    compose build || die "The build stopped (the lines above say why). Check the internet connection and the free disk space, then run ./deploy/setup.sh again. Your keys in deploy/.env are kept."
+  fi
+  compose up -d || die "ReelVault could not start (the lines above say why). Fix that, then run ./deploy/setup.sh again. Your keys in deploy/.env are kept."
   say "Waiting for the app to answer..."
   wait_for "http://127.0.0.1:8000/healthz" 300 || {
     compose logs --tail 60 app || true
@@ -129,13 +134,53 @@ start_and_wait() {
   say "The app is running."
 }
 
+env_set() {  # env_set KEY VALUE: replace (or add) one line of deploy/.env, keeping its 600 mode
+  local tmp="$ENV_FILE.tmp"
+  umask 077
+  if grep -qE "^$1=" "$ENV_FILE"; then
+    sed -e "s#^$1=.*#$1=$2#" "$ENV_FILE" > "$tmp"
+  else
+    cp "$ENV_FILE" "$tmp"; printf '%s=%s\n' "$1" "$2" >> "$tmp"
+  fi
+  chmod 600 "$tmp"; mv "$tmp" "$ENV_FILE"
+}
+
+set_domain() {  # switch an install (for example a --local one) to a real domain with HTTPS
+  local domain="${RV_DOMAIN:-}"
+  if [ -z "$domain" ] || [ "$domain" = "localhost" ]; then
+    domain=""
+    say "Your domain's A record must already point at this server's IP address."
+    ask domain "Your ReelVault address, without https:// (for example app.scaleitads.com)"
+  fi
+  valid_domain "$domain" || die "'$domain' is not a domain name like app.example.com."
+  env_set PUBLIC_URL "https://$domain"
+  env_set RV_DOMAIN "$domain"
+  env_set COMPOSE_PROFILES https
+  say "ReelVault now uses https://$domain (deploy/.env updated, keys kept)."
+}
+
+sign_in_lines() {  # where and how to sign in, from deploy/.env (the password itself stays in the file)
+  local url email
+  url="$(env_get PUBLIC_URL)"; email="$(env_get ADMIN_EMAIL)"
+  echo
+  bold "Sign in at $url"
+  say "  Email:    $email"
+  say "  Password: your first password is ADMIN_PASSWORD in deploy/.env (unless you changed it after signing in)."
+}
+
 do_install() {
   need_docker
   check_host
   if [ -f "$ENV_FILE" ]; then
     say "deploy/.env already exists, so ReelVault is set up already. Keeping your keys and starting it."
+    case "$(env_get PUBLIC_URL)" in
+      http://localhost*|http://127.0.0.1*)
+        # set up with --local before; a domain given now means "switch to it" (fix round 1)
+        if [ "$LOCAL" = 0 ] && [ -n "${RV_DOMAIN:-}" ] && [ "${RV_DOMAIN}" != "localhost" ]; then set_domain; fi ;;
+    esac
     start_and_wait
     do_status
+    sign_in_lines
     return
   fi
   command -v openssl >/dev/null 2>&1 || die "openssl is missing. Install it (apt-get install openssl), then run this again."
@@ -208,6 +253,13 @@ do_status() {
 
 case "$MODE" in
   install) do_install ;;
+  domain)
+    need_docker
+    [ -f "$ENV_FILE" ] || die "ReelVault is not set up here yet. Run ./deploy/setup.sh first."
+    set_domain
+    start_and_wait
+    do_status
+    sign_in_lines ;;
   update) do_update ;;
   status) do_status ;;
   logs) compose logs -f --tail 100 ;;

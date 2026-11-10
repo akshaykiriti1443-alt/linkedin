@@ -286,3 +286,18 @@ def test_questionnaire_copy_and_digest_is_deterministic():
         merge.normalize_answer("q12", {"value": [], "hours": 200})
     with pytest.raises(merge.BadAnswer):
         merge.normalize_answer("q14", {"value": ["not a handle!"]})
+
+
+def test_skool_profile_page_read_without_profile_data():
+    """The extension uploads only props.pageProps.{currentGroup, currentUser}; a profile page may lack profileData."""
+    from reelvault.importers import skool
+
+    nd = {"props": {"pageProps": {"currentUser": {"name": "mia-member", "firstName": "Mia", "lastName": "Member",
+                                                  "metadata": {"bio": "Meta ads agency for dentists",
+                                                               "linkWebsite": "https://mia.example"}}}}}
+    out = skool.parse_next_data(nd)
+    assert out["text"].startswith("Skool profile: Mia Member (@mia-member)") and "dentists" in out["text"]
+    assert out["meta"]["found_links"] == [{"kind": "website", "url": "https://mia.example"}]
+    # a group page's viewer is never taken for the page's person
+    g = {"props": {"pageProps": {"currentGroup": {"name": "x", "metadata": {}}, "currentUser": nd["props"]["pageProps"]["currentUser"]}}}
+    assert skool.parse_next_data(g)["text"] == ""

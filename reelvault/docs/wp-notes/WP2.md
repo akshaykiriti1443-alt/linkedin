@@ -145,3 +145,24 @@ gives a deterministic timeline (TARGET pk 25025320) for WP4 scoring tests.
   deploy kit, WP3 models). From the repo root (`/home/user/linkedin`) the desktop tests fail with "cannot import
   name '__version__'": the `reelvault/` project folder on `sys.path` shadows the package. That happens with or without
   WP2 code.
+
+## Fix round 1 (2026-11-10)
+- Instagram stops are per MEMBER: `pair_claim` starts a new extension device with the member's active cooldown
+  (`jobs_ig.carried_state`: the latest active `cooldown_until` of any of their extension devices, revoked ones
+  included) and returns `cooldown_until/reason` in the claim answer. Server call counters use the scope
+  `igu:<user_id>` (`jobs_ig.ig_scope`), so a re-pair or reinstall keeps the day's counts. Try again clears
+  `signed_out` on all of the member's extension devices.
+- Extension: `claim()` and popup Disconnect keep `cooldown` (and the cached `ig` while a stop is active, plus
+  `budget`/`debug_sent`); `claim()` skips the pairing sign-in check during a non-signed_out stop. Popup texts for
+  challenge / suspended.
+- `igFetch` uses `redirect: "follow"`; `classify` reads the final URL: /challenge/ = challenge (24 h),
+  /accounts/suspended/ = suspended (all Instagram jobs stop), /accounts/login = signed_out; an unknown or opaque
+  redirect on an API path = challenge.
+- `runVideos`: a CDN 429 is `rate_limited` (24 h stop); three CDN 403s in a row too. `finish` marks reels `failed`
+  only for not_found / mismatch / no_video / too_big; CDN, network and upload errors go back to `need_extension`. A
+  waiting ig_videos job keeps only the reels not uploaded yet. mediaInfo calls are counted on the server from
+  `result.media_info` (done) and `media_info` (fail), minus the uploads already counted.
+- New fake-IG scenarios `challenge_redirect`, `suspended_redirect`, `cdn_429` and e2e cases for them and for
+  "429, Disconnect, Connect again: zero Instagram calls" (39/39 e2e pass on ports 9511/9513).
+- `/api/accounts` returns `extension: {paired, online}`; a pull queued with no extension says "Waiting for Chrome.
+  Connect the extension in Settings > Chrome extension".

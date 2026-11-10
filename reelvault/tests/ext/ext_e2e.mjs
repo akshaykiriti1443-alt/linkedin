@@ -439,6 +439,26 @@ test("video job: smallest version >= 480 px, Referer set by the DNR rule, no coo
   await scenario();
 });
 
+test("CDN 429 during a video job: stop at once (24 h), reels kept for a later try, not failed", async () => {
+  await freshWithFirstPull();
+  await scenario("cdn_429");
+  const t0 = nowS();
+  const r = (await rv("/__test/videos", {n: 4})).data;
+  assert.ok(r.job_id);
+  await runUntilStopped(r.job_id);
+  await idle();
+  const s = await state();
+  assert.equal(s.device.state.cooldown_reason, "rate_limited");
+  const log = since(await igLog(), t0);
+  assert.equal(log.filter(e => e.host === "scontent.cdninstagram.com" && e.path.endsWith(".mp4")).length, 1,
+               "one CDN 429, then no more downloads");
+  assert.equal(igApi(log).filter(e => /^\/api\/v1\/media\/\d+\/info\/$/.test(e.path)).length, 1);
+  const reels = r.reel_ids.map(id => s.reels.find(x => x.id === id));
+  assert.ok(reels.every(x => x.media_state !== "failed"), JSON.stringify(reels.map(x => x.media_state)));
+  await scenario();
+  await rv("/__test/cancel_all", {});
+});
+
 // ============================================================================================== ids, collabs, suggested
 
 test("bigint pk stored exactly, collab kept and marked, suggested reels from others dropped", async () => {
@@ -648,6 +668,77 @@ for (const [sc, code, reason, hours] of [["checkpoint", "challenge", "challenge"
     await scenario();
   });
 }
+
+// Fix round 1 (5.7): redirects are followed, so where Instagram sends us decides the stop.
+test("302 to /challenge/: a 24 h checkpoint stop, not signed out; Try again does not clear it", async () => {
+  await resetAll();
+  const acc = await newAccount();
+  await scenario("challenge_redirect");
+  const jid = await pull(acc);
+  await runUntilStopped(jid);
+  await idle();
+  const s = await state();
+  assert.equal(s.device.state.cooldown_reason, "challenge");
+  const h = (Date.parse(s.device.state.cooldown_until) - Date.now()) / 3600_000;
+  assert.ok(h > 23.9 && h <= 24, `cooldown ${h} h`);
+  assert.match(s.jobs.find(x => x.id === jid).error_message, /confirm it's you/);
+  const fails = (await rv("/__test/requests")).data.requests.filter(q => q.path.endsWith("/fail"));
+  assert.equal(JSON.parse(fails.at(-1).body).code, "challenge");
+  assert.equal((await rv("/api/ext/try-again", {})).status, 400, "Try again is only for signed out");
+  assert.equal((await state()).device.state.cooldown_reason, "challenge");
+  await scenario();
+});
+
+test("302 to /accounts/suspended/: every Instagram job stops", async () => {
+  await resetAll();
+  const acc = await newAccount();
+  await scenario("suspended_redirect");
+  const jid = await pull(acc);
+  await until(async () => (await state()).device.state.cooldown_reason === "suspended", {what: "suspended stop"});
+  await idle();
+  const j = await job(jid);
+  assert.equal(j.state, "paused", JSON.stringify(j));
+  assert.match(j.error_message, /limited your account/);
+  assert.equal(await igCallsWhileTicking(2), 0);
+  await scenario();
+  await rv("/__test/cancel_all", {});
+});
+
+test("429, then Disconnect and Connect again in the popup: still stopped, zero Instagram calls", async () => {
+  await resetAll();
+  await scenario("429_on_page2");
+  const acc = await newAccount();
+  const jid = await pull(acc);
+  await runUntilStopped(jid);
+  await idle();
+  assert.equal((await state()).device.state.cooldown_reason, "rate_limited");
+  await scenario();
+  const b = await rv("/__test/pull", {account_id: await newAccount("dental.growth.co"), mode: "first"});
+  assert.equal(b.status, 200, JSON.stringify(b.data));
+  const t0 = nowS();
+  const popup = await ctx.newPage();
+  await popup.goto(`chrome-extension://${extId}/popup.html`);
+  await popup.waitForSelector("#status:not([hidden])");
+  await popup.click("#disconnect");
+  await popup.close();
+  const cdAfterDisconnect = await swEval(async () => (await chrome.storage.local.get("cooldown")).cooldown);
+  assert.equal(cdAfterDisconnect.reason, "rate_limited", "Disconnect keeps the stop");
+  (await pairInPopup()).close();
+  const s = await state();
+  assert.equal(s.device.state.cooldown_reason, "rate_limited", "the new pairing carries the stop");
+  if (s.device.ig_user_id) await rv("/api/ext/confirm-account", {ig_user_id: VIEWER});
+  const st = (await rv("/api/ext/status")).data;
+  assert.ok(st.device.cooldown_until, "the web UI still shows the wait");
+  assert.equal(await igCallsWhileTicking(4), 0, "no Instagram call after re-pairing");
+  assert.equal(igApi(since(await igLog(), t0)).length, 0, "not even the pairing sign-in check");
+  await rv("/__test/cancel_all", {});
+  await rv("/__test/clear_cooldown", {});
+  await swEval(async () => { await chrome.storage.local.remove("cooldown"); return true; });
+  const ig = await swEval(async () => (await chrome.storage.local.get("ig")).ig);
+  if (!ig || !ig.signed_in) await swEval(async () => { await chrome.storage.local.set({ig: {signed_in: true, user_id: "61000777", username: "member.reader", checked_at: Date.now()}}); return true; });
+  await swEval(() => self.rv.hello());
+  await rv("/api/ext/confirm-account", {ig_user_id: VIEWER});
+});
 
 test("ds_user_id HttpOnly: the sign-in check falls back to current_user", async () => {
   await resetAll();

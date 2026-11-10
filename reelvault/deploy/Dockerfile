@@ -48,6 +48,8 @@ RUN apt-get update \
 COPY --from=deps /opt/venv /opt/venv
 COPY --from=models /opt/reelvault/models /opt/reelvault/models
 COPY migrations /opt/reelvault/migrations
+# The Claude plugin (WP6, 7.3.5): /download/claude-plugin.zip renders it for this server.
+COPY plugin /opt/reelvault/plugin
 # The extension folder is WP2's; the [s] wildcard keeps the build working while it is still empty or missing.
 # Docker copies the CONTENTS of the folder, so stage it with the packer script and sort it out after.
 COPY deploy/build_extension.py extension-member[s] /opt/reelvault/_stage/
@@ -68,9 +70,14 @@ ENV PATH=/opt/venv/bin:$PATH \
     HF_HUB_OFFLINE=1 \
     RV_MIGRATIONS_DIR=/opt/reelvault/migrations \
     RV_EXTENSION_DIR=/opt/reelvault/extension-members \
+    RV_PLUGIN_DIR=/opt/reelvault/plugin \
     RV_BUILD_EXTENSION=/opt/reelvault/deploy/build_extension.py
 
-USER reelvault
+COPY --chmod=755 deploy/entrypoint.sh /opt/reelvault/deploy/entrypoint.sh
+# RV_RUN_USER=root only for platforms that mount a root-owned volume (Fly.io, Railway, Render): the entrypoint then
+# gives /data to uid 10001 and drops to it. The default stays non-root.
+ARG RV_RUN_USER=reelvault
+USER ${RV_RUN_USER}
 WORKDIR /home/reelvault
 VOLUME ["/data"]
 EXPOSE 8000
@@ -80,5 +87,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD ["reelvault-start", "health"]
 
 # tini reaps child processes and forwards SIGTERM; reelvault-start runs web (uvicorn) + worker and restarts them.
-ENTRYPOINT ["tini", "--"]
+ENTRYPOINT ["tini", "--", "/opt/reelvault/deploy/entrypoint.sh"]
 CMD ["reelvault-start"]

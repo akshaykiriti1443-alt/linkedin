@@ -55,12 +55,16 @@ def _aware(dt: datetime | None) -> datetime | None:
 
 # ============================================================================================== effective tags
 
-def effective_tags(conn, user_id: str, reel_ids: list[str] | None = None, *, data: bool = True) -> dict[str, dict]:
+def effective_tags(conn, user_id: str, reel_ids: list[str] | None = None, *, data: bool = True,
+                   quick_only: bool = False) -> dict[str, dict]:
     """{reel_id: tags} for reels with a quick or deep analysis (or member overrides).
 
     Effective value = member override (stored on the quick row's `overrides`) ?? deep column ?? quick column.
     Extra keys: quality (vision|measured|member), tagged, has_deep, sub_format (analyses.format_id), quick (the
-    QuickTags data), deep_data (ReelBreakdown data)."""
+    QuickTags data), deep_data (ReelBreakdown data).
+    quick_only=True (insights, fix round 1): member override ?? quick column, never the deep column. Deep reads run
+    almost only on outliers, so mixing their answers in made the deep tagger's habits look like "lift"; every
+    insight unit is tagged by the same quick tagger. `tagged` then means "has quick tags"."""
     a = db.analyses
     if data:
         q = db.scoped(conn, a, user_id)
@@ -84,9 +88,11 @@ def effective_tags(conn, user_id: str, reel_ids: list[str] | None = None, *, dat
                 ov.setdefault(k, v)
         t: dict[str, Any] = {}
         for col in TAG_COLUMNS:
-            dv = getattr(deep, col) if deep is not None else None
+            dv = getattr(deep, col) if deep is not None and not quick_only else None
             qv = getattr(quick, col) if quick is not None else None
             t[col] = dv if dv is not None else qv
+            if quick_only and col == "format_id" and t[col] is None and deep is not None:
+                t[col] = deep.format_id  # the group id is not a tag: it is the same on both rows
         for k, v in ov.items():
             if k in OVERRIDE_KEYS and v is not None:
                 t[k] = v
@@ -98,7 +104,7 @@ def effective_tags(conn, user_id: str, reel_ids: list[str] | None = None, *, dat
         t["sub_format"] = t.get("format_id")
         t["quality"] = quality
         t["overrides"] = ov
-        t["tagged"] = quick is not None or deep is not None
+        t["tagged"] = quick is not None or (deep is not None and not quick_only)
         t["has_deep"] = deep is not None
         t["quick"] = dict(getattr(quick, "data", None) or {}) if quick is not None and data else None
         t["deep_data"] = dict(getattr(deep, "data", None) or {}) if deep is not None and data else None
@@ -408,7 +414,7 @@ def build_units(conn, user_id: str, account_ids: list[str] | None = None) -> tup
                                r.c.cover_path, r.c.audio, r.c.tag_quality)
                         .where(r.c.user_id == user_id, r.c.account_id.in_(list(accs) or ["-"]))).all()
     ids = [x.id for x in rows if x.tier in ("priority", "sample")]
-    tags = effective_tags(conn, user_id, ids, data=False)
+    tags = effective_tags(conn, user_id, ids, data=False, quick_only=True)  # one tagger for every unit
     sig = {}
     if ids:
         rs = db.reel_signals

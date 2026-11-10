@@ -1,6 +1,8 @@
 # ReelVault Members: build blueprint (DESIGN-SAAS.md)
 
 Status: blueprint v2, 2026-11-09 (v1 + review fixes; every change is listed in section 15, "Decisions log").
+As built: v2.1, 2026-11-10. The build and the integration pass changed some contracts; they are listed in 15.1
+(D51-D85), and where 15.1 and older text disagree, 15.1 wins. Per-package details: `docs/wp-notes/WP1.md` to `WP7.md`.
 Owner: ScaleItAds (scaleitads.com). Audience: the engineers who build it.
 
 This file is the contract between every part of ReelVault Members. Work packages (section 13) build in
@@ -625,6 +627,8 @@ no AI yet, reels still get scored and measured; tagging waits.
   tag_state='queued' ORDER BY tier='priority' DESC, score DESC LIMIT :n) RETURNING id`, and writes those ids into the
   job payload. `n` comes from the destination's image budget (6.1.1). An expired lease puts the reels back to
   `queued`. One `tag_reels` "slot" job per member is kept in `queued`/`waiting` while that member has queued reels.
+  A server (API-key) slot with less than a full batch starts 45 s later while the member still has reels in media
+  work, so calls carry full batches; Claude and desktop slots start at once (D78).
 - Rules: never hold a transaction across an AI call, ffmpeg, whisper or HTTP; handlers read inputs in one short
   transaction, work, then write results in another. Lease renewal for long media jobs every 60 s.
 
@@ -633,9 +637,12 @@ no AI yet, reels still get scored and measured; tagging waits.
   all media work per day. The day's budget is split evenly across members with queued media work; unused shares
   flow to members who still have work (water-filling, recomputed every 10 min). `member_budget(user_id, day,
   media_left)` holds the current share, also capped by `member_media_per_day` (150).
-- Every queued media job counts against its member's share, so one member (or one abused account) can never take
+- The share counts processed reels: only `process_reel` spends `media_left` (a `fetch_video` download, or its
+  hand-off to the extension, does not; D59). Every queued media job counts as demand against its member's share, so one member (or one abused account) can never take
   more than its share while others wait.
-- ETA: `budget.eta(user_id)` = (member's queued media jobs ÷ member's share per hour) + AI wait estimate (by
+- ETA: `budget.eta(user_id)` = (member's queued media work ÷ member's lanes per hour, where a reel still to download
+  costs download + processing time; work beyond today's room = max(`media_left`, fair cap − used) waits for
+  tomorrow, D79) + AI wait estimate (by
   executor: API ≈ minutes; Claude connector/desktop = "when you next open Claude / the desktop app"). The UI shows
   "Ready in about 3 hours" or "5 reels are waiting for Claude".
 - The admin page shows server load: queued media jobs, today's budget used, and the measured seconds per reel.
@@ -755,13 +762,14 @@ running, lists show the metrics-only outliers at once with a small "tags coming:
 | `POST /api/auth/reconfirm` | `{"code"}` (current community code; only when `reconfirm_days` > 0 and due) | `{"ok": true}`; sets `membership_checked_at` |
 | `POST /api/auth/login` | `{"email", "password"}` | `200 {"user": Me}` + cookie. `pending` → 403 "Your account is waiting for approval." `disabled` → 403 "Your account is turned off. Message the community admin." Wrong → 401 "Email or password is wrong." |
 | `POST /api/auth/logout` | `{}` | `{"ok": true}`; deletes the session |
-| `GET /api/me` | | `Me` = `{"id", "name", "email", "role", "status", "ai_mode", "setup": {"profile": "approved" \| "draft" \| "empty", "ai": bool, "extension": "paired" \| "none" \| "cooldown", "competitors": n}, "csrf_token", "limits": {...}}` (401 when signed out) |
+| `GET /api/me` | | `Me` = `{"id", "name", "email", "role", "status", "skool_url", "ai_mode", "setup": {"profile": "approved" \| "draft" \| "empty", "ai": bool, "extension": "paired" \| "none" \| "cooldown", "competitors": n}, "csrf_token", "limits": {"max_accounts", "pulls_per_day", "outputs_per_day", "media_per_day", "storage_mb"}, "reconfirm_needed": bool, "admin"?: {"pending", "code_banner"}}` (401 when signed out; D54) |
 | `POST /api/auth/password` | `{"current", "new"}` | `{"ok": true}`; ends other sessions |
 | `POST /api/auth/reset` | `{"token", "new"}` (token from an admin-made or emailed link `/#reset/<token>`) | `{"ok": true}` |
 | `POST /api/auth/reset-request` | `{"email"}` | always `{"ok": true}`; sends an email only when SMTP is configured |
 | `GET /api/invite/<code>` | | `{"valid": bool, "label"?}` (lets `/#join/<code>` prefill the code) |
 | `DELETE /api/me` | `{"password"}` | deletes the member, all rows and files. `{"ok": true}` |
 | `GET /api/me/export` | | ZIP download: profile, accounts, reels metadata, analyses, outputs (JSON + markdown) |
+| `GET/POST/DELETE /api/me/support-access` | POST `{"days": 1..7}` (default 7) | `{"active", "granted_at", "expires_at", "admin_views": [iso ≤ 10], "last_viewed_at"}`; opt-in admin support access (11.5), mirrored in `users.settings.support_access_until` (D57) |
 
 ### 4.3 Admin (`api_admin.py`, WP1; role admin only, else 403)
 | method path | request | response |
@@ -786,6 +794,9 @@ running, lists show the metrics-only outliers at once with a small "tags coming:
 | `GET /api/admin/support/<user_id>/...` | read-only mirrors of `/api/reels`, `/api/outputs`, `/api/insights/summary` | only while the member's `admin_access` grant is live (11.5); each call audited |
 | `GET /api/admin/community-formats` | | `{"month", "formats": [{"vf", "label", "members_using": n, "lift_median"}]}`; only when `community_stats=true`; rows need ≥ 5 members; no names, handles or reel ids |
 | `GET/PUT /api/admin/copy` | `{"connector_steps": [str], ...}` | the editable copy blocks (7.3.4), stored in `app_settings.copy_overrides` |
+| `POST /api/admin/users/<id>/reject` | `{}` | `{"ok": true}`; deletes a PENDING signup (400 for anyone else) (D57) |
+| `POST /api/admin/invites/community/ack` | `{}` | `{"ok": true}`; hides the new-code banner after an automatic rotation (D53) |
+| `GET /api/admin/instagram-health` | | 5.9 data: `{"samples", "fails", "recoveries", "pk_conflicts", "fields_seen"}` (D60) |
 
 ### 4.4 Profile and topics (`api_profile.py`, WP7)
 | method path | request | response |
@@ -801,6 +812,8 @@ running, lists show the metrics-only outliers at once with a small "tags coming:
 | `POST /api/topics/suggest` | `{"from"?: "profile" \| "reels"}` | `{"job": Job}` (suggest_topics; `profile` needs ≥ 1 ok source or q1; `reels` needs ≥ 30 tagged reels) |
 | `POST /api/topics/accept` | `{"ids": [..], "dismiss": [..]}` | `{"topics": [...], "retag_job"?: Job}` (accepting suggestions = topics-only retag) |
 | `PUT /api/topics` | `{"topics": [{"id"?, "slug"?, "label", "description", "examples"}]}` (full list, in order; 0-20) | `{"topics": [...], "retag_job"?: Job}` (changed list → re-tag topics only, text-only cheap call) |
+| `POST /api/profile/sources/<id>/read` | `{}` | `{"source": Source, "job"?: Job}`: reads a link again with the same routing as a new source (step 2 "Read my links now", "Read it again"); 409 while reading, 400 when the extension is needed but not paired (D75) |
+| `GET /api/taxonomy` | | ids and labels only (visual formats, sound patterns, hook/CTA types, caption styles, B-roll/setting/framing) for Fix tags, filters and labels (D75) |
 
 `Source` = `{"id", "kind", "url"?, "status", "chars": n, "preview": "first 300 chars", "error"?: str, "fetched_at"}`.
 `Question` = `{"id": "q1", "label", "help", "kind": "text" | "long" | "list" | "choice", "choices"?: [..], "required": bool}`.
@@ -818,6 +831,8 @@ running, lists show the metrics-only outliers at once with a small "tags coming:
 | `DELETE /api/ai/connections/<id>` | | `{"ok": true}` |
 | `POST /api/ai/desktop/pair` | `{}` | `{"code": "7KQ4-M2XP", "expires_at", "server": "https://HOST"}` (member types it in the desktop app) |
 | `DELETE /api/ai/desktop/<device_id>` | | `{"ok": true}` |
+| `GET /api/connector/clients` | | `{"clients": [{"client_id", "name", "kind": "cimd" \| "dcr", "connected_at", "last_used_at"}], "url": "https://HOST/mcp"}` (Settings > AI > "Use my Claude plan", D74) |
+| `POST /api/connector/disconnect` | `{"client_id"}` or `{"all": true}` | `{"ok": true, "revoked": n}` (D74) |
 
 `Conn` = `{"id", "provider", "preset", "base_url", "model", "cheap_model", "vision": bool, "key": "••••abcd" | null, "status", "last_tested_at", "last_error", "is_default", "usage_this_month": {"calls", "in", "out"}}`. The key itself is never returned.
 
@@ -837,6 +852,7 @@ Session endpoints (web UI):
 | `GET /api/ext/status` | | `{"paired": bool, "device"?: {"id", "name", "version", "ig_username", "ig_confirmed": bool, "last_seen_at", "online": bool (seen < 90 s), "last_seen_text": "Extension last seen 2 h ago: open Chrome to continue.", "cooldown_until"?, "cooldown_reason"?, "update_available": bool}, "budget": {"hour_used", "hour_max": 120, "day_used", "day_max": 400}, "latest_version": "2.0.0", "store_url"?: str, "download_url": "/download/reelvault-members-extension.zip"}` |
 | `POST /api/ext/confirm-account` | `{"ig_user_id"}` (must equal the device's reported `ig_user_id`) | `{"ok": true}`; sets `ig_confirmed_user_id`. Until then the web UI shows "ReelVault will read Instagram as **@username**. [Continue] [Use another account]" and Instagram jobs stay waiting (5.2) |
 | `DELETE /api/ext/device` | | `{"ok": true}` (revokes the token) |
+| `POST /api/ext/try-again` | `{}` | `{"ok": true}`: the member's Try again after a `signed_out` stop (5.7); 400 for other pauses (D60) |
 
 Device endpoints (`Authorization: Bearer <device token>`, CORS allows `chrome-extension://*` origins, no cookies):
 | method path | request | response |
@@ -891,7 +907,7 @@ in `<untrusted>` blocks (7.6).
 ### 4.9 Reels, insights, banks (`api_reels.py`, WP4)
 | method path | request | response |
 |---|---|---|
-| `GET /api/reels` | query: `account`, `band` (csv), `format` (VF id), `sub_format` (fmt id), `sound`, `topic` (slug or `unsorted`), `hook_type`, `min_score`, `q`, `starred`, `recent` (bool: last 90 days), `purpose` (`remake` \| `format` \| `hook` \| `learn`: the desktop app's four purposes as filters), `sort` (`score` \| `newest` \| `views`), `limit`, `cursor` | `{"reels": [ReelSummary], "next_cursor", "counts": {"total", "outlier", "big", "breakout"}, "pipeline": {"left_to_tag": n, "eta": "Ready in about 3 hours"}}` |
+| `GET /api/reels` | query: `account`, `band` (csv), `format` (VF id), `sub_format` (fmt id), `sound`, `topic` (slug or `unsorted`), `hook_type`, `min_score`, `q`, `starred`, `recent` (bool: last 90 days), `purpose` (`remake` \| `format` \| `hook` \| `learn`: the desktop app's four purposes as filters), `sort` (`score` \| `newest` \| `views`), `limit`, `cursor` | `{"reels": [ReelSummary], "next_cursor", "counts": {"total", "outlier", "big", "breakout"}, "pipeline": {"left_to_tag": n, "failed_tags": n, "eta": "Ready in about 3 hours", "line"}}` (`failed_tags` = reels whose tag batch failed; they wait for Retry, D84) |
 | `GET /api/reels/<id>` | | `{"reel": ReelSummary + {"caption", "audio", "snapshots": [...], "media": {"video"?: url, "cover"?: url, "frames": [{"url","t","kind"}], "sheet"?: url}, "signals"?: {"transcript": {...}, "cuts": [...], "sound": SoundMap, "edit": EditStats, "visual": VisualStats}, "quick"?: QuickTags, "deep"?: ReelBreakdown, "overrides": {...}, "accounts": [{"handle", "role"}]}}` |
 | `POST /api/reels/<id>/analyze` | `{}` | `{"job": Job}`: calls `work.queue_deep(user_id, [id])`, which sets `deep_state=queued` and calls `pipeline.advance` (media → signals → deep, each step only when the previous one is done) |
 | `POST /api/reels/analyze-best` | `{"account_id"?: str, "limit": 10}` | `{"jobs": [Job], "count": n}` (deep-analyze the top outliers not yet analyzed) |
@@ -948,7 +964,7 @@ in `<untrusted>` blocks (7.6).
 | `GET /api/jobs?active=1&kind=` | | `{"jobs": [Job]}` (member's jobs, newest first; `active` = queued/running/waiting/paused) |
 | `POST /api/jobs/<id>/cancel` | `{}` | `Job` |
 | `POST /api/jobs/<id>/retry` | `{}` | `Job` (failed/paused → queued, attempts reset) |
-| `GET /api/home` | | `{"setup": Me.setup, "jobs": [Job active], "new_outliers": [ReelSummary ≤ 8], "cards": [WorkingCard ≤ 3], "next_step": {"label": "Add your first competitor", "href": "#competitors"}}` |
+| `GET /api/home` | | `{"setup": Me.setup, "jobs": [Job active], "new_outliers": [ReelSummary ≤ 8], "cards": [WorkingCard ≤ 3], "formats": [FormatCard ≤ 3], "first_look": [{"account", "pull_id", "mode", "finished_at", "outliers", "line", "tags_coming", "reels"}] (one per recent pull, ≤ 3), "pipeline", "saves_line", "next_step": {"label": "Add your first competitor", "href": "#competitors"}}` (D69) |
 | `GET /files/<user_id>/<path>` | session cookie | the file (`user_id` must be the session user; else 404). `Cache-Control: private, max-age=86400` |
 | `GET /download/reelvault-members-extension.zip` | | the packed extension, with `config.js` written at request time from `PUBLIC_URL` (5.2). Admin/beta path; members are pointed to the Web Store listing once it exists |
 | `GET /pair` | | tiny page: "Open the ReelVault Members extension and paste this link." |
@@ -1382,7 +1398,7 @@ stars a reel. It reads the reel's states and enqueues at most one next step (ded
 | reel state | next step |
 |---|---|
 | tier in (priority, sample) or starred or deep_state=queued, `media_state` in (none, queued) | `fetch_video` (media class) |
-| `media_state=have`, `signals_state` in (none, queued) | `process_reel` with `words = (tier == priority or deep requested)` |
+| `media_state=have`, `signals_state` in (none, queued) | `process_reel` with `words = (tier == priority or deep requested)`, priority = the tier's − 5 so a downloaded reel is processed before the next download (D77) |
 | `signals_state=done`, `tag_state=none` | set `tag_state=queued` (picked up by the member's `tag_reels` slot job, 3.13.2) |
 | `signals_state=done`, `deep_state=queued` | `analyze_reel` (only now, so deep never runs before signals exist) |
 | `media_state=need_extension` | nothing (WP2's scheduler batches `ig_videos`) |
@@ -2073,6 +2089,8 @@ touches other connectors. Every piece of third-party text in a result is wrapped
 | `save_profile_draft` | `{"draft": ProfileDraft}` | `{"ok", "url": "https://HOST/#onboarding/review"}` |
 | `save_topics` | `{"topics": TopicList}` | `{"ok"}` (saved as suggestions; member approves in the web UI) |
 | `save_format_names` | `{"batch_id", "guides": [FormatGuide]}` | `{"ok", "remaining"}` (name_formats jobs, 6.9) |
+| `get_next_task` | `{"kind"?: "draft_profile" \| "suggest_topics" \| "name_formats" \| "retag_topics"}` | `{"batch_id", "kind", "brief", "schema_name", "save_with"}` (the text tasks had save tools but no way to fetch them, D73) |
+| `save_topic_retag` | `{"batch_id", "tags": [TopicRetag]}` | `{"ok", "retagged": n, "remaining": n}` (retag_topics jobs, D73) |
 
 `save_output` takes one pydantic model per kind via a discriminated union on `kind` (section 8). A wrong shape
 returns `isError` with the validation text. Server `INSTRUCTIONS` (≤ 1,500 chars): "You are helping a ReelVault
@@ -2114,8 +2132,8 @@ token is stored in `HOME/members.json` (outside the repo). The loop runs in a th
 time; stops when the app closes. Nothing else in the desktop app changes.
 
 ### 7.5 Prompts (`reelvault/ai/prompts/`)
-`tag_reels.md`, `analyze_reel.md`, `draft_profile.md`, `suggest_topics.md`, `retag_topics.md`, `out_reel_script.md`,
-`out_meta_ads.md`, `out_content_plan.md`, `out_competitor_report.md`. Each has `{{placeholders}}` filled by
+`tag_reels.md`, `analyze_reel.md`, `draft_profile.md`, `suggest_topics.md`, `retag_topics.md`, `name_formats.md` (D70),
+`out_reel_script.md`, `out_meta_ads.md`, `out_content_plan.md`, `out_competitor_report.md`. Each has `{{placeholders}}` filled by
 `work.build_task`: `{{profile}}` (ProfileDigest as bullets), `{{topics}}`, `{{taxonomy_vf}}`/`{{taxonomy_sd}}`/
 `{{taxonomy_ep}}` (ids, labels, cues, precedence), `{{field_guide}}` (`brain.field_guide(schema)`), `{{signals}}`,
 `{{insights}}`, `{{untrusted_*}}` (7.6). Shared rules in every prompt (one file, `prompts/_shared.md`, included by
@@ -3225,3 +3243,48 @@ Each line: what changed, where, and the review finding it resolves (B = blocker,
 | D49 | Quick hook-bank rows for every reel with O ≥ 2 (first sentence + hook_type + on-screen text), upgraded by deep reads | 4.9, 6.5, 6.8 | m: thin hook bank |
 | D50 | Copy for "Keep Chrome open", badge while working, "Extension last seen 2 h ago" | 4.6, 4.11, 5.2, 5.3 | m: members don't know Chrome must stay open |
 
+### 15.1 Build decisions (v2 → as built, 2026-11-10)
+
+What the seven work packages and the integration pass changed while building. Each WP's full notes (interfaces,
+evidence, what is not tested) are in `docs/wp-notes/WP<n>.md`; this table is the contract-level summary. The new endpoints
+(4.2-4.6), the extra MCP tools (7.3.3), the `Me` and `/api/home` shapes, the media share and ETA (3.13.3), the
+pipeline order and tag batching (3.13.2, 6.0) and the prompt list (7.5) are also written into those sections; for the
+other rows, this table and the WP notes win over older text above. Source: WP = work package notes, INT =
+integration pass (end-to-end journey, 2026-11-10).
+| # | decision | sections | source |
+|---|---|---|---|
+| D51 | `jobs.enqueue(executor=None)` = the kind's default executor; extra kwargs `message`, `progress`, `max_attempts`, `conn`. `jobs.user_id` is nullable for system jobs (`sweep_storage`, `backup`, `expire_members`, `rotate_code`); the lease LEFT JOINs `job_turns` (`NULLS FIRST`), new members are served first | 3.13, 3.13.2 | WP1 |
+| D52 | `reels.account_id` has no FK (DELETE /api/accounts may keep reels); `audit_log.user_id` ON DELETE SET NULL; `analyses.id` prefix `ana`, DCR client ids `dcr`; `admin_access` PK (`user_id`, `granted_at`); `dedupe_key` is a plain unique index (NULL on finish) on both databases | 3 | WP1 |
+| D53 | Internal state in `app_settings` keys `internal.*` (hidden from admin settings): worker heartbeat, code banner (+ `POST /api/admin/invites/community/ack`), last backup, sync previews, signup pause, mail last error, extension debug samples (`internal.debug_sample.<device>.<endpoint>`) | 3.3, 4.3, 5.9 | WP1, WP2 |
+| D54 | `Me` adds `skool_url`, `reconfirm_needed`, `admin: {pending, code_banner}`, `limits: {max_accounts, pulls_per_day, outputs_per_day, media_per_day, storage_mb}`; `/healthz` and admin stats add `worker` (+ `last_backup`); `GET /api/admin/users?q=`; reconfirm gate = 403 `reconfirm_needed` on every session route except `/api/me`, reconfirm, logout | 4.2, 4.3 | WP1, INT (`skool_url`, so onboarding step 1 pre-fills the Skool profile) |
+| D55 | Rate limits are keyed by the client: `ratelimit.client_key` (IPv6 per /64, XFF only from `TRUSTED_PROXIES`), composite `ratelimit.key(...)`, `ip_limit` x10 for Anthropic's range, `hit_all`; 600 calls/min per device token; login lockout counts failures only (5 per email / 20 per client per 15 min) | 11.1, 11.6 | WP1 |
+| D56 | Email: `mailer.py` (SMTP_URL `smtp://`/`smtps://` or RESEND_API_KEY, `MAIL_FROM`): admin note per pending signup, "You're in" on approve, self-service reset links (`POST /api/auth/reset-request`, always `{"ok": true}`, 3 per address/h). Email codes at login are NOT built (no API shape) | 4.2, 11.1 | WP1 |
+| D57 | New endpoints: `POST /api/admin/users/<id>/reject` (pending only); `GET/POST/DELETE /api/me/support-access` (`{"days": 1..7}`; returns `active, granted_at, expires_at, admin_views, last_viewed_at`); admin user rows add `support_access`; community formats drop rows with < 5 members whatever the provider returns; admin integer settings have upper bounds | 4.2, 4.3, 11.5 | WP1 |
+| D58 | Deploy kit: one generic `deploy/Caddyfile` reading `RV_DOMAIN`; `.env` at `deploy/.env` (mode 600, `COMPOSE_PROFILES`/`COMPOSE_FILE` pick Caddy, Postgres, split layout); off-box backup copy runs from a host cron line (`backup.sh copy-out` + rclone); `RV_MIGRATIONS_DIR` in the image; `reelvault-start health`; `RV_MODELS_DIR` (default `/opt/reelvault/models`) | 12.5 | WP1 |
+| D59 | Media budget counts processed reels: only `process_reel` spends `member_budget.media_left`; `fetch_video` (a paced CDN download, or its hand-off to the extension) never does. Before, each reel cost 2 of the member's 150 a day and processing stalled after 75 reels (seen in the journey: 150 skipped fetches used the whole share) | 3.13.2, 3.13.3 | INT |
+| D60 | Extension API additions: `POST /api/ext/try-again` (after `signed_out`), `GET /api/admin/instagram-health` (5.9 data); `/api/ext/status` adds `device.ig_user_id`, `signed_in`, `cooldown_text`, `update_needed`, `update_text`, `budget.cdn_day_*`, `min_version`; lease reason `update` (too-old extension gets no work, badge "!"); fail code `budget` (the extension's own 5.6 limit; waits `cooldown_s` without spending an attempt or a device cooldown); `items.paging.request_max_id`; pacing `retry_ms`, `page_read_day_max`; `RV_TEST_PACING=1` gaps only for a `BUILD = "test"` extension (refused by `build_extension.py`) | 4.6, 5.3, 5.4, 5.6, 5.7 | WP2 |
+| D61 | Extension robustness: re-checks the Instagram account at most every 30 min while `confirm_account` work waits; keeps its own `local_only` cooldown when a stop can't be reported; `next` pull cursors are always rewritten from the account row at lease; after the last attempt's lease expires the pull is closed, `fetching` reels go back to `need_extension`, discovery runs fail and waiting sources become `needs_paste`; server-side per-device Instagram counters (`usage_counters`); discovery (60/day) and `media/info` (30/job) caps are extension-only; `ig_check` items are never stored | 5.3, 5.6, 5.7, 5.8 | WP2 |
+| D62 | Cuts: scdet ≥ 8 OR an adaptive local peak (highest within ±0.25 s, ≥ 1.2 and ≥ 4x the local 90th percentile); slides: any local peak ≥ 0.4; no frame subtracted (ffmpeg 6.1 stamps the new shot's first frame) | 6.3 | WP3 |
+| D63 | Sound fusion extras: bar-length beat grid, DSP-only hits dropped inside speech, whoosh rise-time ≥ 80 ms, refined riser start, ML events merge into DSP whooshes/risers, ML-only events need score ≥ 0.15 and a reliable label. SoundMap adds `music.under_speech_pct`, `loudness`, `ambient_pct`, `no_audio`, `summary.{accents_off_cut, riser_into_hit, silence_beat, music_starts_s}` | 6.4 | WP3 |
+| D64 | VisualStats adds `face_detector`, `frames`, `cutaway_share`, `brightness_med`, `speech_ratio`, `per_frame`, `sheet_bytes`; `local_rules` in `taxonomy.json` is a list of format rules `{id, p, all: [[stat, op, value]], why}` and recipe rules (VF01/VF02 need `small_face_corner_share < 0.5`); WP5 keeps the block when it rewrites the file (a test checks it equals the code defaults) | 6.5.1, 10 | WP3 |
+| D65 | Transcript adds `model`, `skipped`; without word times `speech_spans` come from silero VAD; files `frames/index.json`, `sheet_<dest>.json` sidecars, capped sheets cached as `sheet_<dest>_<N>k.jpg`; sheet step-down = quality → tile size → (paid_api) 3x2 key frames, never empty; "smallest version ≥ 480 px" on the server is not built (`reels` keeps one `video_url`); download pacing holds per worker process | 6.1, 6.1.1, 6.2 | WP3 |
+| D66 | Strata: 5 x round(account reels / 100), equal `taken_at` quantiles of eligible non-priority reels, picks never dropped (2 pulls ≈ 50 sample reels per account), seed `account_id:<latest pull id>`; untagged strata hand their weight to tagged strata of the same account | 6.0, 6.7 | WP4 |
+| D67 | Scoring: likes-basis peers include reels with views; collab score columns written by the primary account, collab/coauthor rows never peers; nightly re-score replaced by `score_account` queued from `GET /api/accounts` and `/api/home` for scores older than 20 h; pull days are UTC (scheduled pulls start 00:05 UTC) | 6.6, 4.8 | WP4 |
+| D68 | Insights: `hits` unweighted, `hit_rate` weighted; lift and base rate per dimension over units with a value; `?window=all|recent` (default 365 days, all three stored in the snapshot); sub-format grouping on all-time competitor units, lift in the window, inactive formats kept (`stats.active=false`); short 6.7.5 labels win, `needs` from `taxonomy.json` | 6.7, 6.9 | WP4 |
+| D69 | API extras: `/api/home.first_look` = list per recent pull `{account, pull_id, mode, finished_at, outliers, line, tags_coming, reels}`; lists add `saves_line`, `pipeline.line`; ReelSummary adds `band_label`, `badge_labels`, `tags.sound_label`, `tags.unverified`; AccountSummary adds `role, url, note, last_refresh_at, pull_job, scheduled_for`; account cap = 429 `limit_reached`; second "your account" = 409; 10 discovery searches/day; `DELETE /api/accounts/<id>` defaults `delete_reels: true` and moves shared collabs; `purpose` filters defined; hook bank read from analyses (no table); `process_all` and the 15-per-account sample for connector/desktop members; automatic deep reads only for competitors | 4.8, 4.9, 6.0, 6.8 | WP4 |
+| D70 | AI layer: new prompt `name_formats.md`; new models `FormatGuideBatch`, `TopicRetagBatch`, `DraftAnswer(s)`, `StoredWeek`, `PainCoverage`; ProfileDraft carries `niche_label`, `search_terms`; answers < 0.5 confidence stored as `suggestion` only; draft extras in `profiles.answers["_draft"]`; quick hook-bank rows in `analyses.data["hook_bank"]`; quick tags store `tag_quality`, `local_agrees` | 6.5, 6.8, 7.5, 9.4 | WP5 |
+| D71 | Pipeline: `advance` sets `tag_state=queued` and queues `analyze_reel` in one call; a deep read on failed signals runs text-only; a deep read without word times re-queues `process_reel(words=True)`; `deep_state=waiting` for Claude/desktop; no-AI jobs are `paused` (`no_ai`) and resume on a mode/key change; outputs waiting for a deep read are `paused` (`waiting_deep`); one tag "slot" job per member chains itself; topic suggestions from reels at 30 tagged reels and every 30 more; external executors write one output chunk per lease | 6.0, 3.13.2, 7.2 | WP5 |
+| D72 | Saves: cues more than 0.6 s from any detected event are dropped (`data.dropped_cues`) instead of rejecting a breakdown; an Upgrade may cite `<reel_id>:general` when the source has no deep read; report numbers from `outputs.report_numbers` + WP4's insights JSON; SDK retries off (the job runner owns them); print page sends its own CSP; desktop card = `/members-card.js` injected by `app.py`; API extras on connections (`use_for`, `options`, max 6, 30 key tests/h) | 7.1, 8, 8.4, 4.5 | WP5 |
+| D73 | MCP: two extra tools `get_next_task {"kind"?}` → `{batch_id, kind, brief, schema_name, save_with}` and `save_topic_retag {batch_id, tags}`; protected resource metadata served by `oauth.router` (exact issuer, also at the root path); no `iss` in the authorization response; code replay revokes its tokens; DCR asking for a secret is registered as a public client; unknown scopes dropped; `/mcp` Origin allowlist = our origin, claude.ai, claude.com; `get_output_brief.options` is a plain object validated by `outputs.parse_options`; `start_competitor_pull` mode `first` adds an untracked account | 7.3.1-7.3.3 | WP6 |
+| D74 | Connector endpoints for the web UI: `GET /api/connector/clients`, `POST /api/connector/disconnect` (`{"client_id"}` or `{"all": true}`); the authorize page sends signed-out members to `/#login?next=<url>` and the SPA follows `next` only when it starts with `/oauth/authorize?` | 4.5, 7.3.2, 7.3.4 | WP6, WP7 |
+| D75 | Web UI: `POST /api/profile/sources/<id>/read` (read a link again; step 2's "Read my links now"); `GET /api/taxonomy` (ids and labels only); Skool parser takes `currentUser` on a page without a group; voice words drop trailing punctuation; onboarding progress from `Me.setup` (finished flag per browser); page-ready marker `<html data-view="ready" data-ready="<hash>">`; format playbooks become Home's first card once they exist | 4.4, 9, 9.2 | WP7 |
+| D76 | Journey harness `tests/journey/` (run by hand, not by pytest; `docs/wp-notes/INTEGRATION.md`): the whole member path on one dev server (web + worker) with the real extension in Chromium, a fake Instagram (3 competitors x 250 reels, synthetic videos), a fake OpenAI-compatible AI, the official mcp client and the real Claude Code CLI; findings fixed in D54, D59 and D77-D85 | 12 | INT |
+| D77 | A downloaded reel is processed before the next download of the same tier (`process_reel` priority = tier priority − 5, `pipeline.PROCESS_FIRST`). Both share the media pool and a download holds its lane through the 2-5 s CDN gap; before, every sample download ran before any sample was processed (the journey stalled 8 minutes with 77 videos on disk waiting) | 6.0, 3.13.2 | INT |
+| D78 | API-key tag slots gather a batch: a server `tag_reels` slot with fewer than `API_TAG_BATCH` (10) reels waits `TAG_GATHER_S` (45 s) while the member still has reels in media work; Claude and desktop slots never wait. Before, reels finishing one by one gave 1-reel AI calls (36 calls for 37 reels) | 3.13.2, 6.5 | INT |
+| D79 | ETA: the room left today = max(`media_left`, fair cap − used), so jobs queued after the last share recompute no longer push the whole queue to "tomorrow" ("Ready in about 19 hours" for 4 minutes of work); reels still to download count download + processing time (`budget.sec_per_fetch`, default 4 s); a member with queued processing but no share row for today gets one within seconds (`budget.missing_share`, also when its share is used up but it is under the daily cap), not after up to a minute | 3.13.3, 4.1 | INT |
+| D80 | Housekeeping and packaging seams: the daily `sweep_storage` also runs `oauth.cleanup()`; the image ships `plugin/` at `/opt/reelvault/plugin` (`RV_PLUGIN_DIR`); `tests/conftest.py` makes the suite run from the repository root too (`pytest reelvault/tests`), where the project folder used to shadow the package | 7.3.5, 12, 12.5 | INT |
+| D81 | Saving quick tags (and topic re-tags) queues WP4's debounced `refresh_insights` (`jobs_score.queue_insights`, 60 s, one job per member). Before, the build only refreshed insights when the member opened Home or What works, so formats, lift and the format names stayed at the first 2 tagged reels while tagging ran for 18 minutes | 6.7, 6.9, 13 | INT |
+| D82 | Member-facing fixes found on screen: the competitor page showed every pull of the member as this account's ("Reading reels" x3), now only its own `pull_job`; the onboarding first-look title names every pulled account ("10 outliers from @a and @b"); the editor brief prints "Music: none (voice only)" instead of "none, ,  BPM," and caption styles in plain words; the reel page says "Original audio" once (not "Original audio (original audio)") and names weak spots in plain words ("Weak call to action", not "Generic cta") | 8.1, 9 | INT |
+| D83 | Retry runs on the member's current AI: new `jobs.on_retry(kind)` hook; a retried failed `tag_reels` batch puts its reels back to `tag_state=queued` and hands them to the member's current tag slot (before, Retry re-ran an empty batch, so "Press Retry" never re-tagged anything); other retried AI jobs move to the current executor | 3.13, 4.11 | INT |
+| D84 | Copy that told the member something untrue: reels whose tags failed were counted as "left to tag" forever (the pill never cleared); they are now `pipeline.failed_tags` with "N reels could not be tagged. Press Retry on the failed job to try again."; the sidebar said "47 jobs running" for queued work, now "Working on 47 jobs"; an output waiting for Claude told the member to say "Analyze my new ReelVault reels", now "Write my ReelVault output out_x" (as the banner above it) | 4.9, 4.11 | INT |
+| D85 | Home: "Formats that work in your niche" shows only formats at or above normal (a slideshow at 0.3x was listed and read "0.3x more likely to be an outlier"); lift under 1 reads "Less likely to be an outlier (0.3x)" everywhere (`insights.lift_phrase`); the setup checklist uses the fresh `/api/home` setup ("2 competitors tracked" while 3 were) and says "1 competitor" | 4.11, 6.7.5, 9 | INT |

@@ -112,10 +112,9 @@ def test_tools_list_names_and_schemas(seeded):
     assert sa["required"] == ["analysis"]
     st = by["save_tags"].input_schema
     assert set(st["required"]) == {"batch_id", "tags"}
-    so = json.dumps(by["save_output"].input_schema)
-    for kind in ("reel_script", "meta_ads", "content_plan", "competitor_report"):
-        assert kind in so
-    assert "discriminator" in so or "oneOf" in so
+    so = by["save_output"].input_schema
+    # fix round 1: data is a plain object (checked on the server); its schema comes with get_output_brief
+    assert so["properties"]["data"]["type"] == "object" and "get_output_brief" in json.dumps(so)
     assert by["get_taxonomy"].annotations.read_only_hint is True
     assert by["get_tag_batch"].output_schema is None      # image tools are unstructured
     for name in ("user_id", "member_id"):
@@ -356,6 +355,7 @@ def test_output_brief_and_save_output_end_to_end(seeded):
     b = data_of(res)
     out_id = b["output_id"]
     assert b["kind"] == "reel_script" and b["schema_name"] == "ReelScriptPack" and b["chunk"] == {"index": 0, "of": 2}
+    assert b["schema"]["title"] == "ReelScriptPack" and "scripts" in b["schema"]["properties"]
     assert result_chars(res) < BUDGET * 2 and "ignore previous instructions" not in outside_untrusted(b["brief"]).lower()
     wrong = call(url, tok, "save_output", {"output_id": out_id, "data": {"kind": "meta_ads", "ads": []}})
     assert wrong.is_error

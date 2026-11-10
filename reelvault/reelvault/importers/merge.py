@@ -215,9 +215,9 @@ def _voice(answers: dict) -> dict:
         m = re.match(r"\s*(?:always(?: say| use)?|words i use)\s*[:\-]\s*(.+)", line, re.I)
         n = re.match(r"\s*(?:never(?: say| use)?|words i never use|don'?t say)\s*[:\-]\s*(.+)", line, re.I)
         if m:
-            always += [x.strip(" \"'") for x in m.group(1).split(",") if x.strip()]
+            always += [x.strip(" \"'.;!") for x in m.group(1).split(",") if x.strip(" \"'.;!")]
         if n:
-            never += [x.strip(" \"'") for x in n.group(1).split(",") if x.strip()]
+            never += [x.strip(" \"'.;!") for x in n.group(1).split(",") if x.strip(" \"'.;!")]
     refs = list(dict.fromkeys(h.lower() for h in re.findall(r"@([A-Za-z0-9._]{1,30})", text)))[:3]
     out = {"tone": tone, "always": always[:10], "never": never[:10], "style_refs": [f"@{h}" for h in refs],
            "samples": []}

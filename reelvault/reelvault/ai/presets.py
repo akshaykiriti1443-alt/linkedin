@@ -271,7 +271,12 @@ def cost_line(model: str | None) -> str | None:
     d = _cost(model, 0, 1)
     if c is None or d is None:
         return None
-    return f"about ${c:.2f} a reel tagged, ${d:.2f} a deep read"
+    return f"{_money(c)} a reel tagged, {_money(d)} a deep read"
+
+
+def _money(v: float) -> str:
+    """'about $0.03', or 'less than 1 cent' (fix round 1: '$0.00' read like a bug)."""
+    return "less than 1 cent" if v < 0.005 else f"about ${v:.2f}"
 
 
 def _money(x: float) -> str:

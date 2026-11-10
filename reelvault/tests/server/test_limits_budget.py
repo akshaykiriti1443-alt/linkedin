@@ -228,3 +228,70 @@ def test_api_auth_uses_client_keys_not_raw_ips():
     src = inspect.getsource(api_auth)
     for scope in ("login_ip", "ip_code_fail", "reset_ip", "invite_check_ip", "reset_req_ip"):
         assert f'"{scope}", ip,' not in src, scope
+
+
+def test_only_reel_processing_spends_the_media_share(rv_env, make_user, monkeypatch):
+    """Integration finding: fetch_video (a paced CDN download, or a skip to the extension) must not spend the
+    member's daily share, or every reel costs 2 of the 150 and processing stalls after 75 reels."""
+    monkeypatch.setenv("SERVER_MEDIA_PER_DAY", "100")
+    settings.reload()
+    u = make_user()
+    fetch = jobs.enqueue(u.id, "fetch_video", {"reel_id": db.new_id("reel")})
+    proc = _media_job(u.id)
+    budget.recompute_shares()
+    with db.tx() as conn:   # share used up
+        conn.execute(db.member_budget.update().where(db.member_budget.c.user_id == u.id).values(media_left=0))
+    got = jobs.lease_server("media", "test:1")
+    assert got is not None and got.id == fetch          # the download still runs
+    assert jobs.lease_server("media", "test:1") is None  # the processing waits for tomorrow's share
+    with db.tx(immediate=False) as conn:
+        row = conn.execute(select(db.member_budget).where(db.member_budget.c.user_id == u.id)).first()
+    assert row.media_used == 0
+    with db.tx() as conn:
+        conn.execute(db.member_budget.update().where(db.member_budget.c.user_id == u.id).values(media_left=1))
+    assert jobs.lease_server("media", "test:1").id == proc
+
+
+def test_eta_is_not_pushed_to_tomorrow_by_a_stale_share(rv_env, make_user):
+    """Integration finding: jobs queued after the last share recompute made the ETA jump to 'tomorrow' (19 h)."""
+    u = make_user()
+    for _ in range(3):
+        _media_job(u.id)
+    budget.recompute_shares()          # share = 3
+    for _ in range(10):                # 10 more arrive before the next recompute
+        _media_job(u.id)
+    e = budget.eta(u.id)
+    assert "minutes" in e["text"] or e["text"] == "Ready in about 1 hour", e
+
+
+def test_missing_share_is_seen_right_away(rv_env, make_user):
+    u = make_user()
+    assert budget.missing_share() is False
+    _media_job(u.id)
+    assert budget.missing_share() is True    # queued processing, no share row yet: the worker recomputes in seconds
+    budget.recompute_shares()
+    assert budget.missing_share() is False
+
+
+def test_used_up_share_under_the_cap_is_recomputed_soon(rv_env, make_user, monkeypatch):
+    monkeypatch.setenv("SERVER_MEDIA_PER_DAY", "100")
+    settings.reload()
+    u = make_user()
+    _media_job(u.id)
+    budget.recompute_shares()
+    assert jobs.lease_server("media", "t") is not None     # share 1, now used up
+    assert budget.missing_share() is False                  # nothing waits
+    _media_job(u.id)                                        # new work after the recompute
+    assert budget.missing_share() is True
+    budget.recompute_shares()
+    assert budget.missing_share() is False and jobs.lease_server("media", "t") is not None
+
+
+def test_waiting_for_claude_line_names_the_output(rv_env, make_user):
+    """Integration finding: an output waiting for Claude said 'say: Analyze my new ReelVault reels'."""
+    u = make_user()
+    jid = jobs.enqueue(u.id, "make_output", {"output_id": "out_abc"}, executor="mcp")
+    e = budget.eta(u.id, job=jobs.get(jid))
+    assert e["text"] == "Waiting for Claude. Open Claude and say: Write my ReelVault output out_abc"
+    t = jobs.enqueue(u.id, "tag_reels", {}, executor="mcp")
+    assert "Analyze my new ReelVault reels" in budget.eta(u.id, job=jobs.get(t))["text"]

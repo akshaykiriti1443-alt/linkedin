@@ -106,6 +106,25 @@ def _outlier_counts(conn, user_id: str) -> dict[str, int]:
     return {a: int(n) for a, n in rows}
 
 
+def extension_state(conn, user_id: str) -> dict:
+    """{"paired": bool, "online": bool} of the member's Chrome extension, so the Competitors page says "Waiting
+    for Chrome" instead of "Reading now" when nothing can read (fix round 1)."""
+    from .api_ext import ONLINE_S
+
+    d = db.devices
+    dev = conn.execute(select(d.c.last_seen_at).where(d.c.user_id == user_id, d.c.kind == "extension",
+                                                      d.c.revoked_at.is_(None))
+                       .order_by(d.c.created_at.desc())).first()
+    if dev is None:
+        return {"paired": False, "online": False}
+    seen = dev.last_seen_at
+    if seen is not None and seen.tzinfo is None:
+        from datetime import timezone
+
+        seen = seen.replace(tzinfo=timezone.utc)
+    return {"paired": True, "online": bool(seen and (db.utcnow() - seen).total_seconds() < ONLINE_S)}
+
+
 def account_summary(acc, *, outliers: int = 0, pull_job=None) -> dict:
     out = {"id": acc.id, "handle": acc.handle, "full_name": acc.full_name, "followers": acc.followers,
            "role": acc.role, "status": acc.status, "reels_count": acc.reels_count or 0, "outliers": outliers,
@@ -235,7 +254,9 @@ def list_accounts(user=Depends(security.current_user)):
         rows = conn.execute(db.scoped(conn, a, user.id).order_by(a.c.created_at.asc(), a.c.handle.asc())).all()
         summ = _summaries(conn, user.id, rows)
         limits = _limits(conn, user.id)
-    out = {"accounts": [s for s in summ if s["role"] == "competitor"], "limits": limits, "saves_line": SAVES_LINE}
+        ext = extension_state(conn, user.id)
+    out = {"accounts": [s for s in summ if s["role"] == "competitor"], "limits": limits, "saves_line": SAVES_LINE,
+           "extension": ext}
     me = next((s for s in summ if s["role"] == "self"), None)
     if me:
         out["self"] = me

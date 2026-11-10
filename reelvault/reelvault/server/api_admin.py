@@ -683,8 +683,9 @@ COMMUNITY_MIN_MEMBERS = 5
 
 @router.get("/api/admin/community-formats")
 def community_formats(admin=Depends(security.current_admin)):
-    if not db.get_setting("community_stats"):
-        raise not_found("Community stats are off. Turn them on in Admin > Settings.")
+    if not db.get_setting("community_stats"):  # 200, not 404: the Health page asks every time (fix round 1)
+        return {"enabled": False, "month": db.utcnow().strftime("%Y-%m"), "formats": [],
+                "message": "Community stats are off. Turn them on in Admin > Settings."}
     out = {"month": db.utcnow().strftime("%Y-%m"), "formats": []}
     if _COMMUNITY:
         out.update(_COMMUNITY[0]() or {})
@@ -693,7 +694,7 @@ def community_formats(admin=Depends(security.current_admin)):
     keep = ("vf", "label", "members_using", "lift_median")
     out["formats"] = [{k: f.get(k) for k in keep} for f in out.get("formats") or []
                       if isinstance(f, dict) and int(f.get("members_using") or 0) >= COMMUNITY_MIN_MEMBERS]
-    return {"month": out["month"], "formats": out["formats"]}
+    return {"enabled": True, "month": out["month"], "formats": out["formats"]}
 
 
 @router.get("/api/admin/copy")

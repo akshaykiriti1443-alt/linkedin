@@ -86,6 +86,33 @@ def test_login_messages_and_limits(client, member):
     assert r.status_code == 429 and int(r.headers["Retry-After"]) > 0
 
 
+def test_concurrent_wrong_logins_are_throttled(app, member):
+    """Fix round 1: the attempt is counted atomically before the password check, so a burst of parallel guesses
+    gets 429 after 5, not 30 password checks."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from fastapi.testclient import TestClient
+
+    from reelvault.server.testing import BASE_URL
+
+    def guess(i):
+        c = TestClient(app, base_url=BASE_URL)  # no lifespan: one MCP session manager per app only
+        return c.post("/api/auth/login", json={"email": member.email, "password": f"wrong-{i}"}).status_code
+
+    with ThreadPoolExecutor(12) as ex:
+        codes = list(ex.map(guess, range(30)))
+    assert codes.count(401) <= 5 and codes.count(429) >= 25, codes
+
+
+def test_right_logins_do_not_use_up_the_limit(client, member):
+    for _ in range(8):
+        assert client.post("/api/auth/login", json={"email": member.email, "password": member.password}).status_code == 200
+    assert ratelimit.count("login_email", member.email, "quarter") == 0
+    for _ in range(5):
+        assert client.post("/api/auth/login", json={"email": member.email, "password": "nope-nope"}).status_code == 401
+    assert client.post("/api/auth/login", json={"email": member.email, "password": member.password}).status_code == 429
+
+
 def test_logout_password_change_and_reset_link(client, member, admin_client):
     r = client.post("/api/auth/login", json={"email": member.email, "password": member.password})
     csrf = r.json()["user"]["csrf_token"]

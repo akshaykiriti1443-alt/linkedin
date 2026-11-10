@@ -116,7 +116,7 @@ def me_json(user, csrf: str | None = None) -> dict:
         settings = db.all_settings(conn=conn)
         out: dict[str, Any] = {
             "id": user.id, "name": user.name, "email": user.email, "role": user.role, "status": user.status,
-            "ai_mode": user.ai_mode, "setup": setup, "csrf_token": csrf,
+            "skool_url": user.skool_url, "ai_mode": user.ai_mode, "setup": setup, "csrf_token": csrf,
             "limits": {"max_accounts": settings["max_accounts_per_member"],
                        "pulls_per_day": settings["max_pulls_per_day"],
                        "outputs_per_day": settings["outputs_per_day"],
@@ -144,13 +144,26 @@ def _signup_paused() -> int:
     return int(left) if left > 0 else 0
 
 
+CODE_FAIL_MSG = "Too many wrong codes. Try again in an hour."
+
+
+def code_attempt(ck: str) -> None:
+    """Count a code attempt for this client atomically BEFORE the code is looked up (10 wrong codes per IP per
+    hour), so concurrent guesses cannot all pass a read-only check. code_ok() gives the hit back."""
+    ratelimit.hit("ip_code_fail", ck, 10, "hour", message=CODE_FAIL_MSG)
+
+
+def code_ok(ck: str) -> None:
+    ratelimit.refund("ip_code_fail", ck, "hour")
+
+
 def code_failed(ck: str) -> None:
-    """Count a wrong code: 10 per IP per hour, 200 per hour server-wide (then a 15-minute pause)."""
+    """Count a wrong code server-wide: 200 per hour (then a 15-minute pause). The per-IP count was already taken
+    by code_attempt()."""
     try:
         ratelimit.hit("global", "signup_code_fail", 200, "hour")
     except ratelimit.TooMany:
         db.set_setting("internal.signup_paused_until", db.iso(db.utcnow() + timedelta(minutes=15)))
-    ratelimit.hit("ip_code_fail", ck, 10, "hour", message="Too many wrong codes. Try again in an hour.")
 
 
 @router.post("/api/auth/signup", status_code=201)
@@ -176,11 +189,13 @@ def signup(body: SignupIn, request: Request):
     if not (body.code or "").strip():
         raise bad_input("Type the access code from the community.")
 
+    code_attempt(ck)
     with db.tx(immediate=False) as conn:
         inv = api_admin.find_invite(conn, body.code)
     if inv is None:
         code_failed(ck)
         raise forbidden(WRONG_CODE)
+    code_ok(ck)
     if inv.kind == "community":
         ratelimit.hit("code_signup", inv.code_hash, 30, "hour",
                       message="Many people are signing up right now. Try again in an hour.")
@@ -246,14 +261,16 @@ def login(body: LoginIn, request: Request):
     ck = ratelimit.client_key(request)
     email = norm_email(body.email)
     msg = "Too many tries. Try again in 15 minutes."
-    ratelimit.check("login_email", email, 5, "quarter", message=msg)
-    ratelimit.check("login_ip", ck, 20, "quarter", message=msg)
+    # Count the attempt atomically BEFORE the slow password check (concurrent guesses cannot slip past a
+    # read-only check); a right password gives the hits back, so only failures use up the 5 / 20 (11.1).
+    ratelimit.hit_all(request, [("login_email", email, 5), ("login_ip", None, 20)], "quarter", message=msg)
     with db.tx(immediate=False) as conn:
         user = conn.execute(select(db.users).where(db.users.c.email == email)).first()
     ok = security.verify_password(user.password_hash if user else _dummy_hash(), body.password or "")
+    if user and ok:
+        ratelimit.refund("login_email", email, "quarter")
+        ratelimit.refund("login_ip", ck, "quarter")
     if not user or not ok:
-        ratelimit.hit("login_email", email, 10**9, "quarter")
-        ratelimit.hit("login_ip", ck, 10**9, "quarter")
         db.audit("login_failed", user_id=user.id if user else None, actor="system", detail={}, ip=ip)
         raise ApiError(401, "not_signed_in", "Email or password is wrong.")
     if user.status == "pending":
@@ -299,12 +316,13 @@ def reconfirm(body: CodeIn, request: Request, user=Depends(security.current_user
 
     ip = security.client_ip(request)
     ck = ratelimit.client_key(request)
-    ratelimit.check("ip_code_fail", ck, 10, "hour", message="Too many wrong codes. Try again in an hour.")
+    code_attempt(ck)
     with db.tx(immediate=False) as conn:
         inv = api_admin.find_invite(conn, body.code)
     if inv is None or inv.kind != "community":
         code_failed(ck)
         raise forbidden(WRONG_CODE)
+    code_ok(ck)
     with db.tx() as conn:
         conn.execute(db.users.update().where(db.users.c.id == user.id).values(membership_checked_at=db.utcnow()))
     return {"ok": True}
@@ -312,10 +330,10 @@ def reconfirm(body: CodeIn, request: Request, user=Depends(security.current_user
 
 @router.post("/api/auth/password")
 def change_password(body: PasswordIn, request: Request, user=Depends(security.current_user)):
-    ratelimit.check("pw_change", user.id, 5, "quarter")
+    ratelimit.hit("pw_change", user.id, 5, "quarter")  # counted up front (atomic); refunded when right
     if not security.verify_password(user.password_hash, body.current or ""):
-        ratelimit.hit("pw_change", user.id, 10**9, "quarter")
         raise bad_input("Your current password is wrong.")
+    ratelimit.refund("pw_change", user.id, "quarter")
     problem = security.password_problem(body.new)
     if problem:
         raise bad_input(problem)
@@ -335,13 +353,14 @@ def reset_password(body: ResetIn, request: Request):
     problem = security.password_problem(body.new)
     if problem:
         raise bad_input(problem)
+    ratelimit.hit("reset_ip", ck, 20, "quarter")  # counted up front (atomic); refunded for a good link
     th = security.sha256_hex(body.token or "")
-    h = security.hash_password(body.new)
     with db.tx(immediate=False) as conn:
         r = conn.execute(select(db.reset_links).where(db.reset_links.c.token_hash == th)).first()
     if r is None or r.used_at is not None or r.expires_at <= db.utcnow():
-        ratelimit.hit("reset_ip", ck, 10**9, "quarter")
         raise bad_input("This reset link is not valid any more. Ask the admin for a new one.")
+    ratelimit.refund("reset_ip", ck, "quarter")
+    h = security.hash_password(body.new)
     with db.tx() as conn:
         if conn.execute(db.reset_links.update().where(db.reset_links.c.token_hash == th,
                                                       db.reset_links.c.used_at.is_(None))

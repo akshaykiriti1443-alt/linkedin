@@ -56,3 +56,19 @@ def forbidden(message: str = "You can't do that.", code: str = "forbidden") -> A
 def too_many(message: str = "Too many tries. Wait a little and try again.", retry_after: int = 60,
              code: str = "too_many") -> ApiError:
     return ApiError(429, code, message, headers={"Retry-After": str(max(1, int(retry_after)))})
+
+
+async def read_body(request, limit: int, message: str = "That request is too big.") -> bytes:
+    """Read a request body with a hard cap counted while it streams in (a chunked body has no Content-Length),
+    so a big body is refused before it is all held in memory."""
+    cl = request.headers.get("content-length", "")
+    if cl.isdigit() and int(cl) > limit:
+        raise ApiError(413, "too_large", message)
+    parts: list[bytes] = []
+    n = 0
+    async for chunk in request.stream():
+        n += len(chunk)
+        if n > limit:
+            raise ApiError(413, "too_large", message)
+        parts.append(chunk)
+    return b"".join(parts)

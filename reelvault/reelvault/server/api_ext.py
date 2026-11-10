@@ -31,7 +31,7 @@ from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
 from . import db, jobs_ig, ratelimit, security
-from .errors import ApiError, bad_input, not_found
+from .errors import ApiError, bad_input, not_found, read_body
 from .settings import EXTENSION_MIN, get_settings
 
 log = logging.getLogger("reelvault.api_ext")
@@ -146,12 +146,7 @@ def _ago(dt: datetime | None) -> str:
 
 async def _json(request: Request, limit: int = JSON_MAX) -> dict:
     """Read a JSON object body (size-capped) and refuse Instagram cookie fields (11.4)."""
-    cl = request.headers.get("content-length", "")
-    if cl.isdigit() and int(cl) > limit:
-        raise ApiError(413, "too_large", "That upload is too big.")
-    raw = await request.body()
-    if len(raw) > limit:
-        raise ApiError(413, "too_large", "That upload is too big.")
+    raw = await read_body(request, limit, "That upload is too big.")  # counted while streaming (chunked bodies too)
     if not raw:
         return {}
     try:
@@ -322,7 +317,9 @@ async def pair_claim(request: Request):
                 return None
             conn.execute(pc.update().where(pc.c.code_hash == h).values(used_at=now))
             d = db.devices
+            state = dict(db.DEVICE_STATE_DEFAULT)
             if kind == "extension":
+                state = jobs_ig.carried_state(conn, user.id)  # an active 24 h stop survives a re-pair (5.7)
                 conn.execute(d.update().where(d.c.user_id == user.id, d.c.kind == "extension",
                                               d.c.revoked_at.is_(None)).values(revoked_at=now))
             else:
@@ -333,11 +330,14 @@ async def pair_claim(request: Request):
                 if old:
                     conn.execute(d.update().where(d.c.id.in_(old)).values(revoked_at=now))
             conn.execute(d.insert().values(id=dev_id, user_id=user.id, kind=kind, name=name, token_hash=token_hash,
-                                           version=version or None, state=dict(db.DEVICE_STATE_DEFAULT),
+                                           version=version or None, state=state,
                                            created_at=now, last_seen_at=now))
             db.audit("device_paired", user_id=user.id, actor=user.id, detail={"device": dev_id, "kind": kind},
                      ip=ip, conn=conn)
-            return {"token": token, "device_id": dev_id, "user": {"name": user.name}, "server_time": db.iso(now)}
+            out = {"token": token, "device_id": dev_id, "user": {"name": user.name}, "server_time": db.iso(now)}
+            if jobs_ig.cooldown_active(state, now):
+                out["cooldown_until"], out["cooldown_reason"] = state["cooldown_until"], state["cooldown_reason"]
+            return out
 
     out = await run_in_threadpool(run)
     if out is None:

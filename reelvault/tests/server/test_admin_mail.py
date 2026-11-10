@@ -137,7 +137,8 @@ def test_support_access_grant_view_audit_and_revoke(member_client, admin_client,
 
 
 def test_community_formats_enforce_the_privacy_floor(admin_client):
-    assert admin_client.get("/api/admin/community-formats").status_code == 404  # off by default
+    off = admin_client.get("/api/admin/community-formats")  # off by default: 200 with enabled false (fix round 1)
+    assert off.status_code == 200 and off.json()["enabled"] is False and off.json()["formats"] == []
     db.set_setting("community_stats", True)
     api_admin.register_community_formats(lambda: {"month": "2026-11", "formats": [
         {"vf": "VF01", "label": "Talking head", "members_using": 7, "lift_median": 2.1, "handles": ["leak"]},
@@ -146,7 +147,7 @@ def test_community_formats_enforce_the_privacy_floor(admin_client):
         out = admin_client.get("/api/admin/community-formats").json()
     finally:
         api_admin._COMMUNITY.clear()  # noqa: SLF001
-    assert out == {"month": "2026-11", "formats": [
+    assert out == {"enabled": True, "month": "2026-11", "formats": [
         {"vf": "VF01", "label": "Talking head", "members_using": 7, "lift_median": 2.1}]}
 
 

@@ -32,6 +32,11 @@ def _wanted(reel) -> bool:
     return reel.tier in ("priority", "sample") or bool(reel.starred) or reel.deep_state in ("queued", "waiting")
 
 
+# A downloaded reel is processed before the next download of the same tier (both share the media pool, and a
+# download holds its thread through the 2-5 s CDN gap), so results arrive steadily instead of after every download.
+PROCESS_FIRST = 5
+
+
 def _job_priority(reel) -> int:
     from .work import PRIORITY
 
@@ -83,7 +88,7 @@ def advance(user_id: str, reel_id: str) -> str | None:
                     r.update().where(r.c.id == reel_id, r.c.signals_state == "none").values(signals_state="queued")
                 )
             return jobs_media.queue_process(
-                user_id, reel_id, words=reel.tier == "priority" or deep, priority=prio, conn=c
+                user_id, reel_id, words=reel.tier == "priority" or deep, priority=prio - PROCESS_FIRST, conn=c
             )
 
         if sig == "done":
@@ -94,7 +99,8 @@ def advance(user_id: str, reel_id: str) -> str | None:
             if reel.deep_state == "queued":
                 if media == "have" and _needs_words(c, reel):
                     c.execute(r.update().where(r.c.id == reel_id).values(signals_state="queued"))
-                    return jobs_media.queue_process(user_id, reel_id, words=True, priority=prio, conn=c)
+                    return jobs_media.queue_process(user_id, reel_id, words=True, priority=prio - PROCESS_FIRST,
+                                                    conn=c)
                 return _queue_analyze(c, user_id, reel, prio) or jid
             return jid
         return None

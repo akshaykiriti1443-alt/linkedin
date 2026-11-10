@@ -21,6 +21,11 @@ part and the worker in the same container and restarts either if it stops.
 | Health check | `GET /healthz` |
 | Instances | exactly **1** (SQLite lives on that one volume) |
 
+**The volume must belong to the app's user.** The image runs as user `reelvault` (uid 10001). Fly.io, Railway and
+Render mount a new volume owned by root, and then ReelVault stops at start with "ReelVault cannot write to /data".
+The fix is one setting per platform (below): the container starts as root, gives `/data` to uid 10001 once, and
+then runs the app as uid 10001. The app itself never runs as root.
+
 Environment variables (put the secret ones in the platform's "secrets"):
 
 | name | value |
@@ -53,6 +58,9 @@ Fly Volumes are local NVMe disks on the machine, which is what SQLite needs.
 
    [build]
      dockerfile = "deploy/Dockerfile"
+
+   [build.args]
+     RV_RUN_USER = "root"   # the Fly volume is root-owned: start as root, give /data to uid 10001, drop to it
 
    [env]
      PUBLIC_URL = "https://app.yourdomain.com"
@@ -96,7 +104,9 @@ Fly Volumes are local NVMe disks on the machine, which is what SQLite needs.
 1. New project > **Deploy from GitHub repo** > pick the repository.
 2. Service settings: **Root directory** `reelvault`, **Dockerfile path** `deploy/Dockerfile`.
 3. **Add a volume** to the service, mount path `/data`, 80 GB or more.
-4. Variables: the table above. Railway runs the service always on (do not turn on "serverless"/sleep).
+4. Variables: the table above, plus `RAILWAY_RUN_UID=0` (Railway's setting for images that run as a non-root
+   user: the container starts as root, gives the volume to uid 10001, then drops to it). Railway runs the service
+   always on (do not turn on "serverless"/sleep).
 5. Settings > Networking: **Generate domain** to test, then **Custom domain** for `app.yourdomain.com`.
 6. Keep **1 replica** (a volume belongs to one service).
 
@@ -105,7 +115,9 @@ Fly Volumes are local NVMe disks on the machine, which is what SQLite needs.
 1. New > **Web Service** > connect the repository. Pick a **paid** instance type (the free type sleeps).
 2. **Root directory** `reelvault`, **Runtime** Docker, **Dockerfile path** `deploy/Dockerfile`.
 3. **Advanced > Add disk:** mount path `/data`, 80 GB or more.
-4. Environment: the table above. **Health check path** `/healthz`.
+4. Environment: the table above, plus `RV_RUN_USER=root` (Render passes environment variables to the Docker build
+   as build arguments; the container then starts as root, gives the disk to uid 10001 and drops to it).
+   **Health check path** `/healthz`.
 5. Settings > Custom domains: add `app.yourdomain.com` and follow the DNS steps.
 6. Keep 1 instance (Render disks attach to one instance).
 
