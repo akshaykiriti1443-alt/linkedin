@@ -1,0 +1,8 @@
+{
+  "name": "reelvault-members",
+  "version": "1.0.0",
+  "description": "Tag and break down your competitors' Instagram reels with your own Claude plan, and write scripts from what works.",
+  "author": {"name": "ScaleItAds"},
+  "homepage": "https://scaleitads.com",
+  "keywords": ["instagram", "reels", "content", "scripts"]
+}

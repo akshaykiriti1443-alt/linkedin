@@ -1,0 +1,661 @@
+{
+ "version": "2026-11-10",
+ "rules": {
+  "visual_format": "Pick exactly 1 primary id and 0-2 secondary ids. Use 'other' with a label of 40 characters or less only when nothing fits. Give a confidence from 0 to 1 and cite the tile or frame numbers that show it.",
+  "precedence": [
+   "VF05 when UI fills 50% or more of frames, even with a face bubble.",
+   "VF06 when 2 panes fill 50% or more of frames.",
+   "VF04 when a cut-out sits over a still in 40% or more of frames.",
+   "VF08 when there is no on-camera speech and big text carries the message.",
+   "VF02 over VF01 when 20-60% of body frames are cutaways while the voice continues.",
+   "VF03 when the face is in under 20% of frames but narration is continuous."
+  ],
+  "visual_rule": "Visual format comes from the frames and the measured signals, never from the script. Topics stay separate.",
+  "sound": "Pick 1 primary id and up to 3 secondary ids, citing timeline seconds from the cue list.",
+  "edit": "Fill every edit field; numbers come from the local signals, never from guessing."
+ },
+ "visual_format": [
+  {
+   "id": "VF01",
+   "label": "Talking head",
+   "cues": "Same person facing camera in 70% or more of frames, same setting, mouth moving, speech in 70% or more of the timeline; chest-up; jump cuts but no cutaways.",
+   "needs": [
+    "on_camera"
+   ]
+  },
+  {
+   "id": "VF02",
+   "label": "Talking head + B-roll",
+   "cues": "Speaker on camera in 40-80% of frames; other frames are cutaways (stock, screenshots, lifestyle) while the same voice keeps talking.",
+   "needs": [
+    "on_camera"
+   ]
+  },
+  {
+   "id": "VF03",
+   "label": "Voiceover + B-roll (faceless)",
+   "cues": "Narrator face in under 20% of frames; continuous narration; clip changes every 1.5-3 s; stock or cinematic footage; often an AI voice.",
+   "needs": [
+    "broll",
+    "voice"
+   ]
+  },
+  {
+   "id": "VF04",
+   "label": "Green screen over image/tweet/article",
+   "cues": "Cut-out speaker (edge halo) over a still: tweet, headline, chart, website, Reddit post; the person moves, the background stays still; the background changes on cuts.",
+   "needs": [
+    "on_camera"
+   ]
+  },
+  {
+   "id": "VF05",
+   "label": "Screen recording / software walkthrough",
+   "cues": "App, browser, phone UI or design tool (Figma, Canva, Photoshop, Framer, CapCut) fills the frame; cursor, scrolling, menus, typing; optional face bubble. Design and process videos go here, whatever the voiceover is about.",
+   "needs": [
+    "screen"
+   ]
+  },
+  {
+   "id": "VF06",
+   "label": "Split screen / reaction / stitch / duet",
+   "cues": "Two moving panes in one frame, one reacting; or the first 2-5 s is another creator's clip, then the creator responds.",
+   "needs": [
+    "on_camera"
+   ]
+  },
+  {
+   "id": "VF07",
+   "label": "Before / after",
+   "cues": "Same subject in two states (before/after, day 1/day 90, old vs new design, swipe reveal); the reveal is the payoff; often a riser and a hit on the switch.",
+   "needs": []
+  },
+  {
+   "id": "VF08",
+   "label": "Text on B-roll (no voice)",
+   "cues": "No narration (empty transcript or lyrics); 2-3 lines of large text carry the message over footage or the creator pointing at the camera; trending track.",
+   "needs": [
+    "broll"
+   ]
+  },
+  {
+   "id": "VF09",
+   "label": "Slideshow / carousel video",
+   "cues": "Stills or slides held 1.5 s or more each, slow pans, no live motion.",
+   "needs": []
+  },
+  {
+   "id": "VF10",
+   "label": "Skit / POV",
+   "cues": "'POV:' text, character labels, one person playing roles (outfits), dialogue between characters.",
+   "needs": [
+    "on_camera"
+   ]
+  },
+  {
+   "id": "VF11",
+   "label": "Podcast / interview clip",
+   "cues": "2 or more seated people with visible mics, studio set, cuts between speakers, turn-taking.",
+   "needs": [
+    "on_camera"
+   ]
+  },
+  {
+   "id": "VF12",
+   "label": "Street interview",
+   "cues": "Handheld (often branded) mic, public place, stranger answering, interviewer off-camera, ambient noise.",
+   "needs": [
+    "on_camera",
+    "location",
+    "second_person"
+   ]
+  },
+  {
+   "id": "VF13",
+   "label": "Hands-only tutorial / process",
+   "cues": "Overhead or POV hands doing a task; no face; step by step; foley common.",
+   "needs": [
+    "hands"
+   ]
+  },
+  {
+   "id": "VF14",
+   "label": "Whiteboard / notebook / tablet",
+   "cues": "A diagram builds up across frames; pen or marker visible.",
+   "needs": [
+    "hands"
+   ]
+  },
+  {
+   "id": "VF15",
+   "label": "List / countdown overlay",
+   "cues": "Numbered list or counter visible across most frames. Primary only when the list is the structure, else secondary.",
+   "needs": []
+  },
+  {
+   "id": "VF16",
+   "label": "Day-in-the-life / vlog",
+   "cues": "Many locations, handheld or selfie, timestamps ('6:00am'), 1-2 s clips.",
+   "needs": [
+    "on_camera",
+    "location"
+   ]
+  },
+  {
+   "id": "VF17",
+   "label": "Product demo / unboxing",
+   "cues": "The product is the hero in most frames; close-ups, hands using it, feature or price text.",
+   "needs": [
+    "hands"
+   ]
+  },
+  {
+   "id": "VF18",
+   "label": "UGC ad style / testimonial",
+   "cues": "Front-facing selfie in a casual place (car, kitchen), holding the product, 'I tried...' language, 'Paid partnership', buy CTA.",
+   "needs": [
+    "on_camera"
+   ]
+  },
+  {
+   "id": "VF19",
+   "label": "Animation / motion graphics",
+   "cues": "Animated text, shapes, illustrations, kinetic type or AI visuals in most frames; little live footage.",
+   "needs": [
+    "editor"
+   ]
+  },
+  {
+   "id": "VF20",
+   "label": "Meme format",
+   "cues": "Known meme template or movie clip with a white caption bar; meme or trending audio; often no original speech.",
+   "needs": []
+  }
+ ],
+ "local_rules": [
+  {
+   "id": "VF05",
+   "p": 0.8,
+   "all": [
+    [
+     "ui_frames_share",
+     ">=",
+     0.5
+    ]
+   ],
+   "why": "app or browser UI fills most frames"
+  },
+  {
+   "id": "VF06",
+   "p": 0.75,
+   "all": [
+    [
+     "split_share",
+     ">=",
+     0.5
+    ]
+   ],
+   "why": "two moving panes"
+  },
+  {
+   "id": "VF04",
+   "p": 0.7,
+   "all": [
+    [
+     "cutout_share",
+     ">=",
+     0.4
+    ]
+   ],
+   "why": "cut-out person over a still"
+  },
+  {
+   "id": "VF09",
+   "p": 0.7,
+   "all": [
+    [
+     "static_frame_share",
+     ">=",
+     0.6
+    ],
+    [
+     "face_share",
+     "<",
+     0.2
+    ]
+   ],
+   "why": "stills held, no face"
+  },
+  {
+   "id": "VF08",
+   "p": 0.6,
+   "all": [
+    [
+     "speech_ratio",
+     "<",
+     0.15
+    ],
+    [
+     "text_frames_share",
+     ">=",
+     0.6
+    ],
+    [
+     "face_share",
+     "<",
+     0.5
+    ]
+   ],
+   "why": "big text, no voice"
+  },
+  {
+   "id": "VF01",
+   "p": 0.7,
+   "all": [
+    [
+     "face_share",
+     ">=",
+     0.7
+    ],
+    [
+     "cutaway_share",
+     "<",
+     0.2
+    ],
+    [
+     "small_face_corner_share",
+     "<",
+     0.5
+    ]
+   ],
+   "why": "one face in most frames"
+  },
+  {
+   "id": "VF02",
+   "p": 0.55,
+   "all": [
+    [
+     "face_share",
+     ">=",
+     0.4
+    ],
+    [
+     "face_share",
+     "<",
+     0.8
+    ],
+    [
+     "cutaway_share",
+     ">=",
+     0.2
+    ],
+    [
+     "small_face_corner_share",
+     "<",
+     0.5
+    ]
+   ],
+   "why": "speaker plus cutaways"
+  },
+  {
+   "id": "VF03",
+   "p": 0.6,
+   "all": [
+    [
+     "face_share",
+     "<",
+     0.2
+    ],
+    [
+     "speech_ratio",
+     ">=",
+     0.6
+    ]
+   ],
+   "why": "narration, no face"
+  },
+  {
+   "recipe": "headline_box",
+   "when": [
+    "top_text_box_share",
+    ">=",
+    0.5
+   ]
+  },
+  {
+   "recipe": "face_bubble",
+   "when": [
+    "small_face_corner_share",
+    ">=",
+    0.3
+   ]
+  }
+ ],
+ "sound_design": [
+  {
+   "id": "SD01",
+   "label": "Voice only",
+   "cues": "Speech in 70% or more of windows; little or no music under speech; at most 1 SFX per 10 s.",
+   "signal_rule": "speech_coverage >= 70, music_coverage < 20, sfx_per_10s <= 1"
+  },
+  {
+   "id": "SD02",
+   "label": "Voice + steady music bed",
+   "cues": "Music under 60% or more of speech, level steady within 3 dB.",
+   "signal_rule": "music_coverage >= 60, duck_db < 3"
+  },
+  {
+   "id": "SD03",
+   "label": "Voice + ducked music",
+   "cues": "Music 4-6 dB or more louder in gaps, intro and outro than under speech.",
+   "signal_rule": "duck_db >= 4"
+  },
+  {
+   "id": "SD04",
+   "label": "Music / trending audio only",
+   "cues": "No original speech (or lip-sync); one track carries it; Instagram shows a licensed or reused sound.",
+   "signal_rule": "speech_coverage < 15, music >= 70 or ig_audio licensed/reused"
+  },
+  {
+   "id": "SD05",
+   "label": "Trending audio + voiceover",
+   "cues": "Licensed or trending track at a low level plus original narration.",
+   "signal_rule": "ig_audio licensed and speech_coverage >= 50"
+  },
+  {
+   "id": "SD06",
+   "label": "SFX on every cut",
+   "cues": "40% or more of cuts have an SFX within 0.15 s; 2 or more SFX per 10 s.",
+   "signal_rule": "cuts_with_sfx_pct >= 40 and sfx_per_10s >= 2"
+  },
+  {
+   "id": "SD07",
+   "label": "SFX on words or text",
+   "cues": "Dings, pops, cash register, camera shutter, boing, typing timed to text pop-ins or key words, not cuts.",
+   "signal_rule": "2 or more labelled accent SFX not on cuts"
+  },
+  {
+   "id": "SD08",
+   "label": "Riser into reveal",
+   "cues": "1-4 s of rising energy ending in a hit or drop on a visual reveal.",
+   "signal_rule": "riser followed within 0.3 s by a hit or cut"
+  },
+  {
+   "id": "SD09",
+   "label": "Silence beat before the punchline",
+   "cues": "A 0.3-1.5 s near-silent gap mid-video, then the key line or a hit.",
+   "signal_rule": "silence 0.3-1.5 s, not in the first or last 1 s"
+  },
+  {
+   "id": "SD10",
+   "label": "Cuts on the beat",
+   "cues": "50% or more of cuts within 80 ms of a music beat.",
+   "signal_rule": "not detected in v1; suggest only from frames + music, low confidence"
+  },
+  {
+   "id": "SD11",
+   "label": "ASMR / foley",
+   "cues": "Close natural sounds (typing, tapping, pouring, sizzle, rustle) lead, little speech.",
+   "signal_rule": "foley/typing/click classes high, speech < 30"
+  },
+  {
+   "id": "SD12",
+   "label": "Natural location sound",
+   "cues": "Crowd, traffic, wind or room tone under speech; no added music or SFX.",
+   "signal_rule": "ambient/crowd, music < 20, sfx <= 1 per 10 s"
+  },
+  {
+   "id": "SD13",
+   "label": "Several voices",
+   "cues": "Two or more speakers taking turns.",
+   "signal_rule": "transcript turn-taking; you decide"
+  },
+  {
+   "id": "SD14",
+   "label": "AI / TTS voice",
+   "cues": "Speech synthesizer class high, flat even delivery.",
+   "signal_rule": "speech_synth >= 0.3 in 30% or more of speech windows"
+  },
+  {
+   "id": "SD15",
+   "label": "Hit or music drop on the hook",
+   "cues": "Strong transient or music start in the first 1.5 s.",
+   "signal_rule": "first_sfx_s <= 1.5 or a music span starts by 1.5 s"
+  },
+  {
+   "id": "SD16",
+   "label": "Meme stings",
+   "cues": "Vine-boom thud, record scratch, laugh track, crowd 'ooh' on punchlines.",
+   "signal_rule": "record_scratch/laughter/crowd bursts"
+  }
+ ],
+ "edit_patterns": [
+  {
+   "id": "EP01",
+   "label": "Cut pace",
+   "cues": "Cuts per 10 s: slow under 1.5, medium 1.5-3.5, fast 3.5-6, hyper over 6; the hook (0-3 s) is reported separately.",
+   "filled_by": "EditStats"
+  },
+  {
+   "id": "EP02",
+   "label": "Jump cuts",
+   "cues": "Same background and person before and after the cut.",
+   "filled_by": "AI (frames)"
+  },
+  {
+   "id": "EP03",
+   "label": "Zoom punch-ins",
+   "cues": "The face grows 10-25% between same-shot frames: none / few / many.",
+   "filled_by": "AI"
+  },
+  {
+   "id": "EP04",
+   "label": "Caption style",
+   "cues": "word_by_word_highlight / phrase_by_phrase / full_subtitles / keyword_only / none; plus font look, case, color, position.",
+   "filled_by": "AI"
+  },
+  {
+   "id": "EP05",
+   "label": "Headline text box",
+   "cues": "Persistent hook text at the top from 0 s.",
+   "filled_by": "AI"
+  },
+  {
+   "id": "EP06",
+   "label": "B-roll share",
+   "cues": "none 0% / light under 25% / medium 25-60% / heavy over 60% of body frames.",
+   "filled_by": "AI"
+  },
+  {
+   "id": "EP07",
+   "label": "Visual hook (first 1 s)",
+   "cues": "motion_start / prop_or_object / result_first / text_only / face_closeup / pattern_interrupt / screenshot_proof.",
+   "filled_by": "AI"
+  },
+  {
+   "id": "EP08",
+   "label": "Graphics and stickers",
+   "cues": "Emojis, arrows, circles, highlights, progress bars, logos.",
+   "filled_by": "AI"
+  },
+  {
+   "id": "EP09",
+   "label": "Proof inserts",
+   "cues": "Screenshots of results, dashboards, DMs, reviews.",
+   "filled_by": "AI"
+  },
+  {
+   "id": "EP10",
+   "label": "Transitions",
+   "cues": "hard_cut / whip / zoom / glitch / match_cut / masked_reveal.",
+   "filled_by": "AI"
+  },
+  {
+   "id": "EP11",
+   "label": "Framing",
+   "cues": "close / medium / wide.",
+   "filled_by": "AI"
+  },
+  {
+   "id": "EP12",
+   "label": "Setting",
+   "cues": "studio / desk / car / walk-and-talk / kitchen / stage / event.",
+   "filled_by": "AI"
+  },
+  {
+   "id": "EP13",
+   "label": "Color and look",
+   "cues": "natural / warm / cool / desaturated with color pop / cinematic / phone-raw.",
+   "filled_by": "AI"
+  },
+  {
+   "id": "EP14",
+   "label": "Length",
+   "cues": "Under 15, 15-30, 30-60, 60-90, over 90 s.",
+   "filled_by": "EditStats"
+  },
+  {
+   "id": "EP15",
+   "label": "Loop ending",
+   "cues": "The last line flows back into the first.",
+   "filled_by": "AI (transcript)"
+  },
+  {
+   "id": "EP16",
+   "label": "Re-hooks",
+   "cues": "Count of new text hooks, angle changes or questions in the body (every 5-8 s).",
+   "filled_by": "AI"
+  },
+  {
+   "id": "EP17",
+   "label": "Face bubble / picture-in-picture",
+   "cues": "Small face cam over a screen or B-roll.",
+   "filled_by": "AI"
+  },
+  {
+   "id": "EP18",
+   "label": "Speed effects",
+   "cues": "Time-lapse, speed ramps, slow motion.",
+   "filled_by": "AI"
+  },
+  {
+   "id": "EP19",
+   "label": "CTA visual",
+   "cues": "End card, 'Comment X' text, arrow to the caption, keyword on screen; when it appears.",
+   "filled_by": "AI"
+  }
+ ],
+ "legacy_content_format": {
+  "talking_head": "VF01",
+  "voiceover_broll": "VF03",
+  "text_only": "VF08",
+  "screen_recording": "VF05",
+  "tutorial": "VF13",
+  "skit": "VF10",
+  "interview": "VF11",
+  "slideshow": "VF09",
+  "vlog": "VF16",
+  "other": "other"
+ },
+ "legacy_notes": {
+  "tutorial": "VF05 when frames show UI",
+  "interview": "VF12 outdoors"
+ },
+ "hook_types": [
+  "question",
+  "bold_claim",
+  "curiosity_gap",
+  "pain_point",
+  "stat_or_number",
+  "contrarian",
+  "story_open",
+  "mistake_callout",
+  "how_to_promise",
+  "list_promise",
+  "before_after",
+  "pattern_interrupt",
+  "other"
+ ],
+ "cta_types": [
+  "follow",
+  "comment_keyword",
+  "dm",
+  "link_in_bio",
+  "save",
+  "share",
+  "buy",
+  "watch_next",
+  "none"
+ ],
+ "caption_styles": [
+  "word_by_word_highlight",
+  "phrase_by_phrase",
+  "full_subtitles",
+  "keyword_only",
+  "none"
+ ],
+ "cue_kinds": [
+  "whoosh",
+  "riser",
+  "impact",
+  "hit",
+  "pop",
+  "ding",
+  "click",
+  "typing",
+  "camera_shutter",
+  "cash_register",
+  "record_scratch",
+  "laugh",
+  "applause",
+  "music_in",
+  "music_out",
+  "music_drop",
+  "duck",
+  "silence",
+  "voice_fx",
+  "other"
+ ],
+ "needs": [
+  "on_camera",
+  "voice",
+  "screen",
+  "broll",
+  "hands",
+  "second_person",
+  "location",
+  "editor"
+ ],
+ "needs_labels": {
+  "on_camera": "you on camera",
+  "voice": "your voice",
+  "screen": "screen recording",
+  "broll": "B-roll footage",
+  "hands": "filming your hands",
+  "second_person": "a second person",
+  "location": "going on location",
+  "editor": "an editor"
+ },
+ "sfx_sources": {
+  "whoosh": "CapCut: 'whoosh transition'; Pixabay: 'swoosh'",
+  "riser": "CapCut: 'riser short'; Pixabay: 'cinematic riser'",
+  "impact": "CapCut: 'bass hit'; Pixabay: 'impact'",
+  "hit": "CapCut: 'bass hit'; Pixabay: 'hit'",
+  "pop": "CapCut: 'pop'; Pixabay: 'bubble pop'",
+  "ding": "CapCut: 'ding'; Pixabay: 'notification ding'",
+  "click": "CapCut: 'mouse click'; Pixabay: 'click'",
+  "typing": "CapCut: 'keyboard typing'; Pixabay: 'typing'",
+  "camera_shutter": "CapCut: 'camera shutter'; Pixabay: 'camera shutter'",
+  "cash_register": "CapCut: 'cash register'; Pixabay: 'cash register cha-ching'",
+  "record_scratch": "CapCut: 'record scratch'; Pixabay: 'record scratch'",
+  "laugh": "CapCut: 'laugh track'; Pixabay: 'audience laugh'",
+  "applause": "CapCut: 'applause'; Pixabay: 'applause'",
+  "music_in": "CapCut library: search the mood (e.g. 'upbeat corporate')",
+  "music_out": "Fade the bed out in your editor",
+  "music_drop": "CapCut: 'beat drop'; Pixabay: 'bass drop'",
+  "duck": "Lower the music 6 dB under the voice in your editor",
+  "silence": "Cut all sound for the beat in your editor",
+  "voice_fx": "CapCut voice effects: 'echo' or 'robot'",
+  "other": "Pixabay sound effects: search what you hear"
+ }
+}

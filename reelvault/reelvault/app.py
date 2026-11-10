@@ -1056,6 +1056,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json(api_todos(query))
         elif path == "/api/update":
             self._json(api_update_info(query))
+        elif path == "/api/members":
+            self._json(members_info())
+        elif path == "/members-card.js":
+            body = MEMBERS_CARD_JS.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/javascript; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         elif path.startswith("/vault/"):
             self._file(path[len("/vault/"):])
         else:
@@ -1069,6 +1079,11 @@ class Handler(BaseHTTPRequestHandler):
             if rel == "index.html":
                 return self._html(MISSING_UI)
             return self._json({"error": "not found"}, 404)
+        if rel == "index.html":  # + the "Use my Claude for ReelVault Members" Settings card (WP5)
+            page = p.read_text(encoding="utf-8")
+            tag = '<script src="/members-card.js"></script>'
+            page = page.replace("</body>", tag + "\n</body>") if "</body>" in page else page + tag
+            return self._html(page)
         ctype = UI_TYPES.get(p.suffix.lower()) or mimetypes.guess_type(p.name)[0] or "application/octet-stream"
         self._send_file(p, ctype, cache=False)
 
@@ -1202,11 +1217,166 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/profile":
             (HOME / "profile.md").write_text(b.get("text", ""), encoding="utf-8")
             self._json({"ok": True})
+        elif path == "/api/members/link":
+            self._json(members_link(b))
+        elif path == "/api/members/working":
+            self._json(members_working(bool(b.get("on"))))
+        elif path == "/api/members/unlink":
+            self._json(members_unlink())
         elif path == "/api/quit":
             self._json({"ok": True})
             threading.Thread(target=lambda: (time.sleep(0.5), os._exit(0)), daemon=True).start()
         else:
             self._json({"error": "not found"}, 404)
+
+# --------------------------------------------------------------------------
+# Settings card: "Use my Claude for ReelVault Members" (DESIGN-SAAS.md 7.4, WP5)
+# The token lives in HOME/members.json; the loop (members_worker.Worker) runs in a thread while the app is open.
+
+_MEMBERS = {"worker": None}
+
+
+def _members_worker():
+    from . import members_worker
+
+    if _MEMBERS["worker"] is None:
+        _MEMBERS["worker"] = members_worker.Worker()
+    return _MEMBERS["worker"]
+
+
+def members_info() -> dict:
+    return _members_worker().info()
+
+
+def members_link(body: dict) -> dict:
+    from . import members_worker
+
+    try:
+        members_worker.pair(str(body.get("server") or ""), str(body.get("code") or ""))
+    except members_worker.WorkerError as e:
+        return dict(members_info(), error=str(e))
+    w = _members_worker()
+    w.start()
+    return members_info()
+
+
+def members_working(on: bool) -> dict:
+    from . import members_worker
+
+    cfg = members_worker.load_config()
+    if on and not cfg.get("token"):
+        return dict(members_info(), error="Link this app first.")
+    cfg["working"] = on
+    members_worker.save_config(cfg)
+    w = _members_worker()
+    if on:
+        w.start()
+    else:
+        w.stop()
+    return members_info()
+
+
+def members_unlink() -> dict:
+    from . import members_worker
+
+    members_worker.unlink()
+    _members_worker().stop()
+    return members_info()
+
+
+def start_members_worker() -> None:
+    """At app start: resume the Members loop when this computer is linked and the switch is on."""
+    try:
+        from . import members_worker
+
+        cfg = members_worker.load_config()
+        if cfg.get("token") and cfg.get("working"):
+            _members_worker().start()
+    except Exception as e:  # noqa: BLE001 - never stop the app over the Members card
+        LOG.append(f"ReelVault Members: {e}")
+
+
+MEMBERS_CARD_JS = r"""(function () {
+  "use strict";
+  var view = document.getElementById("v-settings");
+  if (!view || document.getElementById("set-members")) return;
+  var el = function (tag, attrs, text) {
+    var n = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) { n.setAttribute(k, attrs[k]); });
+    if (text) n.textContent = text;
+    return n;
+  };
+  var card = el("div", {"class": "panel", id: "set-members"});
+  var head = el("div", {"class": "panel-head"});
+  head.appendChild(el("h2", {}, "Use my Claude for ReelVault Members"));
+  var pill = el("span", {"class": "pill", id: "m-pill"});
+  head.appendChild(pill);
+  card.appendChild(head);
+  card.appendChild(el("p", {"class": "muted"}, "Link this app to ReelVault Members. Then Claude Code on this " +
+    "computer does your Members AI work, on your own Claude plan."));
+  var linkBox = el("div", {"class": "stack", id: "m-link"});
+  linkBox.appendChild(el("p", {"class": "muted small"}, "Get a code in ReelVault Members: Settings > AI > " +
+    "Use the desktop app. The code works for 10 minutes."));
+  var row = el("div", {"class": "row"});
+  var server = el("input", {id: "m-server", placeholder: "Server address, like app.example.com", "aria-label": "Server address"});
+  var code = el("input", {id: "m-code", placeholder: "Pairing code", "aria-label": "Pairing code", autocomplete: "off"});
+  var go = el("button", {type: "button", id: "m-go"}, "Link");
+  row.appendChild(server); row.appendChild(code); row.appendChild(go);
+  linkBox.appendChild(row);
+  card.appendChild(linkBox);
+  var on = el("div", {"class": "stack", id: "m-on", hidden: ""});
+  var who = el("p", {"class": "muted", id: "m-who"});
+  on.appendChild(who);
+  var lab = el("label", {"class": "row"});
+  var sw = el("input", {type: "checkbox", id: "m-working"});
+  lab.appendChild(sw);
+  lab.appendChild(el("span", {}, "Work on Members jobs while this app is open"));
+  on.appendChild(lab);
+  on.appendChild(el("b", {}, "Last jobs"));
+  var list = el("ul", {"class": "small", id: "m-jobs"});
+  on.appendChild(list);
+  var un = el("button", {type: "button", "class": "ghost", id: "m-unlink"}, "Unlink this computer");
+  on.appendChild(el("div", {"class": "row"})).appendChild(un);
+  card.appendChild(on);
+  var msg = el("div", {"class": "msg", id: "m-msg"});
+  card.appendChild(msg);
+  var after = document.getElementById("set-claude");
+  if (after && after.nextSibling) view.insertBefore(card, after.nextSibling); else view.appendChild(card);
+
+  var KIND = {tag_reels: "Tag reels", retag_topics: "Sort reels into topics", analyze_reel: "Break down a reel",
+    name_formats: "Name formats", make_output: "Write an output", draft_profile: "Draft your profile",
+    suggest_topics: "Suggest topics"};
+  function show(s) {
+    msg.textContent = s.error || "";
+    linkBox.hidden = !!s.linked;
+    on.hidden = !s.linked;
+    sw.checked = !!s.working;
+    pill.textContent = !s.linked ? "Not linked" : !s.working ? "Off" : (s.status === "working" ? "Working" : "On");
+    pill.className = "pill " + (!s.linked ? "no" : s.working ? "ok" : "");
+    who.textContent = s.linked ? ("Linked to " + (s.server || "") + (s.member ? " as " + s.member : "") + ".") : "";
+    list.textContent = "";
+    (s.last_jobs || []).forEach(function (j) {
+      var li = el("li", {}, (KIND[j.kind] || j.kind) + ": " + (j.ok ? "done" : (j.message || "not finished")) +
+        " (" + new Date(j.at * 1000).toLocaleString() + ")");
+      list.appendChild(li);
+    });
+    if (s.linked && !(s.last_jobs || []).length) list.appendChild(el("li", {"class": "muted"}, "No jobs yet."));
+  }
+  function call(method, path, body) {
+    return fetch(path, {method: method, headers: {"Content-Type": "application/json"},
+      body: body ? JSON.stringify(body) : undefined}).then(function (r) { return r.json(); })
+      .then(show).catch(function () { msg.textContent = "ReelVault didn't answer. Is the app still running?"; });
+  }
+  go.onclick = function () {
+    msg.textContent = "Linking...";
+    call("POST", "/api/members/link", {server: server.value, code: code.value});
+  };
+  sw.onchange = function () { call("POST", "/api/members/working", {on: sw.checked}); };
+  un.onclick = function () { call("POST", "/api/members/unlink", {}); };
+  call("GET", "/api/members");
+  setInterval(function () { if (!view.hidden) call("GET", "/api/members"); }, 5000);
+})();
+"""
 
 
 def replace_old_copy() -> bool:
@@ -1255,6 +1425,7 @@ def main(argv=None):
     if sys.stdout is None:  # pythonw has no console
         sys.stdout = sys.stderr = open(HOME / "app.log", "a", encoding="utf-8")
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    start_members_worker()
     if "--no-browser" not in argv:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     print(f"ReelVault is running at {url}")

@@ -347,7 +347,6 @@ def test_refresh_stops_at_known_reel_and_keeps_cursor(ext, member):
 
 def test_refresh_ignores_pinned_known_reels(ext, member):
     aid, jid, _ = leased_pull(ext, member)
-    raw = mk.build_all()  # noqa: F841  (fixtures build is deterministic)
     pinned = igparse.page_items(igparse.parse_ig_json((FIX / "pinned.json").read_text()))
     first = ext.post(f"/jobs/{jid}/items", {"page": 1, "account": ig_user(), "items": [igparse.trim_media(m) for m in pinned[:3]],
                                             "paging": {"max_id": "c1", "more_available": True, "source": "clips"}})
@@ -774,3 +773,117 @@ def test_extension_zip_download(client):
     man = json.loads(z.read("manifest.json"))
     assert "cookies" not in man["permissions"] and "tabs" not in man["permissions"]
     assert client.get("/pair").status_code == 200
+
+
+# ============================================================================================== second pass
+
+def test_instagram_health_is_admin_only(ext, member_client, admin_client):
+    ext.post("/debug-sample", {"endpoint": "profileInfo", "keys_tree": {"data": {"user": {"id": "str"}}}})
+    assert member_client.get("/api/admin/instagram-health").status_code == 403
+    r = admin_client.get("/api/admin/instagram-health")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["samples"]["profileInfo"]["keys_tree"] == {"data": {"user": {"id": "str"}}}
+    assert set(body) == {"samples", "fails", "recoveries", "pk_conflicts", "fields_seen"}
+    assert "user_id" not in json.dumps(body["samples"]), "no member id in the admin view"
+
+
+def test_next_pull_cursor_always_comes_from_the_account(ext, member):
+    """A stored job can never steer a pull to another cursor: at lease time the server writes the account's own
+    saved cursor (or none) over the payload (defense in depth next to the extension's validate.js)."""
+    confirm(ext.device_id)
+    aid = add_account(member, ig_pk=PK)
+    with db.tx() as conn:
+        conn.execute(db.accounts.update().where(db.accounts.c.id == aid).values(cursor_max_id="GOODcursor123",
+                                                                                oldest_pk=str(TIMELINE[49]["pk"])))
+    jid = jobs.enqueue(member.id, "ig_pull", {"account_id": aid, "handle": "scaleit.demo", "mode": "next",
+                                              "max_id": "EVILcursor", "cursor_source": "feed", "target": 100},
+                       executor="extension")
+    job = ext.lease()["job"]
+    assert job["id"] == jid
+    assert job["payload"]["max_id"] == "GOODcursor123"
+    assert job["payload"]["cursor_source"] == "clips"
+    assert job["payload"]["oldest_pk"] == str(TIMELINE[49]["pk"])
+
+
+def test_pair_claim_limit_is_per_client_not_per_raw_ipv6(anon, member, monkeypatch):
+    """Twenty wrong codes from one IPv6 /64 lock that client out, whatever the last 64 bits are (11.4, WP1 rule)."""
+    from reelvault.server import security
+
+    n = {"i": 0}
+
+    def fake_ip(request):
+        n["i"] += 1
+        return f"2001:db8:1:2::{n['i']:x}"
+
+    monkeypatch.setattr(security, "client_ip", fake_ip)
+    codes = []
+    for i in range(21):   # a new wrong code each time, so the 5-per-code limit is not what stops it
+        r = anon.post("/api/ext/v2/pair/claim", json={"code": f"AAAA-{i:04d}", "name": "x", "kind": "extension"})
+        codes.append(r.status_code)
+    assert codes[:20] == [403] * 20
+    assert codes[20] == 429
+
+
+def _expire_last_attempt(jid):
+    with db.tx() as conn:
+        conn.execute(db.jobs.update().where(db.jobs.c.id == jid).values(
+            lease_until=db.utcnow() - timedelta(seconds=1), attempts=db.jobs.c.max_attempts))
+    jobs.requeue_expired()
+    with db.tx(immediate=False) as conn:
+        return conn.execute(select(db.jobs).where(db.jobs.c.id == jid)).first()
+
+
+def test_last_lease_expiry_tidies_reels_pulls_and_sources(ext, member):
+    """The extension vanished for good mid-job: the job fails after its last attempt, and nothing it touched
+    stays stuck (reels 'fetching', a pull without an end, a source 'waiting')."""
+    confirm(ext.device_id)
+    aid, jid, _ = leased_pull(ext, member)
+    pull_pages(ext, jid, 1)
+    assert _expire_last_attempt(jid).state == "failed"
+    with db.tx(immediate=False) as conn:
+        p = conn.execute(select(db.pulls).where(db.pulls.c.job_id == jid)).first()
+        score = conn.execute(select(db.jobs).where(db.jobs.c.kind == "score_account")).all()
+    assert p.finished_at is not None and p.stop_reason == "error"
+    assert [s.payload["account_id"] for s in score] == [aid], "the reels it did read still get scored"
+
+    with db.tx(immediate=False) as conn:   # a reel the pull stored
+        rid = conn.execute(select(db.reels.c.id).where(db.reels.c.ig_pk == str(TIMELINE[0]["pk"]))).scalar()
+    vid = jobs_ig.request_videos(member.id, [rid])
+    assert ext.lease(["ig_videos"])["job"]["id"] == vid
+    assert _expire_last_attempt(vid).state == "failed"
+    with db.tx(immediate=False) as conn:
+        assert conn.execute(select(db.reels.c.media_state).where(db.reels.c.id == rid)).scalar() == "need_extension"
+
+    sid = db.new_id("src")
+    with db.tx() as conn:
+        conn.execute(db.profile_sources.insert().values(id=sid, user_id=member.id, kind="skool_profile",
+                                                        url="https://www.skool.com/@mia-m", via="extension"))
+    pr = jobs_ig.request_page_read(member.id, sid, "skool_profile", "https://www.skool.com/@mia-m")
+    assert ext.lease(["page_read"])["job"]["id"] == pr
+    assert _expire_last_attempt(pr).state == "failed"
+    with db.tx(immediate=False) as conn:
+        assert conn.execute(select(db.profile_sources.c.status).where(db.profile_sources.c.id == sid)).scalar() \
+            == "needs_paste"
+
+
+def test_lease_expiry_with_attempts_left_changes_nothing(ext, member):
+    confirm(ext.device_id)
+    aid, jid, _ = leased_pull(ext, member)
+    with db.tx() as conn:
+        conn.execute(db.jobs.update().where(db.jobs.c.id == jid).values(lease_until=db.utcnow() - timedelta(seconds=1)))
+    jobs.requeue_expired()
+    with db.tx(immediate=False) as conn:
+        assert conn.execute(select(db.jobs.c.state).where(db.jobs.c.id == jid)).scalar() == "waiting"
+        assert conn.execute(select(db.pulls.c.finished_at).where(db.pulls.c.job_id == jid)).scalar() is None
+
+
+def test_too_old_extension_gets_no_work(ext, member, anon):
+    confirm(ext.device_id)
+    aid = add_account(member, ig_pk=PK)
+    jobs_ig.start_pull(member.id, aid, "first")
+    assert ext.post("/hello", {"version": "1.9.0"}).json()["min_version"] == "2.0.0"
+    lz = ext.lease()
+    assert lz["job"] is None and lz["reason"] == "update"
+    ext.post("/hello", {"version": "2.0.0"})
+    assert ext.lease()["job"] is not None

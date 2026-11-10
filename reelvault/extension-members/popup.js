@@ -1,5 +1,5 @@
 import {SERVERS} from "./config.js";
-import {parsePairLink} from "./validate.js";
+import {parsePairLink, isNewer} from "./validate.js";
 
 const $ = id => document.getElementById(id);
 const show = (id, on = true) => { $(id).hidden = !on; };
@@ -37,12 +37,14 @@ async function render() {
       ? "You're signed out of Instagram in Chrome. Sign in at instagram.com, then press Try again in ReelVault."
       : `Instagram asked us to slow down. ReelVault waits until ${until}.`;
   }
-  show("s-action", s.reason === "confirm_account");
+  show("s-action", s.reason === "confirm_account" || s.reason === "update");
   if (s.reason === "confirm_account") {
     $("s-action").textContent = "Open ReelVault > Settings > Chrome extension and confirm the Instagram account to read with.";
+  } else if (s.reason === "update") {
+    $("s-action").textContent = "This extension is too old for ReelVault. Update it to keep reading.";
   }
   const h = s.hello;
-  const newer = h && h.latest_version && h.latest_version !== s.version;
+  const newer = h && (isNewer(h.latest_version, s.version) || isNewer(h.min_version, s.version));
   show("s-update", !!newer);
   if (newer) $("s-update").textContent = "Update available: download the new ZIP, extract it over the old folder, then press Reload on chrome://extensions.";
 }

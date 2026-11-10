@@ -101,3 +101,15 @@ export function parsePairLink(text, servers) {
   if (u.pathname !== "/pair" || !/^[0-9A-Z]{4}-?[0-9A-Z]{4}$/.test(code)) return {ok: false, error: "no_code"};
   return {ok: true, origin: u.origin, host: u.host, code};
 }
+
+// "2.0.10" is newer than "2.0.9". Used for the "Update available" line (5.0 (b)); bad input is never newer.
+export function isNewer(a, b) {
+  const parse = v => (typeof v === "string" && /^\d{1,4}(\.\d{1,5}){0,3}$/.test(v)) ? v.split(".").map(Number) : null;
+  const x = parse(a), y = parse(b);
+  if (!x || !y) return false;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] || 0) - (y[i] || 0);
+    if (d) return d > 0;
+  }
+  return false;
+}

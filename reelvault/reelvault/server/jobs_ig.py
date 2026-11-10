@@ -28,7 +28,7 @@ from sqlalchemy.exc import IntegrityError
 from .. import igparse
 from . import db, jobs, ratelimit
 from .errors import ApiError, bad_input, not_found
-from .settings import get_settings
+from .settings import EXTENSION_MIN, get_settings
 
 log = logging.getLogger("reelvault.jobs_ig")
 
@@ -233,6 +233,18 @@ def apply_ig_report(conn, dev, ig: Any) -> dict:
     vals["state"] = st
     conn.execute(db.devices.update().where(db.devices.c.id == dev.id).values(**vals))
     return vals
+
+
+def version_tuple(v) -> tuple:
+    try:
+        return tuple(int(x) for x in str(v or "0").split("."))
+    except ValueError:
+        return (0,)
+
+
+def needs_update(dev) -> bool:
+    """An extension older than EXTENSION_MIN gets no work until it is updated (it may not follow this contract)."""
+    return bool(dev.version) and version_tuple(dev.version) < version_tuple(EXTENSION_MIN)
 
 
 def is_confirmed(dev) -> bool:
@@ -588,6 +600,8 @@ def lease(dev, kinds: Any, budget: Any) -> dict:
         page_reads_today = _server_count(conn, user_id, "page_read_lease", "day")
     reason = None
     ig_ok = True
+    if needs_update(dev):
+        return {"job": None, "poll_after_s": 300, "reason": "update"}
     if cooldown_active(st, now):
         ig_ok, reason = False, "cooldown"
     elif not is_confirmed(dev):
@@ -1598,6 +1612,37 @@ def try_again(user_id: str) -> dict:
                                                 db.jobs.c.state == "waiting", db.jobs.c.run_after > now)
                          .values(run_after=now, error_message=None)).rowcount
     return {"ok": True, "jobs": n}
+
+
+# ============================================================================================== lease expiry (WP1 hook)
+
+def _on_last_lease_expired(conn, job) -> None:
+    """Runs inside jobs.requeue_expired's transaction. A lease that runs out with attempts left just goes back to
+    `waiting` (the extension resumes it). After the LAST attempt the job fails, so tidy what it left behind."""
+    if job.attempts < job.max_attempts:
+        return
+    p = job.payload or {}
+    uid = job.user_id
+    if job.kind == "ig_pull":
+        res = _close_pull(conn, job, "error")
+        if res.get("reels_new"):
+            _queue_score(uid, p["account_id"], conn=conn)
+    elif job.kind == "ig_videos":
+        ids = [it.get("reel_id") for it in p.get("items", [])]
+        conn.execute(db.reels.update().where(db.reels.c.user_id == uid, db.reels.c.id.in_(ids),
+                                             db.reels.c.media_state == "fetching").values(media_state="need_extension"))
+    elif job.kind in ("ig_discover", "ig_check"):
+        conn.execute(db.discover_runs.update().where(db.discover_runs.c.id == p.get("run_id"),
+                                                     db.discover_runs.c.user_id == uid).values(state="failed"))
+    if p.get("source_id") and job.kind in ("page_read", "ig_profile"):
+        conn.execute(db.profile_sources.update().where(db.profile_sources.c.id == p["source_id"],
+                                                       db.profile_sources.c.user_id == uid,
+                                                       db.profile_sources.c.status == "waiting")
+                     .values(status="needs_paste", error="We couldn't read that page. Paste the text instead."))
+
+
+for _kind in EXT_KINDS:
+    jobs.on_lease_expired(_kind)(_on_last_lease_expired)
 
 
 # ============================================================================================== admin health (5.9)

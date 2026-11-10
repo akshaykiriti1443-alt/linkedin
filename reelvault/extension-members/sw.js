@@ -4,7 +4,7 @@
 import {SERVERS, BUILD} from "./config.js";
 import {IG, CDN_DOMAINS, isCdnUrl, WARNING_RE, CHALLENGE_RE} from "./endpoints.js";
 import {parseIg} from "./bigint.js";
-import {validateJob, parsePairLink, IG_KINDS, KINDS, isPk, isCursor} from "./validate.js";
+import {validateJob, parsePairLink, isNewer, IG_KINDS, KINDS, isPk, isCursor} from "./validate.js";
 import {DEFAULTS, merge, Budget, BudgetStop} from "./pacing.js";
 import {trimMedia, trimUser, isReel, keepForTarget, videoOf, coverOf, keysTree} from "./trim.js";
 import {igFetch, readIds, readSkool, readLinkedIn} from "./reader.js";
@@ -17,6 +17,9 @@ const VIDEO_MAX = 50 * 1024 * 1024;
 const COVER_MAX = 2 * 1024 * 1024;
 const PAGE_CAP = 12;
 const DEBUG_ENDPOINTS = ["clipsUser", "profileInfo", "currentUser", "chaining"];
+// 5.7 cooldowns, used locally only when the stop could not be reported (the server's answer wins otherwise).
+const LOCAL_COOLDOWN_S = {rate_limited: 24 * 3600, warning: 24 * 3600, challenge: 24 * 3600, signed_out: 30 * 60,
+                          http_error: 15 * 60};
 
 // ============================================================================================ small helpers
 
@@ -666,11 +669,20 @@ async function runJob(raw, resumed) {
       if (typeof e.message === "string" && e.message !== e.code) body.message = e.message.slice(0, 300);
       if (Array.isArray(e.raw_keys)) body.raw_keys = e.raw_keys.slice(0, 50).map(String);
       if (Number.isFinite(e.cooldown_s)) body.cooldown_s = e.cooldown_s;
+      let until = null;
       try {
         const r = await api(`/jobs/${job.id}/fail`, body);
-        const until = r.data && r.data.cooldown_until;
-        if (until) await put({cooldown: {until: Date.parse(until), reason: e.code}});
-      } catch (e2) { if (e2 instanceof ServerDown) keepLocal = false; }
+        if (r.status >= 500) throw new ServerDown("server " + r.status);
+        until = r.data && r.data.cooldown_until ? Date.parse(r.data.cooldown_until) : null;
+      } catch (e2) {
+        // ReelVault is away: still stop reading Instagram for the 5.7 time. The lease runs out on the server and
+        // the job comes back later, so the local copy is dropped.
+        if (!(e2 instanceof ServerDown) || !LOCAL_COOLDOWN_S[e.code]) throw e2;
+        until = Date.now() + LOCAL_COOLDOWN_S[e.code] * 1000;
+        await put({cooldown: {until, reason: e.code, local_only: true}});
+        until = null;
+      }
+      if (until) await put({cooldown: {until, reason: e.code}});
       badge(["signed_out", "permission_denied"].includes(e.code) ? "!" : "");
     } else if (e instanceof ServerDown) {
       keepLocal = true;                           // the server is away: resume from storage on a later tick
@@ -702,7 +714,10 @@ async function hello() {
   const upd = {server_pacing: r.data.pacing || null, hello: {...r.data, at: Date.now()}};
   if (r.data.cooldown_until) upd.cooldown = {until: Date.parse(r.data.cooldown_until), reason: r.data.cooldown_reason || ""};
   await put(upd);
-  if (!r.data.cooldown_until) await local.remove("cooldown");
+  if (!r.data.cooldown_until) {                   // the server's word wins, except a stop it never heard of
+    const cd = await get("cooldown");
+    if (!cd || !cd.local_only || cd.until <= Date.now()) await local.remove("cooldown");
+  }
   await loadPacing();
   return r.data;
 }
@@ -724,12 +739,27 @@ async function tick(why = "alarm") {
       const r = await api("/jobs/lease", {kinds: inCooldown ? ["page_read"] : KINDS, budget: await budget.report()});
       if (r.status !== 200 || !r.data) break;
       await put({lease: {reason: r.data.reason || null, at: Date.now()}});
-      if (!r.data.job) { badge(r.data.reason === "confirm_account" ? "!" : ""); break; }
+      if (!r.data.job) {
+        badge(["confirm_account", "update"].includes(r.data.reason) ? "!" : "");
+        if (r.data.reason === "confirm_account") await recheckAccount();
+        break;
+      }
       await runJob(r.data.job, null);
     }
   } catch (e) {
     if (!(e instanceof Unpaired || e instanceof ServerDown)) console.warn("ReelVault tick failed", e);
   } finally { ticking = false; }
+}
+
+// The server holds Instagram jobs while the account the extension reads with is not the confirmed one (5.2). If
+// the member switched back in Chrome, only a new sign-in check can show it: at most every 30 min, and only while
+// work is waiting (like the signed_out re-check of 5.7), so an idle Chrome still makes no Instagram call.
+async function recheckAccount() {
+  const h = await get("hello"), igs = await get("ig");
+  if (!h || !h.has_work) return;
+  if (igs && Date.now() - (igs.checked_at || 0) < 30 * 60_000) return;
+  try { await signInCheck(); await hello(); }
+  catch (e) { if (!(e instanceof IgStop)) throw e; }
 }
 
 function deviceName() {
@@ -814,4 +844,5 @@ ensureAlarm();
 setTimeout(() => tick("start"), 1000);   // a restarted SW resumes a stored job here
 
 // For the automated tests and debugging in chrome://extensions (service worker console only).
-self.rv = {tick, hello, statusForPopup, budget, validateJob, effPacing: () => effPacing};
+self.rv = {tick, hello, statusForPopup, budget, validateJob, effPacing: () => effPacing,
+           busy: () => running || ticking, lastLease: () => get("lease"), closeReadingTab};

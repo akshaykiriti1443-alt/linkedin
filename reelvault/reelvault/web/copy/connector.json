@@ -1,0 +1,35 @@
+{
+  "_about": "Default member copy for Settings > AI > 'Use my Claude plan' (DESIGN-SAAS.md 7.3.4). The admin can override any key in Admin > Copy (app_settings.copy_overrides). {MCP_URL} and {HOST} are filled in by the server. **bold** is shown bold.",
+  "connector_title": "Use my Claude plan",
+  "connector_intro": "Add ReelVault to your own Claude app. Your Claude then reads your reels and writes your scripts. Nothing runs until you open Claude.",
+  "connector_steps": [
+    "Open Claude (claude.ai or the Claude desktop app).",
+    "Go to **Customize > Connectors** and click **Add custom connector**.",
+    "Name: **ReelVault**. URL: {MCP_URL} (copy button). Leave **Use Claude's published identity** selected.",
+    "Click **Add**, then **Connect**. Sign in to ReelVault and click **Allow**.",
+    "In a new chat, say: **Analyze my new ReelVault reels**."
+  ],
+  "connector_notes": [
+    "Free Claude plans allow one custom connector.",
+    "On Team or Enterprise plans, your Claude owner must add it first.",
+    "Claude Code users: claude mcp add --transport http reelvault {MCP_URL}"
+  ],
+  "connector_estimate_line": "About 8 Claude chats to finish your first 5 competitors. Nothing runs until you open Claude. Want it faster? Add a free Gemini key just for tagging.",
+  "connector_prompts": [
+    "Analyze my new ReelVault reels",
+    "Draft my ReelVault profile",
+    "Write my ReelVault output"
+  ],
+  "claude_code_command": "claude mcp add --transport http reelvault {MCP_URL}",
+  "desktop_steps": [
+    "Install the ReelVault desktop app on your Windows computer and sign in to Claude Code there.",
+    "In the desktop app, open **Settings** and find **Use my Claude for ReelVault Members**.",
+    "Click **Get a code** below and type the code into the desktop app.",
+    "Keep the desktop app open. It does the AI work while it runs."
+  ],
+  "key_steps": [
+    "Pick a provider. Gemini has a free key in most countries.",
+    "Open the key page, make a key, and copy it.",
+    "Paste the key below and click **Test and save**. We test it before we save it."
+  ]
+}

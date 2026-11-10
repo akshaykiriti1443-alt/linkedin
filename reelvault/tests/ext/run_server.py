@@ -15,11 +15,16 @@ import sys
 import threading
 from pathlib import Path
 
+from fastapi import APIRouter, Request  # module level: the route annotations are strings (future annotations)
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 LOG: list[dict] = []
 LOG_LOCK = threading.Lock()
+
+
+FLAGS = {"fail_503": False}   # POST /__test/flags {"fail_503": true}: answer every /fail with 503 (server trouble)
 
 
 class Recorder:
@@ -29,8 +34,24 @@ class Recorder:
         self.app = app
 
     async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"] == "/__test/flags" and scope["method"] == "POST":
+            import json as _j
+            body = b""
+            while True:
+                m = await receive()
+                body += m.get("body", b"")
+                if not m.get("more_body"):
+                    break
+            FLAGS.update(_j.loads(body or b"{}"))
+            await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+            await send({"type": "http.response.body", "body": _j.dumps(FLAGS).encode()})
+            return
         if scope["type"] != "http" or not scope["path"].startswith("/api/ext/v2/"):
             return await self.app(scope, receive, send)
+        if FLAGS["fail_503"] and scope["method"] == "POST" and scope["path"].endswith("/fail"):
+            await send({"type": "http.response.start", "status": 503, "headers": [(b"content-type", b"application/json")]})
+            await send({"type": "http.response.body", "body": b'{"error": "down", "code": "server"}'})
+            return
         chunks = []
 
         async def rec():
@@ -56,7 +77,6 @@ class Recorder:
 
 
 def build_app():
-    from fastapi import APIRouter, Request
     from sqlalchemy import func, select
 
     from reelvault.server import api_ext, db, jobs, jobs_ig
@@ -111,6 +131,16 @@ def build_app():
     async def raw_job(req: Request):
         b = await req.json()
         return {"job_id": jobs.enqueue(uid, b["kind"], b["payload"], executor="extension")}
+
+    real_problem = jobs_ig.payload_problem
+
+    @r.post("/__test/trust")
+    async def trust(req: Request):
+        """{"off": true} = act like a compromised server: hand out jobs without the server's own payload check, so
+        the test can prove the extension's validate.js refuses them (5.4.0)."""
+        b = await req.json()
+        jobs_ig.payload_problem = (lambda kind, p: None) if b.get("off") else real_problem
+        return {"ok": True}
 
     @r.post("/__test/confirm")
     def confirm():

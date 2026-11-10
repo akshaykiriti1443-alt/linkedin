@@ -143,8 +143,12 @@ def one_reel(kind: str, video: Path, base: Path, whisper: Whisper | None, models
     if full is not None:
         t0 = time.perf_counter()
         try:
-            full(video, work, ig_audio=None, words=(kind == "priority"), whisper_model=model)
-            return {"seconds": round(time.perf_counter() - t0, 2), "via": "signals.process"}
+            # --no-whisper (or no model): the pipeline runs with an empty transcript instead of speech-to-text
+            kw = {} if whisper is not None else {"transcribe": lambda audio, name, words: {}}
+            sig = full(video, work, ig_audio=None, words=(kind == "priority"), whisper_model=model, **kw)
+            steps = dict(getattr(sig, "timings", None) or {})
+            steps.setdefault("audio", steps.get("sound", 0.0))   # same step names as the parts timing
+            return {"seconds": round(time.perf_counter() - t0, 2), "via": "signals.process", "steps": steps}
         except NotImplementedError:
             _FULL["fn"] = None
         except Exception as e:  # noqa: BLE001

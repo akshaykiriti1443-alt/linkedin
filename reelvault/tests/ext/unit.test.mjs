@@ -146,3 +146,14 @@ test("endpoint table builds only Instagram paths", () => {
   assert.ok(!isCdnUrl("https://evil.example/cdninstagram.com.mp4"));
   assert.ok(WARNING_RE.test("feedback_required"));
 });
+
+test("versions: newer means a higher number, not just a different one", async () => {
+  const {isNewer} = await import("../../extension-members/validate.js");
+  assert.equal(isNewer("2.0.10", "2.0.9"), true);
+  assert.equal(isNewer("2.1", "2.0.9"), true);
+  assert.equal(isNewer("2.0.0", "2.0.0"), false);
+  assert.equal(isNewer("2.0.0", "2.0.1"), false);
+  assert.equal(isNewer("2.0.0", "2.0"), false);
+  assert.equal(isNewer("<script>", "2.0.0"), false);
+  assert.equal(isNewer(undefined, "2.0.0"), false);
+});

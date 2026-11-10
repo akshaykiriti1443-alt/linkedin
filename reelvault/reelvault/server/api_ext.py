@@ -3,6 +3,7 @@
 Session endpoints (web UI, cookie + CSRF):
     POST /api/ext/pair · GET /api/ext/status · POST /api/ext/confirm-account · DELETE /api/ext/device
     POST /api/ext/try-again (new: the "Try again" button after signed_out, 5.7) · GET /pair (tiny help page)
+    GET /api/admin/instagram-health (new, admin only: the 5.9 "Instagram health" data)
 Device endpoints (Authorization: Bearer rvd_..., CORS for chrome-extension://, no cookies):
     POST /api/ext/v2/pair/claim (no auth) · hello · jobs/lease · jobs/<id>/{progress,items,video,page,done,fail}
     ig-user · debug-sample
@@ -65,13 +66,6 @@ def latest_version() -> str:
         except (OSError, ValueError):
             pass
     return EXTENSION_MIN
-
-
-def _vtuple(v: str | None) -> tuple:
-    try:
-        return tuple(int(x) for x in str(v or "0").split("."))
-    except ValueError:
-        return (0,)
 
 
 _builder = None
@@ -211,8 +205,8 @@ def ext_status(user=Depends(security.current_user)):
               "signed_in": st.get("signed_in"), "last_seen_at": db.iso(dev.last_seen_at), "online": online,
               "last_seen_text": ("The extension is on." if online else
                                  f"Extension last seen {_ago(dev.last_seen_at)}: open Chrome to continue."),
-              "update_available": _vtuple(dev.version) < _vtuple(latest),
-              "update_needed": _vtuple(dev.version) < _vtuple(EXTENSION_MIN)}
+              "update_available": jobs_ig.version_tuple(dev.version) < jobs_ig.version_tuple(latest),
+              "update_needed": jobs_ig.version_tuple(dev.version) < jobs_ig.version_tuple(EXTENSION_MIN)}
     if cd:
         device["cooldown_until"] = cd
         device["cooldown_reason"] = st.get("cooldown_reason")
@@ -269,6 +263,13 @@ def try_again(user=Depends(security.current_user)):
     return jobs_ig.try_again(user.id)
 
 
+@router.get("/api/admin/instagram-health")
+def instagram_health(admin=Depends(security.current_admin)):
+    """Admin > Instagram health (5.9): the key tree of the first answer per endpoint, the last 50 failure codes,
+    recoveries used, pk conflicts and which fields Instagram sent. Metadata only: no member content."""
+    return jobs_ig.ig_health()
+
+
 @router.get("/pair", include_in_schema=False)
 def pair_page():
     html = """<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -297,11 +298,12 @@ async def pair_claim(request: Request):
     version = body.get("version") if isinstance(body.get("version"), str) else ""
     if version and not VERSION_RE.match(version):
         raise bad_input("The extension version doesn't look right.")
-    ip = security.client_ip(request)
+    ip = security.client_ip(request)          # for the audit row
+    client = ratelimit.client_key(request)    # for the limit: one IPv6 /64 = one client (WP1 rule)
     h = security.code_hash(code)
 
     def run():
-        ratelimit.hit("pair_claim_ip", ip, 20, "hour", message="Too many tries. Try again in an hour.")
+        ratelimit.hit("pair_claim_ip", client, 20, "hour", message="Too many tries. Try again in an hour.")
         ratelimit.hit("pair_claim", "global", 300, "hour", message="Too many tries. Try again in an hour.")
         ratelimit.hit("pair_claim_code", h, PAIR_MAX_ATTEMPTS, "hour", message=BAD_CODE)
         now = db.utcnow()

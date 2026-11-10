@@ -74,10 +74,8 @@ def on(name: str) -> bool:
 def clips_page(offset: int, size: int) -> dict:
     items = TIMELINE[offset:offset + size]
     if offset == 0 and on("bigint_pk") and items:
-        big_t = ((mk.BIGINT_PK >> 23) + mk.IG_EPOCH_MS) // 1000
         items = [mk.media(mk.TARGET, NOW - 3600, 77, views=1_830_000, likes=51_200, comments=930,
                           pk=mk.BIGINT_PK)] + items[1:]
-        _ = big_t
     if on("suggested_reels"):
         items = list(items)
         for k in range(2):
@@ -146,13 +144,16 @@ class H(BaseHTTPRequestHandler):
         if host in ("127.0.0.1", "localhost") and u.path.startswith("/__ctl/"):
             return self._ctl(u, body)
         e = self._record(body)
-        if host == "scontent.cdninstagram.com":
-            return self._cdn(u)
-        if host == "www.skool.com":
-            return self._skool(u)
-        if host == "www.linkedin.com":
-            return self._linkedin(u)
-        return self._ig(u, e)
+        try:
+            if host == "scontent.cdninstagram.com":
+                return self._cdn(u)
+            if host == "www.skool.com":
+                return self._skool(u)
+            if host == "www.linkedin.com":
+                return self._linkedin(u)
+            return self._ig(u, e)
+        finally:
+            e["t_end"] = time.time()  # with "t": proves one Instagram request at a time
 
     # ------------------------------------------------------------------------------------------ control
     def _ctl(self, u, body):

@@ -107,6 +107,34 @@ PY
     || { say "whisper: offline load test failed"; exit 1; }
 fi
 
+# ---- load test for the sound and face models (skipped when this Python lacks sherpa-onnx / OpenCV)
+"$PYTHON" - "$MODELS_DIR" <<'PY' || { say "a model failed its load test"; exit 1; }
+import sys
+from pathlib import Path
+d = Path(sys.argv[1])
+try:
+    import sherpa_onnx
+except ImportError:
+    print("CED-tiny: load test skipped (no sherpa-onnx here)", file=sys.stderr)
+else:
+    import numpy as np
+    cfg = sherpa_onnx.AudioTaggingConfig(model=sherpa_onnx.AudioTaggingModelConfig(
+        ced=str(d / "ced-tiny/model.int8.onnx"), num_threads=1, provider="cpu"),
+        labels=str(d / "ced-tiny/class_labels_indices.csv"), top_k=3)
+    tagger = sherpa_onnx.AudioTagging(cfg)
+    st = tagger.create_stream()
+    st.accept_waveform(16000, np.zeros(16000, np.float32))
+    tagger.compute(st)
+    print("CED-tiny: load test ok", file=sys.stderr)
+try:
+    import cv2
+except ImportError:
+    print("YuNet: load test skipped (no OpenCV here)", file=sys.stderr)
+else:
+    cv2.FaceDetectorYN.create(str(d / "yunet/face_detection_yunet_2023mar.onnx"), "", (320, 320), 0.7, 0.3, 50)
+    print("YuNet: load test ok", file=sys.stderr)
+PY
+
 chmod -R a+rX "$MODELS_DIR"
 say "Models are ready in $MODELS_DIR"
 du -sh "$MODELS_DIR" >&2 || true
