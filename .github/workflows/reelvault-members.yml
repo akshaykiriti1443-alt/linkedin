@@ -1,0 +1,187 @@
+name: ReelVault Members server
+
+# Server tests on Ubuntu, then the Docker image: build it, boot it with docker compose the way setup.sh does,
+# and check /healthz, sign-in and the worker. No secrets are needed: every key here is made fresh for the run.
+on:
+  push:
+    paths:
+      - "reelvault/**"
+      - ".github/workflows/reelvault-members.yml"
+  pull_request:
+    paths:
+      - "reelvault/**"
+      - ".github/workflows/reelvault-members.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reelvault-members-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: reelvault
+
+jobs:
+  server-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install ffmpeg
+        run: sudo apt-get update -y && sudo apt-get install -y --no-install-recommends ffmpeg zstd
+
+      - name: Install the server (exact versions from the lock)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --require-hashes -r deploy/requirements.lock
+          python -m pip install --no-deps -e .
+          python -m pip install pytest
+
+      - name: Check the deploy scripts
+        run: |
+          bash -n deploy/setup.sh
+          bash -n deploy/backup.sh
+          bash -n deploy/fetch_models.sh
+          python -m py_compile deploy/build_extension.py
+
+      - name: Server tests
+        run: python -m pytest -q tests/server
+
+      - name: MCP tests
+        run: |
+          if ls tests/mcp/test_*.py >/dev/null 2>&1; then python -m pytest -q tests/mcp; else echo "no MCP tests yet"; fi
+
+      - name: Desktop app tests (must keep passing)
+        run: python -m pytest -q tests --ignore=tests/server --ignore=tests/mcp --ignore=tests/ext --ignore=tests/e2e --ignore=tests/web
+
+      - name: Host benchmark smoke run
+        run: python -m reelvault.server.bench --quick --no-whisper --json > /tmp/bench.json && cat /tmp/bench.json
+
+  postgres:
+    # Optional (DESIGN-SAAS.md 12.2): the same suite on Postgres. SQLite-only tests may fail here; this job
+    # shows how far the Postgres path is and never blocks a push.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: rv
+          POSTGRES_PASSWORD: rv-test-only
+          POSTGRES_DB: rvtest
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U rv" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install
+        run: |
+          sudo apt-get update -y && sudo apt-get install -y --no-install-recommends ffmpeg
+          python -m pip install --require-hashes -r deploy/requirements.lock
+          python -m pip install --no-deps -e . && python -m pip install pytest
+      - name: Server tests on Postgres
+        env:
+          RV_TEST_DATABASE_URL: postgresql+psycopg://rv:rv-test-only@127.0.0.1:5432/rvtest
+        run: python -m pytest -q tests/server
+
+  docker:
+    needs: server-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: reelvault
+          file: reelvault/deploy/Dockerfile
+          tags: reelvault-members:latest
+          load: true
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Check the Caddyfile
+        run: |
+          docker run --rm -e RV_DOMAIN=app.example.com -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.10.2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+      - name: Check the compose files
+        run: |
+          cp deploy/.env.example deploy/.env
+          (cd deploy && docker compose config -q)
+          (cd deploy && COMPOSE_FILE=docker-compose.yml:docker-compose.split.yml docker compose config -q)
+          rm deploy/.env
+
+      - name: Boot it with setup.sh (local mode, no domain) and wait for /healthz
+        env:
+          ADMIN_EMAIL: ci-admin@example.com
+        run: |
+          ./deploy/setup.sh --local --yes --no-build | tee /tmp/setup.out
+          grep -q "ReelVault is ready" /tmp/setup.out
+          ! grep -q "RV_MASTER_KEYS=k1:" /tmp/setup.out   # the master key is never printed
+
+      - name: Health, sign-in, worker heartbeat, extension ZIP
+        run: |
+          set -e
+          curl -fsS http://127.0.0.1:8000/healthz | tee /tmp/h.json
+          python3 -c "import json; d=json.load(open('/tmp/h.json')); assert d['ok'] and d['db']=='ok', d"
+          PW="$(grep -E '^ADMIN_PASSWORD=' deploy/.env | cut -d= -f2-)"
+          code=$(curl -s -o /tmp/login.json -w '%{http_code}' -c /tmp/cj -H 'Content-Type: application/json' \
+            -d "{\"email\":\"ci-admin@example.com\",\"password\":\"$PW\"}" http://127.0.0.1:8000/api/auth/login)
+          test "$code" = 200
+          curl -fsS -b /tmp/cj http://127.0.0.1:8000/api/me | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['role']=='admin', d"
+          curl -fsS -o /dev/null http://127.0.0.1:8000/
+          curl -fsS -o /dev/null http://127.0.0.1:8000/static/app.js || echo "(web UI not built yet)"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/mcp)" = 401
+          for i in $(seq 1 40); do
+            curl -fsS http://127.0.0.1:8000/healthz | python3 -c "import json,sys; w=json.load(sys.stdin).get('worker'); sys.exit(0 if w and w.get('ok') else 1)" && break
+            sleep 3
+          done
+          curl -fsS http://127.0.0.1:8000/healthz | python3 -c "import json,sys; w=json.load(sys.stdin)['worker']; assert w and w['ok'], w"
+          code=$(curl -s -o /tmp/ext.zip -w '%{http_code}' http://127.0.0.1:8000/download/reelvault-members-extension.zip)
+          echo "extension zip: HTTP $code"; if [ "$code" = 200 ]; then python3 -m zipfile -l /tmp/ext.zip | head; fi
+          (cd deploy && docker compose ps)
+          (cd deploy && docker compose exec -T app reelvault-start health)
+          (cd deploy && docker compose exec -T app sh -c 'ls /opt/reelvault/models/ced-tiny /opt/reelvault/models/yunet')
+          (cd deploy && docker compose exec -T app id -u) | grep -qv '^0$'   # not root
+
+      - name: Backup and restore round trip
+        run: |
+          ./deploy/backup.sh backup
+          ./deploy/backup.sh list
+          name="db-$(date -u +%Y-%m-%d).sqlite"
+          printf 'y\n' | ./deploy/backup.sh restore "$name"
+          curl -fsS http://127.0.0.1:8000/healthz
+
+      - name: Restart keeps data (volume) and survives a killed worker
+        run: |
+          (cd deploy && docker compose restart app)
+          for i in $(seq 1 40); do curl -fsS http://127.0.0.1:8000/healthz >/dev/null 2>&1 && break; sleep 3; done
+          # kill the worker process; reelvault-start must start a new one
+          (cd deploy && docker compose exec -T app python -c "import os,signal; [os.kill(int(p), signal.SIGKILL) for p in os.listdir('/proc') if p.isdigit() and b'-m\x00reelvault.server.jobs' in open('/proc/%s/cmdline' % p, 'rb').read()]")
+          sleep 10
+          (cd deploy && docker compose exec -T app python -c "import os,sys; sys.exit(0 if any(p.isdigit() and b'-m\x00reelvault.server.jobs' in open('/proc/%s/cmdline' % p, 'rb').read() for p in os.listdir('/proc')) else 1)")
+
+      - name: Logs on failure
+        if: failure()
+        run: (cd deploy && docker compose logs --tail 200) || true
+
+      - name: Stop
+        if: always()
+        run: (cd deploy && docker compose down -v) || true

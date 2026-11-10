@@ -1,0 +1,11 @@
+{
+ "message": "feedback_required",
+ "spam": true,
+ "feedback_title": "Try Again Later",
+ "feedback_message": "We limit how often you can do certain things on Instagram to protect our community. Tell us if you think we made a mistake.",
+ "feedback_url": "repute/report_problem/scraping/",
+ "feedback_appeal_label": "Tell us",
+ "feedback_ignore_label": "OK",
+ "feedback_action": "report_problem",
+ "status": "fail"
+}

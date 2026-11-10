@@ -14,15 +14,24 @@ dependencies = [
     "python-dotenv>=1.0",
 ]
 
+[project.optional-dependencies]
+server = [
+  "fastapi>=0.120", "uvicorn[standard]>=0.32", "sqlalchemy>=2.0.36", "alembic>=1.14", "psycopg[binary]>=3.2",
+  "argon2-cffi>=23.1", "cryptography>=43", "python-multipart>=0.0.12", "httpx>=0.28",
+  "mcp>=2.3,<3", "sherpa-onnx==2.0.1", "numpy>=2.1", "trafilatura==2.3.1", "pypdf>=5",
+  "openai>=3.48", "google-genai>=3.0", "opencv-python-headless>=4.10", "anyio>=4.6",
+]
+
 [project.scripts]
 reelvault = "reelvault.cli:main"
+reelvault-start = "reelvault.server.supervise:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["reelvault"]
+packages = ["reelvault", "reelvault.server", "reelvault.ai", "reelvault.signals", "reelvault.importers"]
 
 [tool.setuptools.package-data]
-reelvault = ["extension/*", "ui/*"]
+reelvault = ["extension/*", "ui/*", "data/*", "web/*", "web/static/*", "web/static/*/*", "web/copy/*", "ai/prompts/*", "server/data/*"]

@@ -1,0 +1,21 @@
+# Optional override: web and worker as two containers on the same volume (same SQLite file, same local disk).
+# Use it by putting this line in .env:   COMPOSE_FILE=docker-compose.yml:docker-compose.split.yml
+services:
+  app:
+    environment:
+      RV_ROLE: web
+  worker:
+    image: reelvault-members:latest
+    depends_on: [app]          # app runs the database migration first
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+      RV_ROLE: worker
+    volumes:
+      - rvdata:/data
+    stop_grace_period: 30s
+    networks: [rvnet]
+    logging:
+      driver: json-file
+      options: {max-size: "20m", max-file: "5"}

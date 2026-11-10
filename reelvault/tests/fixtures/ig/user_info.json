@@ -1,0 +1,51 @@
+{
+ "user": {
+  "pk": 25025320,
+  "pk_id": "25025320",
+  "id": "25025320",
+  "username": "scaleit.demo",
+  "full_name": "Demo Creator",
+  "is_private": false,
+  "is_verified": true,
+  "profile_pic_id": "3000000000025025320_25025320",
+  "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+  "fbid_v2": 17841400025025320,
+  "strong_id__": "25025320",
+  "has_anonymous_profile_picture": false,
+  "is_unpublished": false,
+  "is_favorite": false,
+  "friendship_status": {
+   "following": false,
+   "is_bestie": false,
+   "is_feed_favorite": false,
+   "is_restricted": false
+  },
+  "follower_count": 182000,
+  "following_count": 412,
+  "media_count": 640,
+  "biography": "Helping agency owners get clients with ads",
+  "external_url": "https://example.com/audit",
+  "category": "Entrepreneur",
+  "is_business": true,
+  "account_type": 2,
+  "bio_links": [
+   {
+    "link_id": 17900000000000000,
+    "url": "https://example.com/audit",
+    "lynx_url": "",
+    "link_type": "external",
+    "title": "Free audit",
+    "open_external_url_with_in_app_browser": true
+   }
+  ],
+  "total_clips_count": 212,
+  "has_videos": true,
+  "mutual_followers_count": 0,
+  "hd_profile_pic_url_info": {
+   "url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+   "width": 320,
+   "height": 320
+  }
+ },
+ "status": "ok"
+}

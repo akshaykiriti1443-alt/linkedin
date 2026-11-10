@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ReelVault Members</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<header><img src="icons/48.png" alt="" width="24" height="24"><h1>ReelVault Members</h1></header>
+
+<section id="pair" hidden>
+  <label for="link">Paste the link from ReelVault</label>
+  <input id="link" type="text" autocomplete="off" spellcheck="false" placeholder="https://.../pair#XXXX-XXXX">
+  <button id="next" class="primary">Next</button>
+  <p class="hint">In ReelVault, open Settings &gt; Chrome extension and click <b>Connect the extension</b>.</p>
+</section>
+
+<section id="confirm" hidden>
+  <p>Connect to</p>
+  <p class="host" id="confirm-host"></p>
+  <div class="row"><button id="connect" class="primary">Connect</button><button id="cancel">Cancel</button></div>
+</section>
+
+<section id="connected" hidden>
+  <p id="hello-line"></p>
+  <p id="ig-line"></p>
+  <p><a id="second" href="#" target="_blank" rel="noopener">Use a second Instagram account instead (how?)</a></p>
+</section>
+
+<section id="status" hidden>
+  <p class="small">Connected to <b id="s-host"></b></p>
+  <p id="s-ig"></p>
+  <p id="s-budget" class="small"></p>
+  <p id="s-job"></p>
+  <p id="s-cooldown" class="warn" hidden></p>
+  <p id="s-action" class="warn" hidden></p>
+  <p id="s-update" class="warn" hidden></p>
+  <p class="keep">Keep Chrome open. ReelVault reads in a pinned Instagram tab; you can keep using Chrome.</p>
+  <button id="disconnect">Disconnect</button>
+</section>
+
+<p id="error" class="error" role="alert" hidden></p>
+<script type="module" src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+{
+ "user": {
+  "pk": 61000777,
+  "pk_id": "61000777",
+  "id": "61000777",
+  "username": "member.reader",
+  "full_name": "Member Reader",
+  "is_private": false,
+  "is_verified": false,
+  "profile_pic_id": "3000000000061000777_61000777",
+  "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/61000777_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+  "fbid_v2": 17841400061000777,
+  "strong_id__": "61000777",
+  "has_anonymous_profile_picture": true,
+  "is_unpublished": false,
+  "is_favorite": false,
+  "friendship_status": {
+   "following": false,
+   "is_bestie": false,
+   "is_feed_favorite": false,
+   "is_restricted": false
+  },
+  "biography": "",
+  "external_url": "",
+  "email": "reader@example.com",
+  "phone_number": "",
+  "gender": 3,
+  "birthday": null,
+  "is_business": false,
+  "show_conversion_edit_entry": false,
+  "allowed_commenter_type": "any",
+  "reel_auto_archive": "on",
+  "trusted_username": "member.reader",
+  "trust_days": 0
+ },
+ "status": "ok"
+}

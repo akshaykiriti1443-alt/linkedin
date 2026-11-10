@@ -1,0 +1,60 @@
+{
+ "users": [
+  {
+   "pk": 55501234,
+   "pk_id": "55501234",
+   "id": "55501234",
+   "username": "partner.studio",
+   "full_name": "Partner Studio",
+   "is_private": false,
+   "is_verified": true,
+   "profile_pic_id": "3000000000055501234_55501234",
+   "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/55501234_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+   "fbid_v2": 17841400055501234,
+   "strong_id__": "55501234",
+   "has_anonymous_profile_picture": false,
+   "is_unpublished": false,
+   "is_favorite": false,
+   "friendship_status": {
+    "following": false,
+    "is_bestie": false,
+    "is_feed_favorite": false,
+    "is_restricted": false
+   },
+   "social_context": "Similar account",
+   "chaining_info": {
+    "sources": "[33]"
+   },
+   "profile_chaining_secondary_label": "Suggested for you"
+  },
+  {
+   "pk": 987654321,
+   "pk_id": "987654321",
+   "id": "987654321",
+   "username": "other.creator",
+   "full_name": "Someone Else",
+   "is_private": false,
+   "is_verified": true,
+   "profile_pic_id": "3000000000987654321_987654321",
+   "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/987654321_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+   "fbid_v2": 17841400987654321,
+   "strong_id__": "987654321",
+   "has_anonymous_profile_picture": false,
+   "is_unpublished": false,
+   "is_favorite": false,
+   "friendship_status": {
+    "following": false,
+    "is_bestie": false,
+    "is_feed_favorite": false,
+    "is_restricted": false
+   },
+   "social_context": "Similar account",
+   "chaining_info": {
+    "sources": "[33]"
+   },
+   "profile_chaining_secondary_label": "Suggested for you"
+  }
+ ],
+ "is_backup": false,
+ "status": "ok"
+}

@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "ReelVault Members Reader",
+  "version": "2.0.0",
+  "description": "Reads public reels of the accounts you choose, using your own Instagram in this browser. Your Instagram login never leaves this browser.",
+  "permissions": ["scripting", "storage", "alarms", "declarativeNetRequestWithHostAccess"],
+  "host_permissions": ["https://www.instagram.com/*", "https://*.cdninstagram.com/*", "https://*.fbcdn.net/*"],
+  "optional_host_permissions": ["https://www.skool.com/*", "https://www.linkedin.com/*"],
+  "background": {"service_worker": "sw.js", "type": "module"},
+  "action": {"default_title": "ReelVault Members", "default_popup": "popup.html"},
+  "icons": {"16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png"},
+  "minimum_chrome_version": "120"
+}

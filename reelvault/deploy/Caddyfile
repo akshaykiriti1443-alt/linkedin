@@ -1,0 +1,29 @@
+# Caddy in front of ReelVault (DESIGN-SAAS.md 12.5). No edits needed: the domain comes from RV_DOMAIN in .env.
+# Caddy gets and renews the HTTPS certificate by itself. Your domain's A record must point at this server.
+{$RV_DOMAIN} {
+	# Members' browsers upload videos up to 50 MB; leave room.
+	request_body {
+		max_size 100MB
+	}
+
+	# Compress pages and JSON, but never the Claude connector stream (/mcp).
+	@compress not path /mcp /mcp/*
+	encode @compress zstd gzip
+
+	reverse_proxy app:8000 {
+		# Stream MCP responses at once (no buffering).
+		flush_interval -1
+		transport http {
+			read_timeout 300s
+			write_timeout 300s
+		}
+	}
+
+	# JSON access log. Caddy already hides Cookie and Authorization; also hide the Zapier hook secret.
+	log {
+		output stdout
+		format filter {
+			request>headers>X-Hook-Secret delete
+		}
+	}
+}

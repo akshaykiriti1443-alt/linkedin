@@ -1,0 +1,76 @@
+# ReelVault Members on one VPS (DESIGN-SAAS.md 12.5). Run from this folder:  docker compose up -d
+# setup.sh writes .env next to this file (mode 600) and then runs this for you.
+#
+#   app    one container, two processes: web (uvicorn) + worker (jobs), restarted by reelvault-start
+#   caddy  HTTPS for your domain (automatic Let's Encrypt certificate), forwards to app:8000
+#   postgres  optional: docker compose --profile postgres up -d  (then set DATABASE_URL in .env)
+#
+# Run web and worker as two containers instead:  COMPOSE_FILE=docker-compose.yml:docker-compose.split.yml in .env
+name: reelvault
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: reelvault-members:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+      PORT: "8000"
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-127.0.0.1,172.16.0.0/12}
+    volumes:
+      - rvdata:/data
+    ports:
+      - "127.0.0.1:8000:8000"     # only this server (and Caddy) can reach the app directly
+    stop_grace_period: 30s
+    networks: [rvnet]
+    logging:
+      driver: json-file
+      options: {max-size: "20m", max-file: "5"}
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    profiles: ["https"]
+    depends_on: [app]
+    environment:
+      RV_DOMAIN: ${RV_DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [rvnet]
+    logging:
+      driver: json-file
+      options: {max-size: "20m", max-file: "5"}
+
+  postgres:
+    image: postgres:17.6-alpine
+    restart: unless-stopped
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_DB: reelvault
+      POSTGRES_USER: reelvault
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [rvnet]
+
+networks:
+  rvnet:
+    # A fixed private range so TRUSTED_PROXIES (172.16.0.0/12) always covers Caddy's address.
+    ipam:
+      config:
+        - subnet: 172.29.57.0/24
+
+volumes:
+  rvdata:
+  caddy_data:
+  caddy_config:
+  pgdata:

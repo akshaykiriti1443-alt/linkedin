@@ -1,0 +1,115 @@
+{
+ "data": {
+  "user": {
+   "ai_agent_type": null,
+   "biography": "Helping agency owners get clients with ads 📈\nFree audit 👇",
+   "bio_links": [
+    {
+     "title": "Free audit",
+     "lynx_url": "https://l.instagram.com/?u=https%3A%2F%2Fexample.com%2Faudit",
+     "url": "https://example.com/audit",
+     "link_type": "external"
+    }
+   ],
+   "fb_profile_biolink": null,
+   "biography_with_entities": {
+    "raw_text": "Helping agency owners get clients with ads",
+    "entities": []
+   },
+   "blocked_by_viewer": false,
+   "restricted_by_viewer": null,
+   "country_block": false,
+   "eimu_id": "110000000000000",
+   "external_url": "https://example.com/audit",
+   "external_url_linkshimmed": "https://l.instagram.com/?u=https%3A%2F%2Fexample.com%2Faudit",
+   "edge_followed_by": {
+    "count": 182000
+   },
+   "fbid": "17841400025025320",
+   "followed_by_viewer": false,
+   "edge_follow": {
+    "count": 412
+   },
+   "follows_viewer": false,
+   "full_name": "Demo Creator",
+   "group_metadata": null,
+   "has_ar_effects": false,
+   "has_clips": true,
+   "has_guides": false,
+   "has_channel": false,
+   "has_blocked_viewer": false,
+   "highlight_reel_count": 6,
+   "has_requested_viewer": false,
+   "hide_like_and_view_counts": false,
+   "id": "25025320",
+   "is_business_account": true,
+   "is_professional_account": true,
+   "is_supervision_enabled": false,
+   "is_guardian_of_viewer": false,
+   "is_supervised_by_viewer": false,
+   "is_supervised_user": false,
+   "is_embeds_disabled": false,
+   "is_joined_recently": false,
+   "guardian_id": null,
+   "business_address_json": null,
+   "business_contact_method": "UNKNOWN",
+   "business_email": null,
+   "business_phone_number": null,
+   "business_category_name": "Business & Utility Services",
+   "overall_category_name": null,
+   "category_enum": "ENTREPRENEUR",
+   "category_name": "Entrepreneur",
+   "is_private": false,
+   "is_verified": true,
+   "is_verified_by_mv4b": false,
+   "is_regulated_c18": false,
+   "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+   "profile_pic_url_hd": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s320x320&oe=6AF30740",
+   "requested_by_viewer": false,
+   "should_show_category": true,
+   "should_show_public_contacts": false,
+   "show_account_transparency_details": true,
+   "transparency_label": null,
+   "transparency_product": null,
+   "username": "scaleit.demo",
+   "pronouns": [],
+   "edge_mutual_followed_by": {
+    "count": 0,
+    "edges": []
+   },
+   "edge_felix_video_timeline": {
+    "count": 0,
+    "page_info": {
+     "has_next_page": false,
+     "end_cursor": null
+    },
+    "edges": []
+   },
+   "edge_owner_to_timeline_media": {
+    "count": 640,
+    "page_info": {
+     "has_next_page": true,
+     "end_cursor": "QVFDemo"
+    },
+    "edges": []
+   },
+   "edge_saved_media": {
+    "count": 0,
+    "page_info": {
+     "has_next_page": false,
+     "end_cursor": null
+    },
+    "edges": []
+   },
+   "edge_media_collections": {
+    "count": 0,
+    "page_info": {
+     "has_next_page": false,
+     "end_cursor": null
+    },
+    "edges": []
+   }
+  }
+ },
+ "status": "ok"
+}

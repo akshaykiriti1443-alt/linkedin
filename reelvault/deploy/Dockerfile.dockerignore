@@ -1,0 +1,17 @@
+# Used by `docker build -f deploy/Dockerfile .` (BuildKit reads <Dockerfile>.dockerignore).
+# Allowlist: only what the image needs. Everything else (your .env, vault/, work/, profile.md, tests) stays out.
+*
+!pyproject.toml
+!reelvault/
+!migrations/
+!extension-members/
+!deploy/requirements.lock
+!deploy/fetch_models.sh
+!deploy/build_extension.py
+**/__pycache__
+**/*.pyc
+**/.env
+**/.env.*
+**/*.sqlite*
+reelvault/**/node_modules
+migrations/__pycache__

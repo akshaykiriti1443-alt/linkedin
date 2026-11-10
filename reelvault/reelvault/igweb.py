@@ -148,10 +148,43 @@ def cover_url(m: dict) -> str | None:
     return cands[0].get("url") if cands else None
 
 
+def _views_of(m: dict) -> tuple[int | None, str | None]:
+    """views = play_count ?? ig_play_count ?? view_count (DESIGN-SAAS.md 5.8), and which field it came from."""
+    for field in ("play_count", "ig_play_count", "view_count"):
+        v = m.get(field)
+        if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+            return v, field
+    return None, None
+
+
+def audio_of(m: dict) -> dict:
+    """Sound metadata from clips_metadata: type original/licensed/unknown, title, artist, canonical id, reused."""
+    cm = m.get("clips_metadata") or {}
+    mi = (cm.get("music_info") or {}).get("music_asset_info") or {}
+    osi = cm.get("original_sound_info") or {}
+    at = (cm.get("audio_type") or "").lower()
+    typ = "licensed" if at.startswith("licensed") else ("original" if at.startswith("original") else "unknown")
+    owner_pk = str((m.get("user") or m.get("owner") or {}).get("pk") or "")
+    artist_pk = str((osi.get("ig_artist") or {}).get("pk") or "")
+    return {
+        "type": typ,
+        "title": mi.get("title") if typ == "licensed" else (osi.get("original_audio_title") or mi.get("title")),
+        "artist": mi.get("display_artist"),
+        "music_canonical_id": (str(cm["music_canonical_id"]) if cm.get("music_canonical_id") else None),
+        "is_reused": bool(typ == "original" and osi and artist_pk and owner_pk and artist_pk != owner_pk),
+    }
+
+
 def meta_of(m: dict) -> dict:
     code = m.get("code") or id_to_shortcode(int(str(m.get("pk") or m.get("id", "0")).split("_")[0]))
     cap = m.get("caption") or {}
     user = m.get("user") or {}
+    hidden = bool(m.get("like_and_view_counts_disabled")) or (isinstance(m.get("like_count"), int)
+                                                              and m["like_count"] < 0)
+    views, views_field = _views_of(m)
+    owner_pk = str(user.get("pk") or "")
+    pinned_ids = {str(x) for x in (m.get("clips_tab_pinned_user_ids") or []) + (m.get("timeline_pinned_user_ids") or [])}
+    shares = m.get("reshare_count") if m.get("reshare_count") is not None else m.get("share_count")
     return {
         "shortcode": code,
         "url": f"{BASE}/reel/{code}/",
@@ -162,6 +195,14 @@ def meta_of(m: dict) -> dict:
         "views": m.get("play_count") or m.get("view_count") or m.get("ig_play_count"),
         "duration": m.get("video_duration"),
         "source": "instagram-web",
+        # Added for ReelVault Members (WP2); the desktop app ignores keys it does not know.
+        "comment_count": None if m.get("comments_disabled") else m.get("comment_count"),
+        "pinned": bool(owner_pk and owner_pk in pinned_ids),
+        "counts_hidden": hidden,
+        "views_field": None if hidden else views_field,
+        "audio": audio_of(m),
+        "shares": shares,
+        "reposts": m.get("media_repost_count"),
     }
 
 

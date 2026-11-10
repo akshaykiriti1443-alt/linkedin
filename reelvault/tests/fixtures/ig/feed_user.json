@@ -1,0 +1,3186 @@
+{
+ "items": [
+  {
+   "taken_at": 1787226085,
+   "pk": 3967862446470725682,
+   "id": "3967862446470725682_25025320",
+   "fbid": 18000000000000050,
+   "device_timestamp": 1787226085000050,
+   "caption_is_edited": false,
+   "strong_id__": "3967862446470725682_25025320",
+   "deleted_reason": 0,
+   "has_shared_to_fb": 0,
+   "has_delayed_metadata": false,
+   "mezql_token": "",
+   "share_count_disabled": false,
+   "should_request_ads": false,
+   "is_reshare_of_text_post_app_media_in_ig": false,
+   "integrity_review_decision": "approved",
+   "client_cache_key": "Mzk2Nzg2MjQ0NjQ3MDcyNTY4Mg==.3",
+   "is_visual_reply_commenter_notice_enabled": true,
+   "like_and_view_counts_disabled": false,
+   "is_post_live_clips_media": false,
+   "comment_threading_enabled": true,
+   "is_unified_video": false,
+   "commerciality_status": "not_commercial",
+   "exclude_from_ranking": false,
+   "is_quiet_post": false,
+   "code": "DcQrd9XgAAy",
+   "media_type": 2,
+   "product_type": "clips",
+   "pk_id": "3967862446470725682",
+   "filter_type": 0,
+   "is_paid_partnership": false,
+   "user": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "owner": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "can_viewer_reshare": true,
+   "can_viewer_save": true,
+   "caption": {
+    "pk": "18000000000000350",
+    "user_id": 25025320,
+    "type": 1,
+    "text": "Why your Meta ads stop working after 2 weeks (and the fix)",
+    "did_report_as_spam": false,
+    "created_at": 1787226085,
+    "created_at_utc": 1787226085,
+    "content_type": "comment",
+    "status": "Active",
+    "bit_flags": 0,
+    "share_enabled": false,
+    "is_ranked_comment": false,
+    "is_covered": false,
+    "private_reply_status": 0,
+    "media_id": 3967862446470725682,
+    "user": {
+     "pk": 25025320,
+     "pk_id": "25025320",
+     "id": "25025320",
+     "username": "scaleit.demo",
+     "full_name": "Demo Creator",
+     "is_private": false,
+     "is_verified": true,
+     "profile_pic_id": "3000000000025025320_25025320",
+     "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+     "fbid_v2": 17841400025025320,
+     "strong_id__": "25025320",
+     "has_anonymous_profile_picture": false,
+     "is_unpublished": false,
+     "is_favorite": false,
+     "friendship_status": {
+      "following": false,
+      "is_bestie": false,
+      "is_feed_favorite": false,
+      "is_restricted": false
+     }
+    }
+   },
+   "comment_count": 79,
+   "like_count": 7383,
+   "video_duration": 39.7,
+   "has_audio": true,
+   "number_of_qualities": 3,
+   "video_versions": [
+    {
+     "type": 101,
+     "width": 720,
+     "height": 1280,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3967862446470725682_720.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD86688&oe=6AF06440",
+     "id": "3967862446470725682101"
+    },
+    {
+     "type": 102,
+     "width": 480,
+     "height": 854,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3967862446470725682_480.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD86688&oe=6AF06440",
+     "id": "3967862446470725682102"
+    },
+    {
+     "type": 103,
+     "width": 360,
+     "height": 640,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3967862446470725682_360.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD86688&oe=6AF06440",
+     "id": "3967862446470725682103"
+    }
+   ],
+   "image_versions2": {
+    "candidates": [
+     {
+      "width": 1080,
+      "height": 1920,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3967862446470725682_1080.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC54864&oe=6AF06440"
+     },
+     {
+      "width": 640,
+      "height": 1136,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3967862446470725682_640.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC54864&oe=6AF06440"
+     },
+     {
+      "width": 480,
+      "height": 853,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3967862446470725682_480.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC54864&oe=6AF06440"
+     },
+     {
+      "width": 320,
+      "height": 568,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3967862446470725682_320.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC54864&oe=6AF06440"
+     }
+    ],
+    "scrubber_spritesheet_info_candidates": {
+     "default": {
+      "video_length": 30.0,
+      "thumbnail_width": 100
+     }
+    }
+   },
+   "original_width": 720,
+   "original_height": 1280,
+   "clips_metadata": {
+    "audio_type": "original_sounds",
+    "music_canonical_id": "18982805808840710",
+    "music_info": null,
+    "original_sound_info": {
+     "audio_asset_id": 995701452210177,
+     "attributed_custom_audio_asset_id": null,
+     "music_canonical_id": null,
+     "original_audio_title": "Original audio",
+     "original_audio_subtype": "default",
+     "duration_in_ms": 39700,
+     "ig_artist": {
+      "pk": 25025320,
+      "pk_id": "25025320",
+      "id": "25025320",
+      "username": "scaleit.demo",
+      "full_name": "Demo Creator",
+      "is_verified": true,
+      "is_private": false,
+      "strong_id__": "25025320"
+     },
+     "progressive_download_url": "https://scontent.cdninstagram.com/o1/v/t2/f2/m69/3967862446470725682_audio.mp4",
+     "dash_manifest": "<MPD/>",
+     "should_mute_audio": false,
+     "hide_remixing": false,
+     "is_explicit": false,
+     "is_audio_automatically_attributed": false,
+     "original_media_id": 3967862446470725682
+    },
+    "clips_creation_entry_point": "clips",
+    "featured_label": null,
+    "is_public_chat_welcome_video": false,
+    "professional_clips_upsell_type": 0,
+    "show_tips": null,
+    "achievements_info": {
+     "num_earned_achievements": null,
+     "show_achievements": false
+    },
+    "additional_audio_info": {
+     "additional_audio_username": null,
+     "audio_reattribution_info": {
+      "should_allow_restore": false
+     }
+    },
+    "audio_ranking_info": {
+     "best_audio_cluster_id": "1000050"
+    },
+    "branded_content_tag_info": {
+     "can_add_tag": true
+    },
+    "content_appreciation_info": {
+     "enabled": false
+    },
+    "is_shared_to_fb": false,
+    "mashup_info": {
+     "mashups_allowed": true,
+     "can_toggle_mashups_allowed": true,
+     "has_been_mashed_up": false,
+     "formatted_mashups_count": null,
+     "original_media": null,
+     "non_privacy_filtered_mashups_media_count": 0
+    },
+    "reusable_text_info": null,
+    "template_info": null,
+    "viewer_interaction_settings": null
+   },
+   "clips_tab_pinned_user_ids": [],
+   "timeline_pinned_user_ids": [],
+   "coauthor_producers": [],
+   "coauthor_producer_can_see_organic_insights": false,
+   "invited_coauthor_producers": [],
+   "inventory_source": "clips_profile",
+   "is_dash_eligible": 1,
+   "video_codec": "avc1.64001F",
+   "has_more_comments": true,
+   "max_num_visible_preview_comments": 2,
+   "photo_of_you": false,
+   "usertags": {
+    "in": []
+   },
+   "is_organic_product_tagging_eligible": false,
+   "music_metadata": null,
+   "sharing_friction_info": {
+    "should_have_sharing_friction": false,
+    "bloks_app_url": null,
+    "sharing_friction_payload": null
+   },
+   "play_count": 229773,
+   "ig_play_count": 222879
+  },
+  {
+   "taken_at": 1790078400,
+   "pk": 3991789398898246233,
+   "id": "3991789398898246233_25025320",
+   "fbid": 18000000000000601,
+   "device_timestamp": 1790078400000601,
+   "caption_is_edited": false,
+   "strong_id__": "3991789398898246233_25025320",
+   "deleted_reason": 0,
+   "has_shared_to_fb": 0,
+   "has_delayed_metadata": false,
+   "mezql_token": "",
+   "share_count_disabled": false,
+   "should_request_ads": false,
+   "is_reshare_of_text_post_app_media_in_ig": false,
+   "integrity_review_decision": "approved",
+   "client_cache_key": "Mzk5MTc4OTM5ODg5ODI0NjIzMw==.3",
+   "is_visual_reply_commenter_notice_enabled": true,
+   "like_and_view_counts_disabled": false,
+   "is_post_live_clips_media": false,
+   "comment_threading_enabled": true,
+   "is_unified_video": false,
+   "commerciality_status": "not_commercial",
+   "exclude_from_ranking": false,
+   "is_quiet_post": false,
+   "code": "Ddlr08TgAJZ",
+   "media_type": 1,
+   "product_type": "feed",
+   "pk_id": "3991789398898246233",
+   "filter_type": 0,
+   "is_paid_partnership": false,
+   "user": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "owner": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "can_viewer_reshare": true,
+   "can_viewer_save": true,
+   "caption": {
+    "pk": "18000000000004207",
+    "user_id": 25025320,
+    "type": 1,
+    "text": "3 hooks that doubled our leads this month",
+    "did_report_as_spam": false,
+    "created_at": 1790078400,
+    "created_at_utc": 1790078400,
+    "content_type": "comment",
+    "status": "Active",
+    "bit_flags": 0,
+    "share_enabled": false,
+    "is_ranked_comment": false,
+    "is_covered": false,
+    "private_reply_status": 0,
+    "media_id": 3991789398898246233,
+    "user": {
+     "pk": 25025320,
+     "pk_id": "25025320",
+     "id": "25025320",
+     "username": "scaleit.demo",
+     "full_name": "Demo Creator",
+     "is_private": false,
+     "is_verified": true,
+     "profile_pic_id": "3000000000025025320_25025320",
+     "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+     "fbid_v2": 17841400025025320,
+     "strong_id__": "25025320",
+     "has_anonymous_profile_picture": false,
+     "is_unpublished": false,
+     "is_favorite": false,
+     "friendship_status": {
+      "following": false,
+      "is_bestie": false,
+      "is_feed_favorite": false,
+      "is_restricted": false
+     }
+    }
+   },
+   "comment_count": 40,
+   "like_count": 3000,
+   "has_audio": true,
+   "number_of_qualities": 3,
+   "image_versions2": {
+    "candidates": [
+     {
+      "width": 1080,
+      "height": 1920,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3991789398898246233_1080.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC90413&oe=6AF06440"
+     },
+     {
+      "width": 640,
+      "height": 1136,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3991789398898246233_640.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC90413&oe=6AF06440"
+     },
+     {
+      "width": 480,
+      "height": 853,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3991789398898246233_480.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC90413&oe=6AF06440"
+     },
+     {
+      "width": 320,
+      "height": 568,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3991789398898246233_320.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC90413&oe=6AF06440"
+     }
+    ],
+    "scrubber_spritesheet_info_candidates": {
+     "default": {
+      "video_length": 30.0,
+      "thumbnail_width": 100
+     }
+    }
+   },
+   "original_width": 720,
+   "original_height": 1280,
+   "clips_metadata": {
+    "audio_type": "original_sounds",
+    "music_canonical_id": "18973674862280779",
+    "music_info": null,
+    "original_sound_info": {
+     "audio_asset_id": 743418715570194,
+     "attributed_custom_audio_asset_id": null,
+     "music_canonical_id": null,
+     "original_audio_title": "Original audio",
+     "original_audio_subtype": "default",
+     "duration_in_ms": 31400,
+     "ig_artist": {
+      "pk": 25025320,
+      "pk_id": "25025320",
+      "id": "25025320",
+      "username": "scaleit.demo",
+      "full_name": "Demo Creator",
+      "is_verified": true,
+      "is_private": false,
+      "strong_id__": "25025320"
+     },
+     "progressive_download_url": "https://scontent.cdninstagram.com/o1/v/t2/f2/m69/3991789398898246233_audio.mp4",
+     "dash_manifest": "<MPD/>",
+     "should_mute_audio": false,
+     "hide_remixing": false,
+     "is_explicit": false,
+     "is_audio_automatically_attributed": false,
+     "original_media_id": 3991789398898246233
+    },
+    "clips_creation_entry_point": "clips",
+    "featured_label": null,
+    "is_public_chat_welcome_video": false,
+    "professional_clips_upsell_type": 0,
+    "show_tips": null,
+    "achievements_info": {
+     "num_earned_achievements": null,
+     "show_achievements": false
+    },
+    "additional_audio_info": {
+     "additional_audio_username": null,
+     "audio_reattribution_info": {
+      "should_allow_restore": false
+     }
+    },
+    "audio_ranking_info": {
+     "best_audio_cluster_id": "1000601"
+    },
+    "branded_content_tag_info": {
+     "can_add_tag": true
+    },
+    "content_appreciation_info": {
+     "enabled": false
+    },
+    "is_shared_to_fb": false,
+    "mashup_info": {
+     "mashups_allowed": true,
+     "can_toggle_mashups_allowed": true,
+     "has_been_mashed_up": false,
+     "formatted_mashups_count": null,
+     "original_media": null,
+     "non_privacy_filtered_mashups_media_count": 0
+    },
+    "reusable_text_info": null,
+    "template_info": null,
+    "viewer_interaction_settings": null
+   },
+   "clips_tab_pinned_user_ids": [],
+   "timeline_pinned_user_ids": [],
+   "coauthor_producers": [],
+   "coauthor_producer_can_see_organic_insights": false,
+   "invited_coauthor_producers": [],
+   "inventory_source": "clips_profile",
+   "is_dash_eligible": 1,
+   "video_codec": "avc1.64001F",
+   "has_more_comments": true,
+   "max_num_visible_preview_comments": 2,
+   "photo_of_you": false,
+   "usertags": {
+    "in": []
+   },
+   "is_organic_product_tagging_eligible": false,
+   "music_metadata": null,
+   "sharing_friction_info": {
+    "should_have_sharing_friction": false,
+    "bloks_app_url": null,
+    "sharing_friction_payload": null
+   }
+  },
+  {
+   "taken_at": 1787123865,
+   "pk": 3967004962960965683,
+   "id": "3967004962960965683_25025320",
+   "fbid": 18000000000000051,
+   "device_timestamp": 1787123865000051,
+   "caption_is_edited": false,
+   "strong_id__": "3967004962960965683_25025320",
+   "deleted_reason": 0,
+   "has_shared_to_fb": 0,
+   "has_delayed_metadata": false,
+   "mezql_token": "",
+   "share_count_disabled": false,
+   "should_request_ads": false,
+   "is_reshare_of_text_post_app_media_in_ig": false,
+   "integrity_review_decision": "approved",
+   "client_cache_key": "Mzk2NzAwNDk2Mjk2MDk2NTY4Mw==.3",
+   "is_visual_reply_commenter_notice_enabled": true,
+   "like_and_view_counts_disabled": false,
+   "is_post_live_clips_media": false,
+   "comment_threading_enabled": true,
+   "is_unified_video": false,
+   "commerciality_status": "not_commercial",
+   "exclude_from_ranking": false,
+   "is_quiet_post": false,
+   "code": "DcNof7ngAAz",
+   "media_type": 2,
+   "product_type": "clips",
+   "pk_id": "3967004962960965683",
+   "filter_type": 0,
+   "is_paid_partnership": false,
+   "user": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "owner": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "can_viewer_reshare": true,
+   "can_viewer_save": true,
+   "caption": {
+    "pk": "18000000000000357",
+    "user_id": 25025320,
+    "type": 1,
+    "text": "POV: your client asks for 'just one more revision' 😅",
+    "did_report_as_spam": false,
+    "created_at": 1787123865,
+    "created_at_utc": 1787123865,
+    "content_type": "comment",
+    "status": "Active",
+    "bit_flags": 0,
+    "share_enabled": false,
+    "is_ranked_comment": false,
+    "is_covered": false,
+    "private_reply_status": 0,
+    "media_id": 3967004962960965683,
+    "user": {
+     "pk": 25025320,
+     "pk_id": "25025320",
+     "id": "25025320",
+     "username": "scaleit.demo",
+     "full_name": "Demo Creator",
+     "is_private": false,
+     "is_verified": true,
+     "profile_pic_id": "3000000000025025320_25025320",
+     "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+     "fbid_v2": 17841400025025320,
+     "strong_id__": "25025320",
+     "has_anonymous_profile_picture": false,
+     "is_unpublished": false,
+     "is_favorite": false,
+     "friendship_status": {
+      "following": false,
+      "is_bestie": false,
+      "is_feed_favorite": false,
+      "is_restricted": false
+     }
+    }
+   },
+   "comment_count": 302,
+   "like_count": 7200,
+   "video_duration": 22.9,
+   "has_audio": true,
+   "number_of_qualities": 3,
+   "video_versions": [
+    {
+     "type": 101,
+     "width": 720,
+     "height": 1280,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3967004962960965683_720.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD64571&oe=6AF06440",
+     "id": "3967004962960965683101"
+    },
+    {
+     "type": 102,
+     "width": 480,
+     "height": 854,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3967004962960965683_480.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD64571&oe=6AF06440",
+     "id": "3967004962960965683102"
+    },
+    {
+     "type": 103,
+     "width": 360,
+     "height": 640,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3967004962960965683_360.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD64571&oe=6AF06440",
+     "id": "3967004962960965683103"
+    }
+   ],
+   "image_versions2": {
+    "candidates": [
+     {
+      "width": 1080,
+      "height": 1920,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3967004962960965683_1080.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC32102&oe=6AF06440"
+     },
+     {
+      "width": 640,
+      "height": 1136,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3967004962960965683_640.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC32102&oe=6AF06440"
+     },
+     {
+      "width": 480,
+      "height": 853,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3967004962960965683_480.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC32102&oe=6AF06440"
+     },
+     {
+      "width": 320,
+      "height": 568,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3967004962960965683_320.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC32102&oe=6AF06440"
+     }
+    ],
+    "scrubber_spritesheet_info_candidates": {
+     "default": {
+      "video_length": 30.0,
+      "thumbnail_width": 100
+     }
+    }
+   },
+   "original_width": 720,
+   "original_height": 1280,
+   "clips_metadata": {
+    "audio_type": "original_sounds",
+    "music_canonical_id": "18875620370120710",
+    "music_info": null,
+    "original_sound_info": {
+     "audio_asset_id": 968905092530177,
+     "attributed_custom_audio_asset_id": null,
+     "music_canonical_id": null,
+     "original_audio_title": "Original audio",
+     "original_audio_subtype": "default",
+     "duration_in_ms": 22900,
+     "ig_artist": {
+      "pk": 25025320,
+      "pk_id": "25025320",
+      "id": "25025320",
+      "username": "scaleit.demo",
+      "full_name": "Demo Creator",
+      "is_verified": true,
+      "is_private": false,
+      "strong_id__": "25025320"
+     },
+     "progressive_download_url": "https://scontent.cdninstagram.com/o1/v/t2/f2/m69/3967004962960965683_audio.mp4",
+     "dash_manifest": "<MPD/>",
+     "should_mute_audio": false,
+     "hide_remixing": false,
+     "is_explicit": false,
+     "is_audio_automatically_attributed": false,
+     "original_media_id": 3967004962960965683
+    },
+    "clips_creation_entry_point": "clips",
+    "featured_label": null,
+    "is_public_chat_welcome_video": false,
+    "professional_clips_upsell_type": 0,
+    "show_tips": null,
+    "achievements_info": {
+     "num_earned_achievements": null,
+     "show_achievements": false
+    },
+    "additional_audio_info": {
+     "additional_audio_username": null,
+     "audio_reattribution_info": {
+      "should_allow_restore": false
+     }
+    },
+    "audio_ranking_info": {
+     "best_audio_cluster_id": "1000051"
+    },
+    "branded_content_tag_info": {
+     "can_add_tag": true
+    },
+    "content_appreciation_info": {
+     "enabled": false
+    },
+    "is_shared_to_fb": false,
+    "mashup_info": {
+     "mashups_allowed": true,
+     "can_toggle_mashups_allowed": true,
+     "has_been_mashed_up": false,
+     "formatted_mashups_count": null,
+     "original_media": null,
+     "non_privacy_filtered_mashups_media_count": 0
+    },
+    "reusable_text_info": null,
+    "template_info": null,
+    "viewer_interaction_settings": null
+   },
+   "clips_tab_pinned_user_ids": [],
+   "timeline_pinned_user_ids": [],
+   "coauthor_producers": [],
+   "coauthor_producer_can_see_organic_insights": false,
+   "invited_coauthor_producers": [],
+   "inventory_source": "clips_profile",
+   "is_dash_eligible": 1,
+   "video_codec": "avc1.64001F",
+   "has_more_comments": true,
+   "max_num_visible_preview_comments": 2,
+   "photo_of_you": false,
+   "usertags": {
+    "in": []
+   },
+   "is_organic_product_tagging_eligible": false,
+   "music_metadata": null,
+   "sharing_friction_info": {
+    "should_have_sharing_friction": false,
+    "bloks_app_url": null,
+    "sharing_friction_payload": null
+   },
+   "play_count": 397709,
+   "ig_play_count": 385777
+  },
+  {
+   "taken_at": 1789992000,
+   "pk": 3991064623167046234,
+   "id": "3991064623167046234_25025320",
+   "fbid": 18000000000000602,
+   "device_timestamp": 1789992000000602,
+   "caption_is_edited": false,
+   "strong_id__": "3991064623167046234_25025320",
+   "deleted_reason": 0,
+   "has_shared_to_fb": 0,
+   "has_delayed_metadata": false,
+   "mezql_token": "",
+   "share_count_disabled": false,
+   "should_request_ads": false,
+   "is_reshare_of_text_post_app_media_in_ig": false,
+   "integrity_review_decision": "approved",
+   "client_cache_key": "Mzk5MTA2NDYyMzE2NzA0NjIzNA==.3",
+   "is_visual_reply_commenter_notice_enabled": true,
+   "like_and_view_counts_disabled": false,
+   "is_post_live_clips_media": false,
+   "comment_threading_enabled": true,
+   "is_unified_video": false,
+   "commerciality_status": "not_commercial",
+   "exclude_from_ranking": false,
+   "is_quiet_post": false,
+   "code": "DdjHCETgAJa",
+   "media_type": 8,
+   "product_type": "carousel_container",
+   "pk_id": "3991064623167046234",
+   "filter_type": 0,
+   "is_paid_partnership": false,
+   "user": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "owner": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "can_viewer_reshare": true,
+   "can_viewer_save": true,
+   "caption": {
+    "pk": "18000000000004214",
+    "user_id": 25025320,
+    "type": 1,
+    "text": "Why your Meta ads stop working after 2 weeks (and the fix)",
+    "did_report_as_spam": false,
+    "created_at": 1789992000,
+    "created_at_utc": 1789992000,
+    "content_type": "comment",
+    "status": "Active",
+    "bit_flags": 0,
+    "share_enabled": false,
+    "is_ranked_comment": false,
+    "is_covered": false,
+    "private_reply_status": 0,
+    "media_id": 3991064623167046234,
+    "user": {
+     "pk": 25025320,
+     "pk_id": "25025320",
+     "id": "25025320",
+     "username": "scaleit.demo",
+     "full_name": "Demo Creator",
+     "is_private": false,
+     "is_verified": true,
+     "profile_pic_id": "3000000000025025320_25025320",
+     "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+     "fbid_v2": 17841400025025320,
+     "strong_id__": "25025320",
+     "has_anonymous_profile_picture": false,
+     "is_unpublished": false,
+     "is_favorite": false,
+     "friendship_status": {
+      "following": false,
+      "is_bestie": false,
+      "is_feed_favorite": false,
+      "is_restricted": false
+     }
+    }
+   },
+   "comment_count": 60,
+   "like_count": 4000,
+   "video_duration": 31.4,
+   "has_audio": true,
+   "number_of_qualities": 3,
+   "image_versions2": {
+    "candidates": [
+     {
+      "width": 1080,
+      "height": 1920,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3991064623167046234_1080.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC89231&oe=6AF06440"
+     },
+     {
+      "width": 640,
+      "height": 1136,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3991064623167046234_640.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC89231&oe=6AF06440"
+     },
+     {
+      "width": 480,
+      "height": 853,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3991064623167046234_480.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC89231&oe=6AF06440"
+     },
+     {
+      "width": 320,
+      "height": 568,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3991064623167046234_320.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC89231&oe=6AF06440"
+     }
+    ],
+    "scrubber_spritesheet_info_candidates": {
+     "default": {
+      "video_length": 30.0,
+      "thumbnail_width": 100
+     }
+    }
+   },
+   "original_width": 720,
+   "original_height": 1280,
+   "clips_metadata": {
+    "audio_type": "original_sounds",
+    "music_canonical_id": "18883077895880779",
+    "music_info": null,
+    "original_sound_info": {
+     "audio_asset_id": 720769473970194,
+     "attributed_custom_audio_asset_id": null,
+     "music_canonical_id": null,
+     "original_audio_title": "Original audio",
+     "original_audio_subtype": "default",
+     "duration_in_ms": 31400,
+     "ig_artist": {
+      "pk": 25025320,
+      "pk_id": "25025320",
+      "id": "25025320",
+      "username": "scaleit.demo",
+      "full_name": "Demo Creator",
+      "is_verified": true,
+      "is_private": false,
+      "strong_id__": "25025320"
+     },
+     "progressive_download_url": "https://scontent.cdninstagram.com/o1/v/t2/f2/m69/3991064623167046234_audio.mp4",
+     "dash_manifest": "<MPD/>",
+     "should_mute_audio": false,
+     "hide_remixing": false,
+     "is_explicit": false,
+     "is_audio_automatically_attributed": false,
+     "original_media_id": 3991064623167046234
+    },
+    "clips_creation_entry_point": "clips",
+    "featured_label": null,
+    "is_public_chat_welcome_video": false,
+    "professional_clips_upsell_type": 0,
+    "show_tips": null,
+    "achievements_info": {
+     "num_earned_achievements": null,
+     "show_achievements": false
+    },
+    "additional_audio_info": {
+     "additional_audio_username": null,
+     "audio_reattribution_info": {
+      "should_allow_restore": false
+     }
+    },
+    "audio_ranking_info": {
+     "best_audio_cluster_id": "1000602"
+    },
+    "branded_content_tag_info": {
+     "can_add_tag": true
+    },
+    "content_appreciation_info": {
+     "enabled": false
+    },
+    "is_shared_to_fb": false,
+    "mashup_info": {
+     "mashups_allowed": true,
+     "can_toggle_mashups_allowed": true,
+     "has_been_mashed_up": false,
+     "formatted_mashups_count": null,
+     "original_media": null,
+     "non_privacy_filtered_mashups_media_count": 0
+    },
+    "reusable_text_info": null,
+    "template_info": null,
+    "viewer_interaction_settings": null
+   },
+   "clips_tab_pinned_user_ids": [],
+   "timeline_pinned_user_ids": [],
+   "coauthor_producers": [],
+   "coauthor_producer_can_see_organic_insights": false,
+   "invited_coauthor_producers": [],
+   "inventory_source": "clips_profile",
+   "is_dash_eligible": 1,
+   "video_codec": "avc1.64001F",
+   "has_more_comments": true,
+   "max_num_visible_preview_comments": 2,
+   "photo_of_you": false,
+   "usertags": {
+    "in": []
+   },
+   "is_organic_product_tagging_eligible": false,
+   "music_metadata": null,
+   "sharing_friction_info": {
+    "should_have_sharing_friction": false,
+    "bloks_app_url": null,
+    "sharing_friction_payload": null
+   },
+   "carousel_media": [
+    {
+     "media_type": 1,
+     "pk": 3991064623167046235,
+     "image_versions2": {
+      "candidates": [
+       {
+        "width": 1080,
+        "height": 1920,
+        "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3991064623167046235_1080.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC89232&oe=6AF06440"
+       },
+       {
+        "width": 640,
+        "height": 1136,
+        "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3991064623167046235_640.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC89232&oe=6AF06440"
+       },
+       {
+        "width": 480,
+        "height": 853,
+        "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3991064623167046235_480.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC89232&oe=6AF06440"
+       },
+       {
+        "width": 320,
+        "height": 568,
+        "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3991064623167046235_320.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC89232&oe=6AF06440"
+       }
+      ],
+      "scrubber_spritesheet_info_candidates": {
+       "default": {
+        "video_length": 30.0,
+        "thumbnail_width": 100
+       }
+      }
+     }
+    }
+   ]
+  },
+  {
+   "taken_at": 1786996556,
+   "pk": 3965937017665093684,
+   "id": "3965937017665093684_25025320",
+   "fbid": 18000000000000052,
+   "device_timestamp": 1786996556000052,
+   "caption_is_edited": false,
+   "strong_id__": "3965937017665093684_25025320",
+   "deleted_reason": 0,
+   "has_shared_to_fb": 0,
+   "has_delayed_metadata": false,
+   "mezql_token": "",
+   "share_count_disabled": false,
+   "should_request_ads": false,
+   "is_reshare_of_text_post_app_media_in_ig": false,
+   "integrity_review_decision": "approved",
+   "client_cache_key": "Mzk2NTkzNzAxNzY2NTA5MzY4NA==.3",
+   "is_visual_reply_commenter_notice_enabled": true,
+   "like_and_view_counts_disabled": false,
+   "is_post_live_clips_media": false,
+   "comment_threading_enabled": true,
+   "is_unified_video": false,
+   "commerciality_status": "not_commercial",
+   "exclude_from_ranking": false,
+   "is_quiet_post": false,
+   "code": "DcJ1rSDgAA0",
+   "media_type": 2,
+   "product_type": "clips",
+   "pk_id": "3965937017665093684",
+   "filter_type": 0,
+   "is_paid_partnership": false,
+   "user": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "owner": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "can_viewer_reshare": true,
+   "can_viewer_save": true,
+   "caption": {
+    "pk": "18000000000000364",
+    "user_id": 25025320,
+    "type": 1,
+    "text": "The $0 creative test we run before every launch",
+    "did_report_as_spam": false,
+    "created_at": 1786996556,
+    "created_at_utc": 1786996556,
+    "content_type": "comment",
+    "status": "Active",
+    "bit_flags": 0,
+    "share_enabled": false,
+    "is_ranked_comment": false,
+    "is_covered": false,
+    "private_reply_status": 0,
+    "media_id": 3965937017665093684,
+    "user": {
+     "pk": 25025320,
+     "pk_id": "25025320",
+     "id": "25025320",
+     "username": "scaleit.demo",
+     "full_name": "Demo Creator",
+     "is_private": false,
+     "is_verified": true,
+     "profile_pic_id": "3000000000025025320_25025320",
+     "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+     "fbid_v2": 17841400025025320,
+     "strong_id__": "25025320",
+     "has_anonymous_profile_picture": false,
+     "is_unpublished": false,
+     "is_favorite": false,
+     "friendship_status": {
+      "following": false,
+      "is_bestie": false,
+      "is_feed_favorite": false,
+      "is_restricted": false
+     }
+    }
+   },
+   "comment_count": 301,
+   "like_count": 9806,
+   "video_duration": 47.0,
+   "has_audio": true,
+   "number_of_qualities": 3,
+   "video_versions": [
+    {
+     "type": 101,
+     "width": 720,
+     "height": 1280,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3965937017665093684_720.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD64808&oe=6AF06440",
+     "id": "3965937017665093684101"
+    },
+    {
+     "type": 102,
+     "width": 480,
+     "height": 854,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3965937017665093684_480.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD64808&oe=6AF06440",
+     "id": "3965937017665093684102"
+    },
+    {
+     "type": 103,
+     "width": 360,
+     "height": 640,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3965937017665093684_360.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD64808&oe=6AF06440",
+     "id": "3965937017665093684103"
+    }
+   ],
+   "image_versions2": {
+    "candidates": [
+     {
+      "width": 1080,
+      "height": 1920,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3965937017665093684_1080.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC53995&oe=6AF06440"
+     },
+     {
+      "width": 640,
+      "height": 1136,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3965937017665093684_640.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC53995&oe=6AF06440"
+     },
+     {
+      "width": 480,
+      "height": 853,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3965937017665093684_480.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC53995&oe=6AF06440"
+     },
+     {
+      "width": 320,
+      "height": 568,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3965937017665093684_320.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC53995&oe=6AF06440"
+     }
+    ],
+    "scrubber_spritesheet_info_candidates": {
+     "default": {
+      "video_length": 30.0,
+      "thumbnail_width": 100
+     }
+    }
+   },
+   "original_width": 720,
+   "original_height": 1280,
+   "clips_metadata": {
+    "audio_type": "original_sounds",
+    "music_canonical_id": "18742127208136710",
+    "music_info": null,
+    "original_sound_info": {
+     "audio_asset_id": 935531802034177,
+     "attributed_custom_audio_asset_id": null,
+     "music_canonical_id": null,
+     "original_audio_title": "Original audio",
+     "original_audio_subtype": "default",
+     "duration_in_ms": 47000,
+     "ig_artist": {
+      "pk": 25025320,
+      "pk_id": "25025320",
+      "id": "25025320",
+      "username": "scaleit.demo",
+      "full_name": "Demo Creator",
+      "is_verified": true,
+      "is_private": false,
+      "strong_id__": "25025320"
+     },
+     "progressive_download_url": "https://scontent.cdninstagram.com/o1/v/t2/f2/m69/3965937017665093684_audio.mp4",
+     "dash_manifest": "<MPD/>",
+     "should_mute_audio": false,
+     "hide_remixing": false,
+     "is_explicit": false,
+     "is_audio_automatically_attributed": false,
+     "original_media_id": 3965937017665093684
+    },
+    "clips_creation_entry_point": "clips",
+    "featured_label": null,
+    "is_public_chat_welcome_video": false,
+    "professional_clips_upsell_type": 0,
+    "show_tips": null,
+    "achievements_info": {
+     "num_earned_achievements": null,
+     "show_achievements": false
+    },
+    "additional_audio_info": {
+     "additional_audio_username": null,
+     "audio_reattribution_info": {
+      "should_allow_restore": false
+     }
+    },
+    "audio_ranking_info": {
+     "best_audio_cluster_id": "1000052"
+    },
+    "branded_content_tag_info": {
+     "can_add_tag": true
+    },
+    "content_appreciation_info": {
+     "enabled": false
+    },
+    "is_shared_to_fb": false,
+    "mashup_info": {
+     "mashups_allowed": true,
+     "can_toggle_mashups_allowed": true,
+     "has_been_mashed_up": false,
+     "formatted_mashups_count": null,
+     "original_media": null,
+     "non_privacy_filtered_mashups_media_count": 0
+    },
+    "reusable_text_info": null,
+    "template_info": null,
+    "viewer_interaction_settings": null
+   },
+   "clips_tab_pinned_user_ids": [],
+   "timeline_pinned_user_ids": [],
+   "coauthor_producers": [],
+   "coauthor_producer_can_see_organic_insights": false,
+   "invited_coauthor_producers": [],
+   "inventory_source": "clips_profile",
+   "is_dash_eligible": 1,
+   "video_codec": "avc1.64001F",
+   "has_more_comments": true,
+   "max_num_visible_preview_comments": 2,
+   "photo_of_you": false,
+   "usertags": {
+    "in": []
+   },
+   "is_organic_product_tagging_eligible": false,
+   "music_metadata": null,
+   "sharing_friction_info": {
+    "should_have_sharing_friction": false,
+    "bloks_app_url": null,
+    "sharing_friction_payload": null
+   },
+   "play_count": 365910,
+   "ig_play_count": 354932,
+   "reshare_count": 784
+  },
+  {
+   "taken_at": 1786842395,
+   "pk": 3964643821467205685,
+   "id": "3964643821467205685_25025320",
+   "fbid": 18000000000000053,
+   "device_timestamp": 1786842395000053,
+   "caption_is_edited": false,
+   "strong_id__": "3964643821467205685_25025320",
+   "deleted_reason": 0,
+   "has_shared_to_fb": 0,
+   "has_delayed_metadata": false,
+   "mezql_token": "",
+   "share_count_disabled": false,
+   "should_request_ads": false,
+   "is_reshare_of_text_post_app_media_in_ig": false,
+   "integrity_review_decision": "approved",
+   "client_cache_key": "Mzk2NDY0MzgyMTQ2NzIwNTY4NQ==.3",
+   "is_visual_reply_commenter_notice_enabled": true,
+   "like_and_view_counts_disabled": false,
+   "is_post_live_clips_media": false,
+   "comment_threading_enabled": true,
+   "is_unified_video": false,
+   "commerciality_status": "not_commercial",
+   "exclude_from_ranking": false,
+   "is_quiet_post": false,
+   "code": "DcFPozPgAA1",
+   "media_type": 2,
+   "product_type": "clips",
+   "pk_id": "3964643821467205685",
+   "filter_type": 0,
+   "is_paid_partnership": false,
+   "user": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "owner": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "can_viewer_reshare": true,
+   "can_viewer_save": true,
+   "caption": {
+    "pk": "18000000000000371",
+    "user_id": 25025320,
+    "type": 1,
+    "text": "I audited 50 ad accounts. Here's what the winners had in common.",
+    "did_report_as_spam": false,
+    "created_at": 1786842395,
+    "created_at_utc": 1786842395,
+    "content_type": "comment",
+    "status": "Active",
+    "bit_flags": 0,
+    "share_enabled": false,
+    "is_ranked_comment": false,
+    "is_covered": false,
+    "private_reply_status": 0,
+    "media_id": 3964643821467205685,
+    "user": {
+     "pk": 25025320,
+     "pk_id": "25025320",
+     "id": "25025320",
+     "username": "scaleit.demo",
+     "full_name": "Demo Creator",
+     "is_private": false,
+     "is_verified": true,
+     "profile_pic_id": "3000000000025025320_25025320",
+     "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+     "fbid_v2": 17841400025025320,
+     "strong_id__": "25025320",
+     "has_anonymous_profile_picture": false,
+     "is_unpublished": false,
+     "is_favorite": false,
+     "friendship_status": {
+      "following": false,
+      "is_bestie": false,
+      "is_feed_favorite": false,
+      "is_restricted": false
+     }
+    }
+   },
+   "comment_count": 153,
+   "like_count": 4734,
+   "video_duration": 27.7,
+   "has_audio": true,
+   "number_of_qualities": 3,
+   "video_versions": [
+    {
+     "type": 101,
+     "width": 720,
+     "height": 1280,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3964643821467205685_720.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD43169&oe=6AF06440",
+     "id": "3964643821467205685101"
+    },
+    {
+     "type": 102,
+     "width": 480,
+     "height": 854,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3964643821467205685_480.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD43169&oe=6AF06440",
+     "id": "3964643821467205685102"
+    },
+    {
+     "type": 103,
+     "width": 360,
+     "height": 640,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3964643821467205685_360.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD43169&oe=6AF06440",
+     "id": "3964643821467205685103"
+    }
+   ],
+   "image_versions2": {
+    "candidates": [
+     {
+      "width": 1080,
+      "height": 1920,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3964643821467205685_1080.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC34835&oe=6AF06440"
+     },
+     {
+      "width": 640,
+      "height": 1136,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3964643821467205685_640.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC34835&oe=6AF06440"
+     },
+     {
+      "width": 480,
+      "height": 853,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3964643821467205685_480.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC34835&oe=6AF06440"
+     },
+     {
+      "width": 320,
+      "height": 568,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3964643821467205685_320.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC34835&oe=6AF06440"
+     }
+    ],
+    "scrubber_spritesheet_info_candidates": {
+     "default": {
+      "video_length": 30.0,
+      "thumbnail_width": 100
+     }
+    }
+   },
+   "original_width": 720,
+   "original_height": 1280,
+   "clips_metadata": {
+    "audio_type": "original_sounds",
+    "music_canonical_id": "18580477683400710",
+    "music_info": null,
+    "original_sound_info": {
+     "audio_asset_id": 895119420850177,
+     "attributed_custom_audio_asset_id": null,
+     "music_canonical_id": null,
+     "original_audio_title": "Original audio",
+     "original_audio_subtype": "default",
+     "duration_in_ms": 27700,
+     "ig_artist": {
+      "pk": 25025320,
+      "pk_id": "25025320",
+      "id": "25025320",
+      "username": "scaleit.demo",
+      "full_name": "Demo Creator",
+      "is_verified": true,
+      "is_private": false,
+      "strong_id__": "25025320"
+     },
+     "progressive_download_url": "https://scontent.cdninstagram.com/o1/v/t2/f2/m69/3964643821467205685_audio.mp4",
+     "dash_manifest": "<MPD/>",
+     "should_mute_audio": false,
+     "hide_remixing": false,
+     "is_explicit": false,
+     "is_audio_automatically_attributed": false,
+     "original_media_id": 3964643821467205685
+    },
+    "clips_creation_entry_point": "clips",
+    "featured_label": null,
+    "is_public_chat_welcome_video": false,
+    "professional_clips_upsell_type": 0,
+    "show_tips": null,
+    "achievements_info": {
+     "num_earned_achievements": null,
+     "show_achievements": false
+    },
+    "additional_audio_info": {
+     "additional_audio_username": null,
+     "audio_reattribution_info": {
+      "should_allow_restore": false
+     }
+    },
+    "audio_ranking_info": {
+     "best_audio_cluster_id": "1000053"
+    },
+    "branded_content_tag_info": {
+     "can_add_tag": true
+    },
+    "content_appreciation_info": {
+     "enabled": false
+    },
+    "is_shared_to_fb": false,
+    "mashup_info": {
+     "mashups_allowed": true,
+     "can_toggle_mashups_allowed": true,
+     "has_been_mashed_up": false,
+     "formatted_mashups_count": null,
+     "original_media": null,
+     "non_privacy_filtered_mashups_media_count": 0
+    },
+    "reusable_text_info": null,
+    "template_info": null,
+    "viewer_interaction_settings": null
+   },
+   "clips_tab_pinned_user_ids": [],
+   "timeline_pinned_user_ids": [],
+   "coauthor_producers": [],
+   "coauthor_producer_can_see_organic_insights": false,
+   "invited_coauthor_producers": [],
+   "inventory_source": "clips_profile",
+   "is_dash_eligible": 1,
+   "video_codec": "avc1.64001F",
+   "has_more_comments": true,
+   "max_num_visible_preview_comments": 2,
+   "photo_of_you": false,
+   "usertags": {
+    "in": []
+   },
+   "is_organic_product_tagging_eligible": false,
+   "music_metadata": null,
+   "sharing_friction_info": {
+    "should_have_sharing_friction": false,
+    "bloks_app_url": null,
+    "sharing_friction_payload": null
+   },
+   "play_count": 226921,
+   "ig_play_count": 220113
+  },
+  {
+   "taken_at": 1786732070,
+   "pk": 3963718348289605686,
+   "id": "3963718348289605686_25025320",
+   "fbid": 18000000000000054,
+   "device_timestamp": 1786732070000054,
+   "caption_is_edited": false,
+   "strong_id__": "3963718348289605686_25025320",
+   "deleted_reason": 0,
+   "has_shared_to_fb": 0,
+   "has_delayed_metadata": false,
+   "mezql_token": "",
+   "share_count_disabled": false,
+   "should_request_ads": false,
+   "is_reshare_of_text_post_app_media_in_ig": false,
+   "integrity_review_decision": "approved",
+   "client_cache_key": "Mzk2MzcxODM0ODI4OTYwNTY4Ng==.3",
+   "is_visual_reply_commenter_notice_enabled": true,
+   "like_and_view_counts_disabled": false,
+   "is_post_live_clips_media": false,
+   "comment_threading_enabled": true,
+   "is_unified_video": false,
+   "commerciality_status": "not_commercial",
+   "exclude_from_ranking": false,
+   "is_quiet_post": false,
+   "code": "DcB9NZLgAA2",
+   "media_type": 2,
+   "product_type": "clips",
+   "pk_id": "3963718348289605686",
+   "filter_type": 0,
+   "is_paid_partnership": false,
+   "user": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "owner": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "can_viewer_reshare": true,
+   "can_viewer_save": true,
+   "caption": {
+    "pk": "18000000000000378",
+    "user_id": 25025320,
+    "type": 1,
+    "text": "Your offer is the problem, not your ads.",
+    "did_report_as_spam": false,
+    "created_at": 1786732070,
+    "created_at_utc": 1786732070,
+    "content_type": "comment",
+    "status": "Active",
+    "bit_flags": 0,
+    "share_enabled": false,
+    "is_ranked_comment": false,
+    "is_covered": false,
+    "private_reply_status": 0,
+    "media_id": 3963718348289605686,
+    "user": {
+     "pk": 25025320,
+     "pk_id": "25025320",
+     "id": "25025320",
+     "username": "scaleit.demo",
+     "full_name": "Demo Creator",
+     "is_private": false,
+     "is_verified": true,
+     "profile_pic_id": "3000000000025025320_25025320",
+     "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+     "fbid_v2": 17841400025025320,
+     "strong_id__": "25025320",
+     "has_anonymous_profile_picture": false,
+     "is_unpublished": false,
+     "is_favorite": false,
+     "friendship_status": {
+      "following": false,
+      "is_bestie": false,
+      "is_feed_favorite": false,
+      "is_restricted": false
+     }
+    }
+   },
+   "comment_count": 577,
+   "like_count": 14295,
+   "video_duration": 69.5,
+   "has_audio": true,
+   "number_of_qualities": 3,
+   "video_versions": [
+    {
+     "type": 101,
+     "width": 720,
+     "height": 1280,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3963718348289605686_720.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD60177&oe=6AF06440",
+     "id": "3963718348289605686101"
+    },
+    {
+     "type": 102,
+     "width": 480,
+     "height": 854,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3963718348289605686_480.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD60177&oe=6AF06440",
+     "id": "3963718348289605686102"
+    },
+    {
+     "type": 103,
+     "width": 360,
+     "height": 640,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3963718348289605686_360.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD60177&oe=6AF06440",
+     "id": "3963718348289605686103"
+    }
+   ],
+   "image_versions2": {
+    "candidates": [
+     {
+      "width": 1080,
+      "height": 1920,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3963718348289605686_1080.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC85837&oe=6AF06440"
+     },
+     {
+      "width": 640,
+      "height": 1136,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3963718348289605686_640.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC85837&oe=6AF06440"
+     },
+     {
+      "width": 480,
+      "height": 853,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3963718348289605686_480.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC85837&oe=6AF06440"
+     },
+     {
+      "width": 320,
+      "height": 568,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3963718348289605686_320.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC85837&oe=6AF06440"
+     }
+    ],
+    "scrubber_spritesheet_info_candidates": {
+     "default": {
+      "video_length": 30.0,
+      "thumbnail_width": 100
+     }
+    }
+   },
+   "original_width": 720,
+   "original_height": 1280,
+   "clips_metadata": {
+    "audio_type": "original_sounds",
+    "music_canonical_id": "18464793536200710",
+    "music_info": null,
+    "original_sound_info": {
+     "audio_asset_id": 866198384050177,
+     "attributed_custom_audio_asset_id": null,
+     "music_canonical_id": null,
+     "original_audio_title": "Original audio",
+     "original_audio_subtype": "default",
+     "duration_in_ms": 69500,
+     "ig_artist": {
+      "pk": 25025320,
+      "pk_id": "25025320",
+      "id": "25025320",
+      "username": "scaleit.demo",
+      "full_name": "Demo Creator",
+      "is_verified": true,
+      "is_private": false,
+      "strong_id__": "25025320"
+     },
+     "progressive_download_url": "https://scontent.cdninstagram.com/o1/v/t2/f2/m69/3963718348289605686_audio.mp4",
+     "dash_manifest": "<MPD/>",
+     "should_mute_audio": false,
+     "hide_remixing": false,
+     "is_explicit": false,
+     "is_audio_automatically_attributed": false,
+     "original_media_id": 3963718348289605686
+    },
+    "clips_creation_entry_point": "clips",
+    "featured_label": null,
+    "is_public_chat_welcome_video": false,
+    "professional_clips_upsell_type": 0,
+    "show_tips": null,
+    "achievements_info": {
+     "num_earned_achievements": null,
+     "show_achievements": false
+    },
+    "additional_audio_info": {
+     "additional_audio_username": null,
+     "audio_reattribution_info": {
+      "should_allow_restore": false
+     }
+    },
+    "audio_ranking_info": {
+     "best_audio_cluster_id": "1000054"
+    },
+    "branded_content_tag_info": {
+     "can_add_tag": true
+    },
+    "content_appreciation_info": {
+     "enabled": false
+    },
+    "is_shared_to_fb": false,
+    "mashup_info": {
+     "mashups_allowed": true,
+     "can_toggle_mashups_allowed": true,
+     "has_been_mashed_up": false,
+     "formatted_mashups_count": null,
+     "original_media": null,
+     "non_privacy_filtered_mashups_media_count": 0
+    },
+    "reusable_text_info": null,
+    "template_info": null,
+    "viewer_interaction_settings": null
+   },
+   "clips_tab_pinned_user_ids": [],
+   "timeline_pinned_user_ids": [],
+   "coauthor_producers": [],
+   "coauthor_producer_can_see_organic_insights": false,
+   "invited_coauthor_producers": [],
+   "inventory_source": "clips_profile",
+   "is_dash_eligible": 1,
+   "video_codec": "avc1.64001F",
+   "has_more_comments": true,
+   "max_num_visible_preview_comments": 2,
+   "photo_of_you": false,
+   "usertags": {
+    "in": []
+   },
+   "is_organic_product_tagging_eligible": false,
+   "music_metadata": null,
+   "sharing_friction_info": {
+    "should_have_sharing_friction": false,
+    "bloks_app_url": null,
+    "sharing_friction_payload": null
+   },
+   "play_count": 431020,
+   "ig_play_count": 418089
+  },
+  {
+   "taken_at": 1786607374,
+   "pk": 3962672322426437687,
+   "id": "3962672322426437687_25025320",
+   "fbid": 18000000000000055,
+   "device_timestamp": 1786607374000055,
+   "caption_is_edited": false,
+   "strong_id__": "3962672322426437687_25025320",
+   "deleted_reason": 0,
+   "has_shared_to_fb": 0,
+   "has_delayed_metadata": false,
+   "mezql_token": "",
+   "share_count_disabled": false,
+   "should_request_ads": false,
+   "is_reshare_of_text_post_app_media_in_ig": false,
+   "integrity_review_decision": "approved",
+   "client_cache_key": "Mzk2MjY3MjMyMjQyNjQzNzY4Nw==.3",
+   "is_visual_reply_commenter_notice_enabled": true,
+   "like_and_view_counts_disabled": false,
+   "is_post_live_clips_media": false,
+   "comment_threading_enabled": true,
+   "is_unified_video": false,
+   "commerciality_status": "not_commercial",
+   "exclude_from_ranking": false,
+   "is_quiet_post": false,
+   "code": "Db-PXtrgAA3",
+   "media_type": 2,
+   "product_type": "clips",
+   "pk_id": "3962672322426437687",
+   "filter_type": 0,
+   "is_paid_partnership": false,
+   "user": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "owner": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "can_viewer_reshare": true,
+   "can_viewer_save": true,
+   "caption": {
+    "pk": "18000000000000385",
+    "user_id": 25025320,
+    "type": 1,
+    "text": "How we cut cost per lead by 41% with one change",
+    "did_report_as_spam": false,
+    "created_at": 1786607374,
+    "created_at_utc": 1786607374,
+    "content_type": "comment",
+    "status": "Active",
+    "bit_flags": 0,
+    "share_enabled": false,
+    "is_ranked_comment": false,
+    "is_covered": false,
+    "private_reply_status": 0,
+    "media_id": 3962672322426437687,
+    "user": {
+     "pk": 25025320,
+     "pk_id": "25025320",
+     "id": "25025320",
+     "username": "scaleit.demo",
+     "full_name": "Demo Creator",
+     "is_private": false,
+     "is_verified": true,
+     "profile_pic_id": "3000000000025025320_25025320",
+     "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+     "fbid_v2": 17841400025025320,
+     "strong_id__": "25025320",
+     "has_anonymous_profile_picture": false,
+     "is_unpublished": false,
+     "is_favorite": false,
+     "friendship_status": {
+      "following": false,
+      "is_bestie": false,
+      "is_feed_favorite": false,
+      "is_restricted": false
+     }
+    }
+   },
+   "comment_count": 245,
+   "like_count": 8127,
+   "video_duration": 44.3,
+   "has_audio": true,
+   "number_of_qualities": 3,
+   "video_versions": [
+    {
+     "type": 101,
+     "width": 720,
+     "height": 1280,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3962672322426437687_720.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD90918&oe=6AF06440",
+     "id": "3962672322426437687101"
+    },
+    {
+     "type": 102,
+     "width": 480,
+     "height": 854,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3962672322426437687_480.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD90918&oe=6AF06440",
+     "id": "3962672322426437687102"
+    },
+    {
+     "type": 103,
+     "width": 360,
+     "height": 640,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3962672322426437687_360.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD90918&oe=6AF06440",
+     "id": "3962672322426437687103"
+    }
+   ],
+   "image_versions2": {
+    "candidates": [
+     {
+      "width": 1080,
+      "height": 1920,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3962672322426437687_1080.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC14592&oe=6AF06440"
+     },
+     {
+      "width": 640,
+      "height": 1136,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3962672322426437687_640.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC14592&oe=6AF06440"
+     },
+     {
+      "width": 480,
+      "height": 853,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3962672322426437687_480.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC14592&oe=6AF06440"
+     },
+     {
+      "width": 320,
+      "height": 568,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3962672322426437687_320.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC14592&oe=6AF06440"
+     }
+    ],
+    "scrubber_spritesheet_info_candidates": {
+     "default": {
+      "video_length": 30.0,
+      "thumbnail_width": 100
+     }
+    }
+   },
+   "original_width": 720,
+   "original_height": 1280,
+   "clips_metadata": {
+    "audio_type": "original_sounds",
+    "music_canonical_id": "18334040303304710",
+    "music_info": null,
+    "original_sound_info": {
+     "audio_asset_id": 833510075826177,
+     "attributed_custom_audio_asset_id": null,
+     "music_canonical_id": null,
+     "original_audio_title": "Original audio",
+     "original_audio_subtype": "default",
+     "duration_in_ms": 44300,
+     "ig_artist": {
+      "pk": 25025320,
+      "pk_id": "25025320",
+      "id": "25025320",
+      "username": "scaleit.demo",
+      "full_name": "Demo Creator",
+      "is_verified": true,
+      "is_private": false,
+      "strong_id__": "25025320"
+     },
+     "progressive_download_url": "https://scontent.cdninstagram.com/o1/v/t2/f2/m69/3962672322426437687_audio.mp4",
+     "dash_manifest": "<MPD/>",
+     "should_mute_audio": false,
+     "hide_remixing": false,
+     "is_explicit": false,
+     "is_audio_automatically_attributed": false,
+     "original_media_id": 3962672322426437687
+    },
+    "clips_creation_entry_point": "clips",
+    "featured_label": null,
+    "is_public_chat_welcome_video": false,
+    "professional_clips_upsell_type": 0,
+    "show_tips": null,
+    "achievements_info": {
+     "num_earned_achievements": null,
+     "show_achievements": false
+    },
+    "additional_audio_info": {
+     "additional_audio_username": null,
+     "audio_reattribution_info": {
+      "should_allow_restore": false
+     }
+    },
+    "audio_ranking_info": {
+     "best_audio_cluster_id": "1000055"
+    },
+    "branded_content_tag_info": {
+     "can_add_tag": true
+    },
+    "content_appreciation_info": {
+     "enabled": false
+    },
+    "is_shared_to_fb": false,
+    "mashup_info": {
+     "mashups_allowed": true,
+     "can_toggle_mashups_allowed": true,
+     "has_been_mashed_up": false,
+     "formatted_mashups_count": null,
+     "original_media": null,
+     "non_privacy_filtered_mashups_media_count": 0
+    },
+    "reusable_text_info": null,
+    "template_info": null,
+    "viewer_interaction_settings": null
+   },
+   "clips_tab_pinned_user_ids": [],
+   "timeline_pinned_user_ids": [],
+   "coauthor_producers": [],
+   "coauthor_producer_can_see_organic_insights": false,
+   "invited_coauthor_producers": [],
+   "inventory_source": "clips_profile",
+   "is_dash_eligible": 1,
+   "video_codec": "avc1.64001F",
+   "has_more_comments": true,
+   "max_num_visible_preview_comments": 2,
+   "photo_of_you": false,
+   "usertags": {
+    "in": []
+   },
+   "is_organic_product_tagging_eligible": false,
+   "music_metadata": null,
+   "sharing_friction_info": {
+    "should_have_sharing_friction": false,
+    "bloks_app_url": null,
+    "sharing_friction_payload": null
+   },
+   "play_count": 235321,
+   "ig_play_count": 228261
+  },
+  {
+   "taken_at": 1786461123,
+   "pk": 3961445480117829688,
+   "id": "3961445480117829688_25025320",
+   "fbid": 18000000000000056,
+   "device_timestamp": 1786461123000056,
+   "caption_is_edited": false,
+   "strong_id__": "3961445480117829688_25025320",
+   "deleted_reason": 0,
+   "has_shared_to_fb": 0,
+   "has_delayed_metadata": false,
+   "mezql_token": "",
+   "share_count_disabled": false,
+   "should_request_ads": false,
+   "is_reshare_of_text_post_app_media_in_ig": false,
+   "integrity_review_decision": "approved",
+   "client_cache_key": "Mzk2MTQ0NTQ4MDExNzgyOTY4OA==.3",
+   "is_visual_reply_commenter_notice_enabled": true,
+   "like_and_view_counts_disabled": false,
+   "is_post_live_clips_media": false,
+   "comment_threading_enabled": true,
+   "is_unified_video": false,
+   "commerciality_status": "not_commercial",
+   "exclude_from_ranking": false,
+   "is_quiet_post": false,
+   "code": "Db54azvgAA4",
+   "media_type": 2,
+   "product_type": "clips",
+   "pk_id": "3961445480117829688",
+   "filter_type": 0,
+   "is_paid_partnership": false,
+   "user": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "owner": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "can_viewer_reshare": true,
+   "can_viewer_save": true,
+   "caption": {
+    "pk": "18000000000000392",
+    "user_id": 25025320,
+    "type": 1,
+    "text": "Save this before your next campaign 📌",
+    "did_report_as_spam": false,
+    "created_at": 1786461123,
+    "created_at_utc": 1786461123,
+    "content_type": "comment",
+    "status": "Active",
+    "bit_flags": 0,
+    "share_enabled": false,
+    "is_ranked_comment": false,
+    "is_covered": false,
+    "private_reply_status": 0,
+    "media_id": 3961445480117829688,
+    "user": {
+     "pk": 25025320,
+     "pk_id": "25025320",
+     "id": "25025320",
+     "username": "scaleit.demo",
+     "full_name": "Demo Creator",
+     "is_private": false,
+     "is_verified": true,
+     "profile_pic_id": "3000000000025025320_25025320",
+     "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+     "fbid_v2": 17841400025025320,
+     "strong_id__": "25025320",
+     "has_anonymous_profile_picture": false,
+     "is_unpublished": false,
+     "is_favorite": false,
+     "friendship_status": {
+      "following": false,
+      "is_bestie": false,
+      "is_feed_favorite": false,
+      "is_restricted": false
+     }
+    }
+   },
+   "comment_count": 346,
+   "like_count": 7270,
+   "video_duration": 56.1,
+   "has_audio": true,
+   "number_of_qualities": 3,
+   "video_versions": [
+    {
+     "type": 101,
+     "width": 720,
+     "height": 1280,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3961445480117829688_720.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD36832&oe=6AF06440",
+     "id": "3961445480117829688101"
+    },
+    {
+     "type": 102,
+     "width": 480,
+     "height": 854,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3961445480117829688_480.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD36832&oe=6AF06440",
+     "id": "3961445480117829688102"
+    },
+    {
+     "type": 103,
+     "width": 360,
+     "height": 640,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3961445480117829688_360.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD36832&oe=6AF06440",
+     "id": "3961445480117829688103"
+    }
+   ],
+   "image_versions2": {
+    "candidates": [
+     {
+      "width": 1080,
+      "height": 1920,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3961445480117829688_1080.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC6222&oe=6AF06440"
+     },
+     {
+      "width": 640,
+      "height": 1136,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3961445480117829688_640.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC6222&oe=6AF06440"
+     },
+     {
+      "width": 480,
+      "height": 853,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3961445480117829688_480.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC6222&oe=6AF06440"
+     },
+     {
+      "width": 320,
+      "height": 568,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3961445480117829688_320.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC6222&oe=6AF06440"
+     }
+    ],
+    "scrubber_spritesheet_info_candidates": {
+     "default": {
+      "video_length": 30.0,
+      "thumbnail_width": 100
+     }
+    }
+   },
+   "original_width": 720,
+   "original_height": 1280,
+   "clips_metadata": {
+    "audio_type": "original_sounds",
+    "music_canonical_id": "18180685014728711",
+    "music_info": null,
+    "original_sound_info": {
+     "audio_asset_id": 795171253682177,
+     "attributed_custom_audio_asset_id": null,
+     "music_canonical_id": null,
+     "original_audio_title": "Original audio",
+     "original_audio_subtype": "default",
+     "duration_in_ms": 56100,
+     "ig_artist": {
+      "pk": 25025320,
+      "pk_id": "25025320",
+      "id": "25025320",
+      "username": "scaleit.demo",
+      "full_name": "Demo Creator",
+      "is_verified": true,
+      "is_private": false,
+      "strong_id__": "25025320"
+     },
+     "progressive_download_url": "https://scontent.cdninstagram.com/o1/v/t2/f2/m69/3961445480117829688_audio.mp4",
+     "dash_manifest": "<MPD/>",
+     "should_mute_audio": false,
+     "hide_remixing": false,
+     "is_explicit": false,
+     "is_audio_automatically_attributed": false,
+     "original_media_id": 3961445480117829688
+    },
+    "clips_creation_entry_point": "clips",
+    "featured_label": null,
+    "is_public_chat_welcome_video": false,
+    "professional_clips_upsell_type": 0,
+    "show_tips": null,
+    "achievements_info": {
+     "num_earned_achievements": null,
+     "show_achievements": false
+    },
+    "additional_audio_info": {
+     "additional_audio_username": null,
+     "audio_reattribution_info": {
+      "should_allow_restore": false
+     }
+    },
+    "audio_ranking_info": {
+     "best_audio_cluster_id": "1000056"
+    },
+    "branded_content_tag_info": {
+     "can_add_tag": true
+    },
+    "content_appreciation_info": {
+     "enabled": false
+    },
+    "is_shared_to_fb": false,
+    "mashup_info": {
+     "mashups_allowed": true,
+     "can_toggle_mashups_allowed": true,
+     "has_been_mashed_up": false,
+     "formatted_mashups_count": null,
+     "original_media": null,
+     "non_privacy_filtered_mashups_media_count": 0
+    },
+    "reusable_text_info": null,
+    "template_info": null,
+    "viewer_interaction_settings": null
+   },
+   "clips_tab_pinned_user_ids": [],
+   "timeline_pinned_user_ids": [],
+   "coauthor_producers": [],
+   "coauthor_producer_can_see_organic_insights": false,
+   "invited_coauthor_producers": [],
+   "inventory_source": "clips_profile",
+   "is_dash_eligible": 1,
+   "video_codec": "avc1.64001F",
+   "has_more_comments": true,
+   "max_num_visible_preview_comments": 2,
+   "photo_of_you": false,
+   "usertags": {
+    "in": []
+   },
+   "is_organic_product_tagging_eligible": false,
+   "music_metadata": null,
+   "sharing_friction_info": {
+    "should_have_sharing_friction": false,
+    "bloks_app_url": null,
+    "sharing_friction_payload": null
+   },
+   "play_count": 235248,
+   "ig_play_count": 228190
+  },
+  {
+   "taken_at": 1786298991,
+   "pk": 3960085418325573689,
+   "id": "3960085418325573689_25025320",
+   "fbid": 18000000000000057,
+   "device_timestamp": 1786298991000057,
+   "caption_is_edited": false,
+   "strong_id__": "3960085418325573689_25025320",
+   "deleted_reason": 0,
+   "has_shared_to_fb": 0,
+   "has_delayed_metadata": false,
+   "mezql_token": "",
+   "share_count_disabled": false,
+   "should_request_ads": false,
+   "is_reshare_of_text_post_app_media_in_ig": false,
+   "integrity_review_decision": "approved",
+   "client_cache_key": "Mzk2MDA4NTQxODMyNTU3MzY4OQ==.3",
+   "is_visual_reply_commenter_notice_enabled": true,
+   "like_and_view_counts_disabled": false,
+   "is_post_live_clips_media": false,
+   "comment_threading_enabled": true,
+   "is_unified_video": false,
+   "commerciality_status": "not_commercial",
+   "exclude_from_ranking": false,
+   "is_quiet_post": false,
+   "code": "Db1DLTfgAA5",
+   "media_type": 2,
+   "product_type": "clips",
+   "pk_id": "3960085418325573689",
+   "filter_type": 0,
+   "is_paid_partnership": false,
+   "user": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "owner": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "can_viewer_reshare": true,
+   "can_viewer_save": true,
+   "caption": {
+    "pk": "18000000000000399",
+    "user_id": 25025320,
+    "type": 1,
+    "text": "Agency owners: stop doing this on sales calls",
+    "did_report_as_spam": false,
+    "created_at": 1786298991,
+    "created_at_utc": 1786298991,
+    "content_type": "comment",
+    "status": "Active",
+    "bit_flags": 0,
+    "share_enabled": false,
+    "is_ranked_comment": false,
+    "is_covered": false,
+    "private_reply_status": 0,
+    "media_id": 3960085418325573689,
+    "user": {
+     "pk": 25025320,
+     "pk_id": "25025320",
+     "id": "25025320",
+     "username": "scaleit.demo",
+     "full_name": "Demo Creator",
+     "is_private": false,
+     "is_verified": true,
+     "profile_pic_id": "3000000000025025320_25025320",
+     "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+     "fbid_v2": 17841400025025320,
+     "strong_id__": "25025320",
+     "has_anonymous_profile_picture": false,
+     "is_unpublished": false,
+     "is_favorite": false,
+     "friendship_status": {
+      "following": false,
+      "is_bestie": false,
+      "is_feed_favorite": false,
+      "is_restricted": false
+     }
+    }
+   },
+   "comment_count": 417,
+   "like_count": 20469,
+   "video_duration": 47.2,
+   "has_audio": true,
+   "number_of_qualities": 3,
+   "video_versions": [
+    {
+     "type": 101,
+     "width": 720,
+     "height": 1280,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3960085418325573689_720.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD2041&oe=6AF06440",
+     "id": "3960085418325573689101"
+    },
+    {
+     "type": 102,
+     "width": 480,
+     "height": 854,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3960085418325573689_480.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD2041&oe=6AF06440",
+     "id": "3960085418325573689102"
+    },
+    {
+     "type": 103,
+     "width": 360,
+     "height": 640,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3960085418325573689_360.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD2041&oe=6AF06440",
+     "id": "3960085418325573689103"
+    }
+   ],
+   "image_versions2": {
+    "candidates": [
+     {
+      "width": 1080,
+      "height": 1920,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3960085418325573689_1080.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC94507&oe=6AF06440"
+     },
+     {
+      "width": 640,
+      "height": 1136,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3960085418325573689_640.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC94507&oe=6AF06440"
+     },
+     {
+      "width": 480,
+      "height": 853,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3960085418325573689_480.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC94507&oe=6AF06440"
+     },
+     {
+      "width": 320,
+      "height": 568,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3960085418325573689_320.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC94507&oe=6AF06440"
+     }
+    ],
+    "scrubber_spritesheet_info_candidates": {
+     "default": {
+      "video_length": 30.0,
+      "thumbnail_width": 100
+     }
+    }
+   },
+   "original_width": 720,
+   "original_height": 1280,
+   "clips_metadata": {
+    "audio_type": "original_sounds",
+    "music_canonical_id": "18010677290696711",
+    "music_info": null,
+    "original_sound_info": {
+     "audio_asset_id": 752669322674177,
+     "attributed_custom_audio_asset_id": null,
+     "music_canonical_id": null,
+     "original_audio_title": "Original audio",
+     "original_audio_subtype": "default",
+     "duration_in_ms": 47200,
+     "ig_artist": {
+      "pk": 55501234,
+      "pk_id": "55501234",
+      "id": "55501234",
+      "username": "partner.studio",
+      "full_name": "Partner Studio",
+      "is_verified": true,
+      "is_private": false,
+      "strong_id__": "55501234"
+     },
+     "progressive_download_url": "https://scontent.cdninstagram.com/o1/v/t2/f2/m69/3960085418325573689_audio.mp4",
+     "dash_manifest": "<MPD/>",
+     "should_mute_audio": false,
+     "hide_remixing": false,
+     "is_explicit": false,
+     "is_audio_automatically_attributed": false,
+     "original_media_id": 3960085418325573689
+    },
+    "clips_creation_entry_point": "clips",
+    "featured_label": null,
+    "is_public_chat_welcome_video": false,
+    "professional_clips_upsell_type": 0,
+    "show_tips": null,
+    "achievements_info": {
+     "num_earned_achievements": null,
+     "show_achievements": false
+    },
+    "additional_audio_info": {
+     "additional_audio_username": null,
+     "audio_reattribution_info": {
+      "should_allow_restore": false
+     }
+    },
+    "audio_ranking_info": {
+     "best_audio_cluster_id": "1000057"
+    },
+    "branded_content_tag_info": {
+     "can_add_tag": true
+    },
+    "content_appreciation_info": {
+     "enabled": false
+    },
+    "is_shared_to_fb": false,
+    "mashup_info": {
+     "mashups_allowed": true,
+     "can_toggle_mashups_allowed": true,
+     "has_been_mashed_up": false,
+     "formatted_mashups_count": null,
+     "original_media": null,
+     "non_privacy_filtered_mashups_media_count": 0
+    },
+    "reusable_text_info": null,
+    "template_info": null,
+    "viewer_interaction_settings": null
+   },
+   "clips_tab_pinned_user_ids": [],
+   "timeline_pinned_user_ids": [],
+   "coauthor_producers": [],
+   "coauthor_producer_can_see_organic_insights": false,
+   "invited_coauthor_producers": [],
+   "inventory_source": "clips_profile",
+   "is_dash_eligible": 1,
+   "video_codec": "avc1.64001F",
+   "has_more_comments": true,
+   "max_num_visible_preview_comments": 2,
+   "photo_of_you": false,
+   "usertags": {
+    "in": []
+   },
+   "is_organic_product_tagging_eligible": false,
+   "music_metadata": null,
+   "sharing_friction_info": {
+    "should_have_sharing_friction": false,
+    "bloks_app_url": null,
+    "sharing_friction_payload": null
+   },
+   "play_count": 471222,
+   "ig_play_count": 457085
+  },
+  {
+   "taken_at": 1786131093,
+   "pk": 3958676987819589690,
+   "id": "3958676987819589690_25025320",
+   "fbid": 18000000000000058,
+   "device_timestamp": 1786131093000058,
+   "caption_is_edited": false,
+   "strong_id__": "3958676987819589690_25025320",
+   "deleted_reason": 0,
+   "has_shared_to_fb": 0,
+   "has_delayed_metadata": false,
+   "mezql_token": "",
+   "share_count_disabled": false,
+   "should_request_ads": false,
+   "is_reshare_of_text_post_app_media_in_ig": false,
+   "integrity_review_decision": "approved",
+   "client_cache_key": "Mzk1ODY3Njk4NzgxOTU4OTY5MA==.3",
+   "is_visual_reply_commenter_notice_enabled": true,
+   "like_and_view_counts_disabled": false,
+   "is_post_live_clips_media": false,
+   "comment_threading_enabled": true,
+   "is_unified_video": false,
+   "commerciality_status": "not_commercial",
+   "exclude_from_ranking": false,
+   "is_quiet_post": false,
+   "code": "DbwC78XgAA6",
+   "media_type": 2,
+   "product_type": "clips",
+   "pk_id": "3958676987819589690",
+   "filter_type": 0,
+   "is_paid_partnership": false,
+   "user": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "owner": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "can_viewer_reshare": true,
+   "can_viewer_save": true,
+   "caption": {
+    "pk": "18000000000000406",
+    "user_id": 25025320,
+    "type": 1,
+    "text": "This UGC format is printing money right now",
+    "did_report_as_spam": false,
+    "created_at": 1786131093,
+    "created_at_utc": 1786131093,
+    "content_type": "comment",
+    "status": "Active",
+    "bit_flags": 0,
+    "share_enabled": false,
+    "is_ranked_comment": false,
+    "is_covered": false,
+    "private_reply_status": 0,
+    "media_id": 3958676987819589690,
+    "user": {
+     "pk": 25025320,
+     "pk_id": "25025320",
+     "id": "25025320",
+     "username": "scaleit.demo",
+     "full_name": "Demo Creator",
+     "is_private": false,
+     "is_verified": true,
+     "profile_pic_id": "3000000000025025320_25025320",
+     "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+     "fbid_v2": 17841400025025320,
+     "strong_id__": "25025320",
+     "has_anonymous_profile_picture": false,
+     "is_unpublished": false,
+     "is_favorite": false,
+     "friendship_status": {
+      "following": false,
+      "is_bestie": false,
+      "is_feed_favorite": false,
+      "is_restricted": false
+     }
+    }
+   },
+   "comment_count": 268,
+   "like_count": 9704,
+   "video_duration": 16.6,
+   "has_audio": true,
+   "number_of_qualities": 3,
+   "video_versions": [
+    {
+     "type": 101,
+     "width": 720,
+     "height": 1280,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3958676987819589690_720.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD63184&oe=6AF06440",
+     "id": "3958676987819589690101"
+    },
+    {
+     "type": 102,
+     "width": 480,
+     "height": 854,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3958676987819589690_480.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD63184&oe=6AF06440",
+     "id": "3958676987819589690102"
+    },
+    {
+     "type": 103,
+     "width": 360,
+     "height": 640,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3958676987819589690_360.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD63184&oe=6AF06440",
+     "id": "3958676987819589690103"
+    }
+   ],
+   "image_versions2": {
+    "candidates": [
+     {
+      "width": 1080,
+      "height": 1920,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3958676987819589690_1080.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC10975&oe=6AF06440"
+     },
+     {
+      "width": 640,
+      "height": 1136,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3958676987819589690_640.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC10975&oe=6AF06440"
+     },
+     {
+      "width": 480,
+      "height": 853,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3958676987819589690_480.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC10975&oe=6AF06440"
+     },
+     {
+      "width": 320,
+      "height": 568,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3958676987819589690_320.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC10975&oe=6AF06440"
+     }
+    ],
+    "scrubber_spritesheet_info_candidates": {
+     "default": {
+      "video_length": 30.0,
+      "thumbnail_width": 100
+     }
+    }
+   },
+   "original_width": 720,
+   "original_height": 1280,
+   "clips_metadata": {
+    "audio_type": "licensed_music",
+    "music_canonical_id": "18676987819589690",
+    "music_info": {
+     "music_asset_info": {
+      "audio_asset_id": "676987819589690",
+      "audio_cluster_id": "1000058",
+      "id": "676987819589690",
+      "title": "Night Drive 2",
+      "display_artist": "Lofi Fictional",
+      "subtitle": "",
+      "duration_in_ms": 61000,
+      "is_explicit": false,
+      "has_lyrics": false,
+      "cover_artwork_uri": "https://scontent.cdninstagram.com/v/t39.30808-6/cover.jpg",
+      "ig_username": null,
+      "allows_saving": true
+     },
+     "music_consumption_info": {
+      "ig_artist": null,
+      "placeholder_profile_pic_url": "",
+      "should_mute_audio": false,
+      "is_trending_in_clips": false,
+      "overlap_duration_in_ms": 15000,
+      "audio_asset_start_time_in_ms": 0
+     }
+    },
+    "original_sound_info": null,
+    "clips_creation_entry_point": "clips",
+    "featured_label": null,
+    "is_public_chat_welcome_video": false,
+    "professional_clips_upsell_type": 0,
+    "show_tips": null,
+    "achievements_info": {
+     "num_earned_achievements": null,
+     "show_achievements": false
+    },
+    "additional_audio_info": {
+     "additional_audio_username": null,
+     "audio_reattribution_info": {
+      "should_allow_restore": false
+     }
+    },
+    "audio_ranking_info": {
+     "best_audio_cluster_id": "1000058"
+    },
+    "branded_content_tag_info": {
+     "can_add_tag": true
+    },
+    "content_appreciation_info": {
+     "enabled": false
+    },
+    "is_shared_to_fb": false,
+    "mashup_info": {
+     "mashups_allowed": true,
+     "can_toggle_mashups_allowed": true,
+     "has_been_mashed_up": false,
+     "formatted_mashups_count": null,
+     "original_media": null,
+     "non_privacy_filtered_mashups_media_count": 0
+    },
+    "reusable_text_info": null,
+    "template_info": null,
+    "viewer_interaction_settings": null
+   },
+   "clips_tab_pinned_user_ids": [],
+   "timeline_pinned_user_ids": [],
+   "coauthor_producers": [],
+   "coauthor_producer_can_see_organic_insights": false,
+   "invited_coauthor_producers": [],
+   "inventory_source": "clips_profile",
+   "is_dash_eligible": 1,
+   "video_codec": "avc1.64001F",
+   "has_more_comments": true,
+   "max_num_visible_preview_comments": 2,
+   "photo_of_you": false,
+   "usertags": {
+    "in": []
+   },
+   "is_organic_product_tagging_eligible": false,
+   "music_metadata": null,
+   "sharing_friction_info": {
+    "should_have_sharing_friction": false,
+    "bloks_app_url": null,
+    "sharing_friction_payload": null
+   },
+   "play_count": 455969,
+   "ig_play_count": 442289
+  },
+  {
+   "taken_at": 1786023902,
+   "pk": 3957777804539461691,
+   "id": "3957777804539461691_25025320",
+   "fbid": 18000000000000059,
+   "device_timestamp": 1786023902000059,
+   "caption_is_edited": false,
+   "strong_id__": "3957777804539461691_25025320",
+   "deleted_reason": 0,
+   "has_shared_to_fb": 0,
+   "has_delayed_metadata": false,
+   "mezql_token": "",
+   "share_count_disabled": false,
+   "should_request_ads": false,
+   "is_reshare_of_text_post_app_media_in_ig": false,
+   "integrity_review_decision": "approved",
+   "client_cache_key": "Mzk1Nzc3NzgwNDUzOTQ2MTY5MQ==.3",
+   "is_visual_reply_commenter_notice_enabled": true,
+   "like_and_view_counts_disabled": false,
+   "is_post_live_clips_media": false,
+   "comment_threading_enabled": true,
+   "is_unified_video": false,
+   "commerciality_status": "not_commercial",
+   "exclude_from_ranking": false,
+   "is_quiet_post": false,
+   "code": "Dbs2fGrgAA7",
+   "media_type": 2,
+   "product_type": "clips",
+   "pk_id": "3957777804539461691",
+   "filter_type": 0,
+   "is_paid_partnership": false,
+   "user": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "owner": {
+    "pk": 25025320,
+    "pk_id": "25025320",
+    "id": "25025320",
+    "username": "scaleit.demo",
+    "full_name": "Demo Creator",
+    "is_private": false,
+    "is_verified": true,
+    "profile_pic_id": "3000000000025025320_25025320",
+    "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+    "fbid_v2": 17841400025025320,
+    "strong_id__": "25025320",
+    "has_anonymous_profile_picture": false,
+    "is_unpublished": false,
+    "is_favorite": false,
+    "friendship_status": {
+     "following": false,
+     "is_bestie": false,
+     "is_feed_favorite": false,
+     "is_restricted": false
+    }
+   },
+   "can_viewer_reshare": true,
+   "can_viewer_save": true,
+   "caption": {
+    "pk": "18000000000000413",
+    "user_id": 25025320,
+    "type": 1,
+    "text": "The 3-second rule for scroll-stopping reels",
+    "did_report_as_spam": false,
+    "created_at": 1786023902,
+    "created_at_utc": 1786023902,
+    "content_type": "comment",
+    "status": "Active",
+    "bit_flags": 0,
+    "share_enabled": false,
+    "is_ranked_comment": false,
+    "is_covered": false,
+    "private_reply_status": 0,
+    "media_id": 3957777804539461691,
+    "user": {
+     "pk": 25025320,
+     "pk_id": "25025320",
+     "id": "25025320",
+     "username": "scaleit.demo",
+     "full_name": "Demo Creator",
+     "is_private": false,
+     "is_verified": true,
+     "profile_pic_id": "3000000000025025320_25025320",
+     "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+     "fbid_v2": 17841400025025320,
+     "strong_id__": "25025320",
+     "has_anonymous_profile_picture": false,
+     "is_unpublished": false,
+     "is_favorite": false,
+     "friendship_status": {
+      "following": false,
+      "is_bestie": false,
+      "is_feed_favorite": false,
+      "is_restricted": false
+     }
+    }
+   },
+   "comment_count": 239,
+   "like_count": 6499,
+   "video_duration": 61.4,
+   "has_audio": true,
+   "number_of_qualities": 3,
+   "video_versions": [
+    {
+     "type": 101,
+     "width": 720,
+     "height": 1280,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3957777804539461691_720.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD55934&oe=6AF06440",
+     "id": "3957777804539461691101"
+    },
+    {
+     "type": 102,
+     "width": 480,
+     "height": 854,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3957777804539461691_480.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD55934&oe=6AF06440",
+     "id": "3957777804539461691102"
+    },
+    {
+     "type": 103,
+     "width": 360,
+     "height": 640,
+     "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/3957777804539461691_360.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD55934&oe=6AF06440",
+     "id": "3957777804539461691103"
+    }
+   ],
+   "image_versions2": {
+    "candidates": [
+     {
+      "width": 1080,
+      "height": 1920,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3957777804539461691_1080.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC40844&oe=6AF06440"
+     },
+     {
+      "width": 640,
+      "height": 1136,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3957777804539461691_640.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC40844&oe=6AF06440"
+     },
+     {
+      "width": 480,
+      "height": 853,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3957777804539461691_480.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC40844&oe=6AF06440"
+     },
+     {
+      "width": 320,
+      "height": 568,
+      "url": "https://scontent.cdninstagram.com/v/t51.2885-15/3957777804539461691_320.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC40844&oe=6AF06440"
+     }
+    ],
+    "scrubber_spritesheet_info_candidates": {
+     "default": {
+      "video_length": 30.0,
+      "thumbnail_width": 100
+     }
+    }
+   },
+   "original_width": 720,
+   "original_height": 1280,
+   "clips_metadata": {
+    "audio_type": "original_sounds",
+    "music_canonical_id": "18722225567432711",
+    "music_info": null,
+    "original_sound_info": {
+     "audio_asset_id": 680556391858177,
+     "attributed_custom_audio_asset_id": null,
+     "music_canonical_id": null,
+     "original_audio_title": "Original audio",
+     "original_audio_subtype": "default",
+     "duration_in_ms": 61400,
+     "ig_artist": {
+      "pk": 25025320,
+      "pk_id": "25025320",
+      "id": "25025320",
+      "username": "scaleit.demo",
+      "full_name": "Demo Creator",
+      "is_verified": true,
+      "is_private": false,
+      "strong_id__": "25025320"
+     },
+     "progressive_download_url": "https://scontent.cdninstagram.com/o1/v/t2/f2/m69/3957777804539461691_audio.mp4",
+     "dash_manifest": "<MPD/>",
+     "should_mute_audio": false,
+     "hide_remixing": false,
+     "is_explicit": false,
+     "is_audio_automatically_attributed": false,
+     "original_media_id": 3957777804539461691
+    },
+    "clips_creation_entry_point": "clips",
+    "featured_label": null,
+    "is_public_chat_welcome_video": false,
+    "professional_clips_upsell_type": 0,
+    "show_tips": null,
+    "achievements_info": {
+     "num_earned_achievements": null,
+     "show_achievements": false
+    },
+    "additional_audio_info": {
+     "additional_audio_username": null,
+     "audio_reattribution_info": {
+      "should_allow_restore": false
+     }
+    },
+    "audio_ranking_info": {
+     "best_audio_cluster_id": "1000059"
+    },
+    "branded_content_tag_info": {
+     "can_add_tag": true
+    },
+    "content_appreciation_info": {
+     "enabled": false
+    },
+    "is_shared_to_fb": false,
+    "mashup_info": {
+     "mashups_allowed": true,
+     "can_toggle_mashups_allowed": true,
+     "has_been_mashed_up": false,
+     "formatted_mashups_count": null,
+     "original_media": null,
+     "non_privacy_filtered_mashups_media_count": 0
+    },
+    "reusable_text_info": null,
+    "template_info": null,
+    "viewer_interaction_settings": null
+   },
+   "clips_tab_pinned_user_ids": [],
+   "timeline_pinned_user_ids": [],
+   "coauthor_producers": [],
+   "coauthor_producer_can_see_organic_insights": false,
+   "invited_coauthor_producers": [],
+   "inventory_source": "clips_profile",
+   "is_dash_eligible": 1,
+   "video_codec": "avc1.64001F",
+   "has_more_comments": true,
+   "max_num_visible_preview_comments": 2,
+   "photo_of_you": false,
+   "usertags": {
+    "in": []
+   },
+   "is_organic_product_tagging_eligible": false,
+   "music_metadata": null,
+   "sharing_friction_info": {
+    "should_have_sharing_friction": false,
+    "bloks_app_url": null,
+    "sharing_friction_payload": null
+   },
+   "play_count": 325415,
+   "ig_play_count": 315652
+  }
+ ],
+ "num_results": 12,
+ "more_available": true,
+ "auto_load_more_enabled": true,
+ "status": "ok",
+ "next_max_id": "3957777804539461691_25025320"
+}
