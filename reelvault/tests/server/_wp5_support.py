@@ -501,7 +501,8 @@ def report(text: str) -> dict:
         "headline": ["a", "b", "c"],
         "competitors": [
             {
-                "handle": "alexhormozi",
+                # name a competitor the member really tracks (the server rejects reports that don't)
+                "handle": (re.findall(r'"handle": "([^"]+)"', text) or ["alexhormozi"])[0],
                 "what_they_do": "talks",
                 "what_works": "VF01",
                 "best_hooks": [],
@@ -580,12 +581,12 @@ def fake_answer(schema_name: str, text: str) -> dict:
         src = _ids(r"=== Source reel (reel_[a-z0-9]+)", text)[0]
         weak = re.search(rf"{src}:(W\d)", text)
         pain = re.search(r"Use this customer pain: ([^\n]+)", text)
-        return {
-            "kind": "reel_script",
-            "scripts": [
-                script(src, weak.group(1) if weak else None, pain.group(1) if pain else DIGEST["top_pains"][0])
-            ],
-        }
+        sc = script(src, weak.group(1) if weak else None, pain.group(1) if pain else DIGEST["top_pains"][0])
+        sub = re.search(r"set format to '(VF\d+)' and sub_format to '(fmt_[a-z0-9]+)'", text)
+        if sub:   # a "Use this format" brief names the format to keep (fix round 2)
+            sc["format"], sc["sub_format"] = sub.group(1), sub.group(2)
+            sc["editor_brief"]["format"] = sub.group(1)
+        return {"kind": "reel_script", "scripts": [sc]}
     if schema_name == "MetaAdPack":
         return {"kind": "meta_ads", "ads": [ad()]}
     if schema_name == "ContentPlanChunk":

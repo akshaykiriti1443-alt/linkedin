@@ -177,7 +177,9 @@ def _user_row_json(conn, r) -> dict:
             "role": r.role, "created_at": db.iso(r.created_at), "last_login_at": db.iso(r.last_login_at),
             "last_seen_at": db.iso(r.last_seen_at), "disabled_reason": r.disabled_reason, "accounts": int(acc or 0),
             "reels": int(reels or 0), "storage_mb": round((r.storage_bytes or 0) / 1024 / 1024, 1),
-            "ai_mode": r.ai_mode, "support_access": support_grant_live(conn, r.id)}
+            "ai_mode": r.ai_mode, "support_access": support_grant_live(conn, r.id),
+            "on_allowlist": conn.execute(select(db.allowlist.c.email).where(db.allowlist.c.email == r.email))
+            .first() is not None}
 
 
 def _cursor(offset: int) -> str:
@@ -510,10 +512,18 @@ def stats(admin=Depends(security.current_admin)):
         storage_b = conn.execute(select(func.coalesce(func.sum(u.c.storage_bytes), 0))).scalar()
         failed = conn.execute(select(func.count()).select_from(j).where(
             j.c.state == "failed", j.c.finished_at >= now - timedelta(hours=24))).scalar()
+        bfail = conn.execute(select(j.c.finished_at, j.c.error_message).where(
+            j.c.kind == "backup", j.c.state == "failed").order_by(j.c.finished_at.desc()).limit(1)).first()
+    last_backup = db.get_setting("internal.last_backup")
+    lb_at = (last_backup or {}).get("at") if isinstance(last_backup, dict) else None
+    backup_failed = None
+    if bfail is not None and bfail.finished_at is not None and (not lb_at or db.iso(bfail.finished_at) > lb_at):
+        backup_failed = {"at": db.iso(bfail.finished_at), "message": (bfail.error_message or "")[:300]}
     return {"members": int(members or 0), "pending": int(pending or 0), "active_7d": int(active7 or 0),
             "reels": int(reels or 0), "storage_mb": round(int(storage_b or 0) / 1024 / 1024, 1),
             "jobs_failed_24h": int(failed or 0), "disk_free_mb": storage.disk_free_mb(), "load": budget.load(),
-            "last_backup": db.get_setting("internal.last_backup"), "worker": db.get_setting("internal.worker_heartbeat")}
+            "last_backup": last_backup, "backup_failed": backup_failed,
+            "worker": db.get_setting("internal.worker_heartbeat")}
 
 
 # ============================================================================================== sync members

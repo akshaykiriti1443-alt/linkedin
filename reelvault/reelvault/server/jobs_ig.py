@@ -87,6 +87,8 @@ MSG = {
     "page_signed_out": "Sign in to Skool (or LinkedIn) in Chrome, then press Try again.",
     "confirm_account": "Confirm which Instagram account ReelVault reads with, in Settings > Chrome extension.",
 }
+HTTP_ERROR_ROUNDS = 3       # 5xx/network rounds (3 Instagram tries each) before an Instagram job fails for good
+HTTP_ERROR_FINAL = "Instagram kept giving errors for this. ReelVault stopped trying. Try again later."
 COOLDOWN_S = {"rate_limited": 24 * 3600, "warning": 24 * 3600, "challenge": 24 * 3600, "signed_out": 30 * 60,
               "http_error": 15 * 60, "suspended": 30 * 24 * 3600}
 
@@ -244,6 +246,8 @@ def apply_ig_report(conn, dev, ig: Any) -> dict:
     vals: dict = {}
     st = device_state(dev)
     signed_in = ig.get("signed_in")
+    if signed_in is False and ig.get("error") not in (None, "signed_out"):
+        signed_in = None      # the check stopped on a 429/checkpoint/warning: that is not "signed out" (fix round 2)
     if isinstance(signed_in, bool):
         st["signed_in"] = signed_in
         if signed_in and st.get("cooldown_reason") == "signed_out":
@@ -261,6 +265,35 @@ def apply_ig_report(conn, dev, ig: Any) -> dict:
     vals["state"] = st
     conn.execute(db.devices.update().where(db.devices.c.id == dev.id).values(**vals))
     return vals
+
+
+NO_JOB_STOPS = ("rate_limited", "warning", "challenge", "http_error")
+
+
+def apply_stop_report(conn, dev, stop: Any) -> str | None:
+    """hello {"stop": {"code", "http_status"?, "message"?}}: a 5.7 stop the extension hit OUTSIDE a job (the
+    sign-in check at pairing, or the confirm-account re-check). Sets the device cooldown like /fail does, so lease
+    answers and the web UI agree (fix round 2). Returns the cooldown code set, or None."""
+    if not isinstance(stop, dict) or stop.get("code") not in NO_JOB_STOPS:
+        return None
+    code = stop["code"]
+    message = stop.get("message") if isinstance(stop.get("message"), str) else ""
+    if code == "challenge" and "suspended" in message.lower():
+        code = "suspended"
+    st = device_state(dev)
+    now = _now()
+    until = now + timedelta(seconds=COOLDOWN_S[code])
+    cur = _parse_dt(st.get("cooldown_until"))
+    if cur is not None and cur >= until:
+        return st.get("cooldown_reason")
+    _set_device_state(conn, dev.id, cooldown_until=db.iso(until), cooldown_reason=code)
+    if code == "suspended":
+        _pause_all_ig(conn, dev.user_id, MSG["suspended"])
+    http_status = stop.get("http_status") if isinstance(stop.get("http_status"), int) else None
+    db.audit("ig_fail", user_id=dev.user_id, conn=conn,
+             detail={"job": None, "kind": "sign_in_check", "code": code, "http_status": http_status,
+                     "device": dev.id, "raw_keys": [], "suspended": code == "suspended"})
+    return code
 
 
 def version_tuple(v) -> tuple:
@@ -606,7 +639,8 @@ def _prepare_lease(conn, job) -> bool:
              "max_id": p.get("max_id") if p.get("mode") == "next" else None}
     scratch = dict((job.result or {}).get("ingest") or {})
     scratch.update({"lease_pages": 0, "req": start})
-    conn.execute(db.jobs.update().where(db.jobs.c.id == job.id).values(payload=p, result={"ingest": scratch}))
+    keep = {k: v for k, v in (job.result or {}).items() if k == "http_error_rounds"}   # rounds survive a lease
+    conn.execute(db.jobs.update().where(db.jobs.c.id == job.id).values(payload=p, result={"ingest": scratch, **keep}))
     conn.execute(db.pulls.update().where(db.pulls.c.job_id == job.id, db.pulls.c.started_at.is_(None))
                  .values(started_at=now))
     return True
@@ -1576,31 +1610,40 @@ def fail(dev, job_id: str, body: dict) -> dict:
         out["cooldown_until"] = None
         return out
 
+    give_up = False
     if cooldown_code in COOLDOWN_S:
         until = now + timedelta(seconds=COOLDOWN_S[cooldown_code])
+        # http_error (5xx / network, after the extension's own 3 tries) spends a round: after HTTP_ERROR_ROUNDS
+        # the job fails for good instead of repeating the retry ladder forever (fix round 2).
+        rounds = int((job.result or {}).get("http_error_rounds") or 0) + 1 if code == "http_error" else 0
+        give_up = code == "http_error" and rounds >= HTTP_ERROR_ROUNDS
         with db.tx() as conn:
             changes = {"cooldown_until": db.iso(until), "cooldown_reason": cooldown_code}
             if code == "signed_out":
                 changes["signed_in"] = False
             _set_device_state(conn, dev.id, **changes)
-            if job.kind == "ig_pull":
+            if job.kind == "ig_pull" and not give_up:
                 stop = {"rate_limited": "rate_limited", "warning": "rate_limited", "signed_out": "signed_out",
                         "challenge": "challenge"}.get(code, "error")
                 _close_pull(conn, job, stop, final=False)
             if suspended:
                 _pause_all_ig(conn, user_id, MSG["suspended"])
-            else:
-                _wait_again(conn, job, until, MSG.get(cooldown_code, MSG["http_error"]))
+            elif not give_up:
+                _wait_again(conn, job, until, MSG.get(cooldown_code, MSG["http_error"]),
+                            refund=code != "http_error", result_extra={"http_error_rounds": rounds} if rounds else None)
         if suspended:
             db.audit("ig_suspended", user_id=user_id, detail={"device": dev.id})
         out["cooldown_until"] = db.iso(until)
-        return out
+        if not give_up:
+            return out
 
     # Final failures for this job (no cooldown).
     msg = {"not_found": f"We couldn't find @{p.get('handle', '')} on Instagram. Check the name.",
            "private": f"@{p.get('handle', '')} is private. ReelVault only reads public accounts.",
            "parse_error": MSG["parse_error"], "bad_job": MSG["bad_job"],
            "permission_denied": MSG["permission_denied"]}.get(code, MSG["http_error"])
+    if give_up:
+        msg = HTTP_ERROR_FINAL
     with db.tx() as conn:
         if job.kind in ("ig_pull", "ig_profile") and p.get("account_id") and code in ("not_found", "private"):
             conn.execute(db.accounts.update().where(db.accounts.c.id == p["account_id"],
@@ -1629,10 +1672,17 @@ def fail(dev, job_id: str, body: dict) -> dict:
     return out
 
 
-def _wait_again(conn, job, run_after: datetime, message: str) -> None:
-    """Put an Instagram job back to waiting until run_after, without spending one of its attempts."""
-    vals = dict(state="waiting", lease_owner=None, lease_until=None, run_after=run_after, error_message=message,
-                attempts=func.max(db.jobs.c.attempts - 1, 0) if db.is_sqlite() else func.greatest(db.jobs.c.attempts - 1, 0))
+def _wait_again(conn, job, run_after: datetime, message: str, *, refund: bool = True,
+                result_extra: dict | None = None) -> None:
+    """Put an Instagram job back to waiting until run_after, without spending one of its attempts (refund=False:
+    the attempt stays spent, used for http_error)."""
+    vals = dict(state="waiting", lease_owner=None, lease_until=None, run_after=run_after, error_message=message)
+    if refund:
+        vals["attempts"] = func.max(db.jobs.c.attempts - 1, 0) if db.is_sqlite() \
+            else func.greatest(db.jobs.c.attempts - 1, 0)
+    if result_extra:
+        cur = conn.execute(select(db.jobs.c.result).where(db.jobs.c.id == job.id)).first()
+        vals["result"] = dict((cur[0] if cur else None) or {}, **result_extra)
     if job.kind == "ig_pull":
         vals["payload"] = _resume_payload(conn, job)
     if job.kind == "ig_videos":  # after the wait, only the reels not uploaded yet (no repeat mediaInfo calls)

@@ -7,10 +7,12 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tarfile
 from datetime import timedelta
 from pathlib import Path, PurePosixPath
@@ -24,6 +26,7 @@ from .settings import get_settings
 log = logging.getLogger("reelvault.storage")
 
 USER_ID_RE = re.compile(r"^usr_[a-z2-7]{16}$")
+APP_UID = 10001   # the image's reelvault user
 
 
 class UnsafePath(ValueError):
@@ -194,8 +197,33 @@ def _delete_video(user_id: str, reel_id: str, rel: str) -> bool:
 
 # ============================================================================================== backups (daily)
 
-def backup() -> dict:
-    """Daily SQLite online backup (keep 7) + weekly member-files tar without videos (keep 4); BACKUP_COPY_CMD."""
+def _has_member_files() -> bool:
+    for _root, _dirs, files in os.walk(users_dir()):
+        if files:
+            return True
+    return False
+
+
+def _make_tar(tar_path: Path, have_zstd: bool) -> None:
+    """Build the member-files tar under a temporary name, then rename it into place (an old copy stays usable until
+    the new one is complete)."""
+    tmp = tar_path.with_name(tar_path.name + ".part")
+    tmp.unlink(missing_ok=True)
+    if have_zstd:
+        subprocess.run(["tar", "--zstd", "--exclude=*.mp4", "-cf", str(tmp), "-C", str(data_dir()), "users"],
+                       check=False, capture_output=True, timeout=3600)
+    else:
+        with tarfile.open(tmp, "w:gz") as tf:
+            tf.add(users_dir(), arcname="users", filter=lambda ti: None if ti.name.endswith(".mp4") else ti)
+    if tmp.exists():
+        tmp.replace(tar_path)
+
+
+def backup(*, force_files: bool = False) -> dict:
+    """Daily SQLite online backup (keep 7) + weekly member-files tar without videos (keep 4); BACKUP_COPY_CMD.
+    force_files (the CLI, i.e. backup.sh and `setup.sh update`): rebuild this week's files tar now, so a manual
+    backup before an update or a move holds today's member files (fix round 2). A weekly tar is not made while
+    users/ holds no file yet (first boot), so the next backup makes a real one."""
     ensure_dirs()
     bdir = backups_dir()
     now = db.utcnow()
@@ -220,13 +248,8 @@ def backup() -> dict:
     have_zstd = shutil.which("zstd") is not None and shutil.which("tar") is not None
     tar_name = f"users-{week}.tar.zst" if have_zstd else f"users-{week}.tar.gz"
     tar_path = bdir / tar_name
-    if not tar_path.exists():
-        if have_zstd:
-            subprocess.run(["tar", "--zstd", "--exclude=*.mp4", "-cf", str(tar_path), "-C", str(data_dir()), "users"],
-                           check=False, capture_output=True, timeout=3600)
-        else:
-            with tarfile.open(tar_path, "w:gz") as tf:
-                tf.add(users_dir(), arcname="users", filter=lambda ti: None if ti.name.endswith(".mp4") else ti)
+    if (force_files or not tar_path.exists()) and _has_member_files():
+        _make_tar(tar_path, have_zstd)
         out["files"] = tar_name
         _keep_newest(list(bdir.glob("users-*.tar.zst")) + list(bdir.glob("users-*.tar.gz")), 4)
     if s.backup_copy_cmd:
@@ -263,9 +286,66 @@ def sqlite_path() -> Path:
     return Path(s.database_url.split("///", 1)[-1])
 
 
+def _pids_with_open(paths: list[Path]) -> list[int]:
+    """Other processes in this container that hold one of these files open (Linux /proc)."""
+    want = {str(p) for p in paths}
+    me = os.getpid()
+    out = []
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return out
+    for d in proc.iterdir():
+        if not d.name.isdigit() or int(d.name) == me:
+            continue
+        try:
+            for fd in (d / "fd").iterdir():
+                try:
+                    target = os.readlink(fd)
+                except OSError:
+                    continue
+                if target.removesuffix(" (deleted)") in want:
+                    out.append(int(d.name))
+                    break
+        except OSError:
+            continue
+    return out
+
+
+def _web_answers() -> bool:
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{os.environ.get('PORT', '8000')}/healthz", timeout=2) as r:
+            return r.status == 200
+    except Exception:  # noqa: BLE001
+        return False
+
+
+RUNNING_MSG = ("ReelVault is running and has the database open, so a restore now would be lost. Stop the app first "
+               "(./deploy/backup.sh restore does that). On Fly.io, Railway or Render: set RV_RESTORE_FROM to the "
+               "backup file and restart the app instead (deploy/hosts/paas-with-volume.md).")
+
+
+def _daily_marks(path: Path, today: str) -> list[tuple]:
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return []
+    try:
+        return con.execute("SELECT scope, key, window, count FROM usage_counters WHERE scope = 'global' AND "
+                           "key LIKE 'daily:%' AND window = ?", (today,)).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        con.close()
+
+
 def restore_db(backup_file: str | Path) -> dict:
-    """Put a daily DB backup back in place. Run ONLY while web and worker are stopped (backup.sh does that).
-    The current DB is kept as backups/before-restore-<time>.sqlite first, so a restore can be undone."""
+    """Put a daily DB backup back in place. Refuses while web or worker has the database open in this container,
+    or while the web answers on PORT (fix round 2: a restore under a running app went into a deleted file).
+    The current DB is kept as backups/before-restore-<time>.sqlite first, so a restore can be undone. Today's
+    daily-job marks are carried into the restored file, so today's backup (db-<today>.sqlite, the good copy) is
+    not taken again from the older data."""
     src = Path(backup_file).expanduser().resolve()
     if not src.is_file():
         raise SystemExit(f"Backup file not found: {src}")
@@ -280,7 +360,11 @@ def restore_db(backup_file: str | Path) -> dict:
     if ok != "ok" or not has_users:
         raise SystemExit("That backup file is damaged or is not a ReelVault database.")
     dest = sqlite_path()
+    if _pids_with_open([dest, Path(str(dest) + "-wal")]) or _web_answers():
+        raise SystemExit(RUNNING_MSG)
     ensure_dirs()
+    today = db.utcnow().strftime("%Y-%m-%d")
+    marks = _daily_marks(dest, today) if dest.exists() else []
     kept = None
     if dest.exists():
         kept = backups_dir() / f"before-restore-{db.utcnow():%Y-%m-%dT%H%M%S}.sqlite"
@@ -297,8 +381,67 @@ def restore_db(backup_file: str | Path) -> dict:
         Path(str(dest) + suffix).unlink(missing_ok=True)
     tmp = dest.with_suffix(".restoring")
     shutil.copyfile(src, tmp)
+    if marks:
+        con = sqlite3.connect(str(tmp))
+        try:
+            with con:
+                for scope, key, window, count in marks:
+                    con.execute("INSERT INTO usage_counters (scope, key, window, count, updated_at) "
+                                "VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT (scope, key, window) "
+                                "DO UPDATE SET count = max(count, excluded.count)", (scope, key, window, count))
+            con.execute("PRAGMA journal_mode=DELETE")
+        except sqlite3.Error:
+            log.warning("could not carry today's daily-job marks into the restored database")
+        finally:
+            con.close()
     tmp.replace(dest)
     return {"restored": src.name, "previous_kept_as": kept.name if kept else None}
+
+
+def restore_on_start() -> str | None:
+    """RV_RESTORE_FROM=<backup file>: restore it once before web and worker start (supervise.main), for platforms
+    whose shell runs inside the live container (Fly.io, Railway, Render). A marker file makes later restarts skip
+    it until the variable changes; the owner removes the variable afterwards."""
+    want = os.environ.get("RV_RESTORE_FROM", "").strip()
+    if not want:
+        return None
+    src = Path(want)
+    if not src.is_absolute():
+        src = backups_dir() / src
+    src = src.resolve()
+    if src.parent != backups_dir().resolve() or not src.is_file():
+        print(f'{{"level":"error","msg":"RV_RESTORE_FROM: {src.name} is not a file in the backups folder; '
+              'nothing was restored"}', flush=True)
+        return None
+    st = src.stat()
+    marker = backups_dir() / f".restored-{src.name}-{int(st.st_mtime)}"
+    if marker.exists():
+        return None
+    out = restore_db(src)
+    marker.write_text(db.iso(db.utcnow()) or "")
+    print(f'{{"level":"warning","msg":"Restored {out["restored"]} (RV_RESTORE_FROM). The old database was kept as '
+          f'{out["previous_kept_as"]}. Remove RV_RESTORE_FROM now."}}', flush=True)
+    return out["restored"]
+
+
+def drop_root(module: str, argv: list[str]) -> None:
+    """Fix round 2: a root shell (fly ssh console, Railway/Render shell) must not create root-owned files in a data
+    folder the app (uid 10001) owns. Re-run this CLI as uid 10001 with setpriv; refuse when that is not possible.
+    Does nothing unless we are root AND DATA_DIR belongs to uid 10001 (the container layout)."""
+    if not hasattr(os, "geteuid") or os.geteuid() != 0 or os.environ.get("RV_ALLOW_ROOT_CLI") == "1":
+        return
+    try:
+        owner = data_dir().stat().st_uid
+    except OSError:
+        return
+    if owner != APP_UID:
+        return
+    setpriv = shutil.which("setpriv")
+    if not setpriv:
+        raise SystemExit("Run this as the reelvault user (uid 10001), not as root, or files become unreadable "
+                         "for the app.")
+    os.execv(setpriv, [setpriv, f"--reuid={APP_UID}", f"--regid={APP_UID}", "--clear-groups", "--",
+                       sys.executable, "-m", module, *argv])
 
 
 def restore_files(tar_file: str | Path) -> dict:
@@ -336,7 +479,7 @@ def _main(argv: list[str]) -> int:
     cmd = argv[0] if argv else ""
     if cmd == "backup":
         db.init()
-        print(json.dumps(backup()))
+        print(json.dumps(backup(force_files=True)))
         return 0
     if cmd == "list":
         for b in list_backups():
@@ -359,6 +502,5 @@ def _main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    import sys
-
+    drop_root("reelvault.server.storage", sys.argv[1:])
     sys.exit(_main(sys.argv[1:]))

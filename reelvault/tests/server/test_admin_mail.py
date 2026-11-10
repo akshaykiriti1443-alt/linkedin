@@ -75,7 +75,7 @@ def test_reset_request_emails_a_working_link(client, outbox, member):
     text = outbox[0].get_content()
     link = next(w for w in text.split() if "#reset/" in w)
     token = link.split("#reset/")[1]
-    assert client.post("/api/auth/reset", json={"token": token, "new": "brand-new-pass-99"}).json() == {"ok": True}
+    assert client.post("/api/auth/reset", json={"token": token, "new": "brand-new-pass-99"}).json()["ok"] is True
     assert client.post("/api/auth/login", json={"email": member.email, "password": "brand-new-pass-99"}).status_code == 200
     with db.tx(immediate=False) as conn:
         row = conn.execute(select(db.reset_links).where(db.reset_links.c.user_id == member.id)).first()

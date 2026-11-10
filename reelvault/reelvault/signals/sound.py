@@ -436,6 +436,7 @@ def ml_events(raw: SoundRaw) -> list[dict]:
             continue
         thr = adaptive_threshold(s) if g in SFX_GROUPS else 0.3
         mask = s >= thr
+        runs: list[list[int]] = []
         i = 0
         while i < len(mask):
             if not mask[i]:
@@ -444,17 +445,32 @@ def ml_events(raw: SoundRaw) -> list[dict]:
             j = i
             while j + 1 < len(mask) and mask[j + 1]:
                 j += 1
-            if g in SFX_GROUPS:   # a short SFX lies in the overlap of the windows that heard it
-                a, b = float(t0[j]), float(t0[i] + WIN_S)
+            runs.append([i, j, j])          # [first, last, last of the FIRST sub-run]
+            i = j + 1
+        if g in SFX_GROUPS and g not in SWEEP_ML:
+            # A ringing SFX (ding, bell) decays: later windows still hear its tail and form a second run a few
+            # hundred ms on. Runs of the same label less than TAIL_GAP_S apart are one event (fix round 2).
+            merged: list[list[int]] = []
+            for r in runs:
+                if merged and float(t0[r[0]]) - float(t0[merged[-1][1]] + HOP_S) < TAIL_GAP_S:
+                    merged[-1][1] = r[1]
+                else:
+                    merged.append(r)
+            runs = merged
+        for i, j, j0 in runs:
+            ev: dict = {"label": g, "source": "ml", "score": float(s[i:j + 1].max())}
+            if g in SFX_GROUPS:   # a short SFX lies in the overlap of the windows of its first run
+                a, b = float(t0[j0]), float(t0[i] + WIN_S)
                 if b <= a:
-                    mid = float(t0[i] + (t0[j] - t0[i]) / 2)
+                    mid = float(t0[i] + (t0[j0] - t0[i]) / 2)
                     a, b = mid, mid + WIN_S
+                if g not in SWEEP_ML:
+                    # its onset lies in the FIRST window that heard it (fix round 2): fuse() looks there
+                    ev["a0"], ev["a1"] = float(t0[i]), float(t0[i] + WIN_S)
             else:
                 a, b = float(t0[i]), float(t0[j] + WIN_S)
-            peak = float(s[i:j + 1].max())
-            out.append({"label": g, "t": a, "t_end": min(b, raw.duration), "source": "ml", "score": peak,
-                        "ratio": peak / thr})
-            i = j + 1
+            ev.update({"t": a, "t_end": min(b, raw.duration), "ratio": ev["score"] / thr})
+            out.append(ev)
     return out
 
 
@@ -527,6 +543,8 @@ def on_beat_grid(t: float, onsets: list[float], period: float | None, tol: float
 
 
 RELIABLE = {"ding", "typing", "camera_shutter", "cash_register", "click", "laughter", "applause"}
+SWEEP_ML = ("whoosh", "sound_effect")   # ML labels matched against DSP sweeps, not onsets
+TAIL_GAP_S = 1.0                        # same-label ML runs closer than this are one decaying sound
 ONSET_TOL = 0.12
 SPEECH_LEAD = 0.2        # an onset this close before a speech span belongs to the first syllable ("S" of "Step")
 SPEECH_SFX_SCORE = 0.5   # inside speech, only a reliable ML label this sure is kept as an SFX (fix round 1)
@@ -685,6 +703,16 @@ def fuse(raw: SoundRaw, speech_spans: list | None = None) -> list[dict]:
                         s["ml"] = max(s.get("ml", 0.0), e["score"])
                 continue
         inside = [(k, h) for k, h in enumerate(hits) if e["t"] - ONSET_TOL <= h["t"] <= e["t_end"] + ONSET_TOL]
+        early = [(k, h) for k, h in enumerate(hits)
+                 if "a0" in e and e["a0"] - ONSET_TOL <= h["t"] < e["t"] - ONSET_TOL]
+        if early:
+            # A ringing sound (ding, bell) is still heard by later windows, so the overlap lands 0.5-0.9 s after
+            # its onset, often on a music kick. A clearly stronger onset earlier in the FIRST window that heard
+            # it is the real start (fix round 2).
+            eb = max(early, key=lambda kh: kh[1]["ratio"])
+            best = max((h["ratio"] for _, h in inside), default=0.0)
+            if eb[1]["ratio"] >= 2.0 * best:
+                inside = [eb] + [(k, h) for k, h in inside if h["ratio"] < eb[1]["ratio"]]
         if inside:
             k, h = max(inside, key=lambda kh: kh[1]["ratio"])
             if e["score"] < SFX_CAP and weak_on_beat(h):

@@ -125,8 +125,19 @@ Fly Volumes are local NVMe disks on the machine, which is what SQLite needs.
 
 - Sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`, then follow "After the first sign-in" in [../DEPLOY.md](../DEPLOY.md).
 - **Backups** are made daily inside `/data/backups`. Use the platform's volume snapshots too (Fly: `fly volumes
-  snapshots`, Railway and Render have volume backups in the dashboard). To restore a database file, open a shell in
-  the service and run `python -m reelvault.server.storage list`, then stop traffic and run
-  `python -m reelvault.server.storage restore /data/backups/db-YYYY-MM-DD.sqlite`, then restart the service.
+  snapshots`, Railway and Render have volume backups in the dashboard).
+- **Restore a database backup.** The platform's shell runs inside the live app, so don't restore from the shell
+  (ReelVault refuses: the running app would keep writing to the old file). Do this instead:
+  1. See the backups: open a shell in the service and run
+     `setpriv --reuid=10001 --regid=10001 --clear-groups -- python -m reelvault.server.storage list`.
+  2. In the platform's settings, add the variable `RV_RESTORE_FROM` with the file name, for example
+     `db-2026-11-09.sqlite` (Fly: `fly secrets set RV_RESTORE_FROM=db-2026-11-09.sqlite`).
+  3. Restart or redeploy. ReelVault restores the file before it starts. The old database is kept as
+     `before-restore-<time>.sqlite`.
+  4. Remove `RV_RESTORE_FROM` again (Fly: `fly secrets unset RV_RESTORE_FROM`).
+- **Commands in the platform's shell** run as root. Start them with
+  `setpriv --reuid=10001 --regid=10001 --clear-groups --` so new files belong to the app. ReelVault's own commands
+  (`storage`, `security`, `bench`) switch to the app user by themselves. Files a root shell made anyway are given
+  back to the app at the next restart.
 - **Measure** with `python -m reelvault.server.bench` from the platform's shell (Fly: `fly ssh console`).
 - **Updates:** push to GitHub (Railway, Render) or run `fly deploy` again. Migrations run by themselves.

@@ -294,7 +294,7 @@ export function jobLine(j, {onChange} = {}) {
         const r = await busy(e.currentTarget, () => post(`/api/jobs/${j.id}/retry`, {}));
         toast(r.ok ? "Trying again." : r.error); if (onChange) onChange(); pollSoon();
       }}, "Try again") : null,
-      active ? h("button", {type: "button", class: "ghost sm", onclick: async e => {
+      active && !INTERNAL_KINDS.has(j.kind) ? h("button", {type: "button", class: "ghost sm", onclick: async e => {
         const r = await busy(e.currentTarget, () => post(`/api/jobs/${j.id}/cancel`, {}));
         toast(r.ok ? "Stopped." : r.error); if (onChange) onChange(); pollSoon();
       }}, "Stop") : null),
@@ -302,8 +302,20 @@ export function jobLine(j, {onChange} = {}) {
       ? h("p", {class: "hint"}, text) : null,
     pct !== null && active ? h("div", {class: "progress", role: "progressbar", "aria-valuenow": pct, "aria-valuemin": 0, "aria-valuemax": 100}, h("i", {style: {width: pct + "%"}})) : null,
     j.eta && j.eta.text ? h("p", {class: "hint"}, j.eta.text) : null,
-    j.run_after && j.state === "queued" ? h("p", {class: "hint"}, "Starts " + day(j.run_after)) : null);
+    j.run_after && j.state === "queued" ? h("p", {class: "hint"}, startsText(j.run_after)) : null);
   return box;
+}
+// Housekeeping jobs ReelVault starts by itself: no Stop button (fix round 2).
+const INTERNAL_KINDS = new Set(["refresh_insights", "score_account", "pick_sample"]);
+/** "Starts in a minute" / "Starts at 14:05" today, the date only on another day (fix round 2). */
+export function startsText(iso) {
+  const t = new Date(iso);
+  if (isNaN(t)) return "";
+  const mins = (t - Date.now()) / 60000;
+  if (mins <= 1.5) return "Starts in a minute";
+  if (mins < 60) return `Starts in ${Math.round(mins)} minutes`;
+  if (t.toDateString() === new Date().toDateString()) return "Starts at " + t.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+  return "Starts " + day(iso);
 }
 export const JOB_TEXT = {
   ig_pull: "Reading reels", ig_profile: "Reading a profile", ig_videos: "Getting videos", ig_discover: "Finding accounts",
@@ -356,7 +368,7 @@ export function every(ms, fn) {
 
 // ============================================================================================ routing
 const ROUTES = {
-  join: ["auth", "join"], login: ["auth", "login"], reset: ["auth", "reset"], privacy: ["help", "privacy"], help: ["help", "help"],
+  join: ["auth", "join"], login: ["auth", "login"], reset: ["auth", "reset"], verify: ["auth", "verify"], privacy: ["help", "privacy"], help: ["help", "help"],
   home: ["home", "home"], onboarding: ["onboarding", "onboarding"],
   competitors: ["competitors", "list"], competitor: ["competitors", "detail"], discover: ["competitors", "discover"],
   reels: ["reels", "list"], reel: ["reels", "detail"],
@@ -364,7 +376,7 @@ const ROUTES = {
   create: ["outputs", "create"], outputs: ["outputs", "list"], output: ["outputs", "detail"],
   settings: ["settings", "settings"], admin: ["admin", "admin"],
 };
-const PUBLIC = new Set(["join", "login", "reset", "privacy", "help"]);
+const PUBLIC = new Set(["join", "login", "reset", "verify", "privacy", "help"]);
 
 export function go(hash) { if (location.hash === hash) route(); else location.hash = hash; }
 export function parseHash() {

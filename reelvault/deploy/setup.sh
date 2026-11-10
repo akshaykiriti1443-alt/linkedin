@@ -74,7 +74,8 @@ check_host() {
   fstype="$(df -PT "$dockdir" 2>/dev/null | awk 'NR==2 {print $2}' || echo unknown)"
   [ "$cpus" -ge 2 ] || warn "This server has $cpus CPU. ReelVault needs at least 2 (see DEPLOY.md, 'Host must have')."
   [ "$mem_kb" -ge 3800000 ] || warn "This server has less than 4 GB of memory. Transcription may run out of memory."
-  [ "$free_kb" -ge 80000000 ] || warn "Less than 80 GB free on the Docker disk. Member files and videos need room."
+  # The guides recommend an 80 GB disk; a fresh one has about 70 GB free, so warn below 60 GB (fix round 2).
+  [ "$free_kb" -ge 60000000 ] || warn "Less than 60 GB free on the Docker disk. Member files and videos need room (we suggest an 80 GB disk)."
   case "$fstype" in
     nfs*|cifs|smb*|fuse*|9p) die "Docker stores data on a network drive ($fstype). SQLite needs a local disk." ;;
   esac

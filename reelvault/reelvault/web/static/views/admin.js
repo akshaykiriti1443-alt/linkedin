@@ -56,8 +56,9 @@ async function members(view, {query, token}) {
     return h("div", {class: "card", dataset: {user: u.id}},
       h("div", {class: "row"}, h("b", u.name || u.email), h("span", {class: "muted"}, u.email),
         pill({pending: "Waiting", active: "Active", disabled: "Turned off"}[u.status] || u.status, u.status === "active" ? "ok" : u.status === "pending" ? "warn" : "bad"),
-        u.role === "admin" ? pill("Admin", "busy") : null, u.support_access ? pill("Support access on", "warn") : null),
-      h("p", {class: "small muted"}, [u.skool_url, `joined ${day(u.created_at)}`, `last seen ${ago(u.last_seen_at)}`, `${num(u.accounts)} competitors`, `${num(u.reels)} reels`,
+        u.role === "admin" ? pill("Admin", "busy") : null, u.support_access ? pill("Support access on", "warn") : null,
+        u.status === "pending" && u.on_allowlist ? pill("On the allowlist", "ok") : null),
+      h("p", {class: "small muted"}, [u.skool_url, `joined ${day(u.created_at)}`, `last seen ${ago(u.last_seen_at)}`, `${num(u.accounts)} competitor${u.accounts === 1 ? "" : "s"}`, `${num(u.reels)} reel${u.reels === 1 ? "" : "s"}`,
         `${num(u.storage_mb)} MB`, u.ai_mode ? "AI: " + nice(u.ai_mode) : "no AI yet", u.disabled_reason ? "off: " + nice(u.disabled_reason) : null].filter(Boolean).join(" · ")),
       actions, out);
   });
@@ -109,7 +110,7 @@ async function invites(view, {token}) {
       copyLine(d.new_code.code, "Copy the code"));
   }
   view.append(h("section", {class: "panel", id: "community-invite"}, h("h2", "Community code"),
-    h("p", c.code_hint ? `The current code ends in ${c.code_hint}. Made ${day(c.created_at)}. Used ${num(c.used_count)} times.` : "There is no community code yet."),
+    h("p", c.code_hint ? `The current code ends in ${c.code_hint}. Made ${day(c.created_at)}. Used ${num(c.used_count)} time${c.used_count === 1 ? "" : "s"}.` : "There is no community code yet."),
     d.signup_url ? h("p", {class: "small"}, "Sign-up page: ", h("code", d.signup_url)) : null,
     codeOut,
     h("div", {class: "row"}, codeIn, h("button", {type: "button", id: "rotate-code", onclick: async e => {
@@ -138,7 +139,7 @@ async function invites(view, {token}) {
         }}, "Stop it"))))))) : h("p", {class: "muted"}, "No invite links yet.")));
   const emails = h("textarea", {id: "allow-emails", rows: 3, placeholder: "One email per line"});
   const list = al.ok ? arr(al.data.emails) : [];
-  view.append(h("section", {class: "panel"}, h("h2", "Allowlist"), h("p", {class: "hint"}, "People with these emails can sign up with the community code and get in at once."),
+  view.append(h("section", {class: "panel"}, h("h2", "Allowlist"), h("p", {class: "hint"}, "People with these emails can sign up with the community code. They get in once they open the link we email them. If email is not set up, they wait for you with an \"On the allowlist\" badge."),
     emails, h("div", {class: "row"}, h("button", {type: "button", class: "ghost", onclick: async e => {
       const a = await busy(e.currentTarget, () => post("/api/admin/allowlist", {emails: emails.value.split(/[\s,;]+/).filter(Boolean)}));
       toast(a.ok ? "Saved." : a.error); if (a.ok) redraw();
@@ -150,7 +151,7 @@ async function invites(view, {token}) {
 
 // ------------------------------------------------------------------------------------------------ settings
 const SETTING_HELP = {
-  signup_mode: ["Who gets in with the community code", [["pending", "They wait for my approval (people on the allowlist get in at once)"], ["active", "They get in at once"]]],
+  signup_mode: ["Who gets in with the community code", [["pending", "They wait for my approval (people on the allowlist get in after they confirm their email)"], ["active", "They get in at once"]]],
   community_code_days: "Make a new community code every (days)", notify_admin_email: "Email me about new signups",
   expire_inactive_days: "Turn off members who don't log in for (days, 0 = never)", reconfirm_days: "Ask members for the current code every (days, 0 = never)",
   skool_fetch: "Let the server read Skool pages when a member has no extension", max_accounts_per_member: "Competitors per member",
@@ -191,6 +192,16 @@ async function settingsPage(view, {token}) {
   }}, "Save settings"))));
 }
 
+// Fix round 2: DEPLOY.md and 11.7 promise a red line after 36 hours, and the size.
+function backupLine(d) {
+  const b = d.last_backup;
+  if (!b) return h("p", {class: "msg err"}, "No backup yet.");
+  const at = b.at || b;
+  const old = (Date.now() - new Date(at).getTime()) > 36 * 3600 * 1000;
+  const mb = b.db_bytes ? ` (${(b.db_bytes / 1024 / 1024).toFixed(1)} MB)` : "";
+  return h("p", {class: old ? "msg err" : null, id: "last-backup"}, `Last backup ${ago(at)}${mb}.` + (old ? " That is more than 36 hours ago. Check the worker and the disk." : ""));
+}
+
 // ------------------------------------------------------------------------------------------------ copy
 async function copyPage(view, {token}) {
   const [r, def] = await Promise.all([get("/api/admin/copy"), loadCopy()]);
@@ -200,7 +211,9 @@ async function copyPage(view, {token}) {
   const ov = r.data || {};
   const KEYS = [["connector_title", "Title", false], ["connector_intro", "Intro", false], ["connector_steps", "Connector steps (one per line)", true],
     ["connector_notes", "Notes (one per line)", true], ["connector_estimate_line", "Estimate line", false], ["connector_prompts", "Prompts to copy (one per line)", true],
-    ["claude_code_command", "Claude Code command", false], ["desktop_steps", "Desktop app steps (one per line)", true], ["key_steps", "API key steps (one per line)", true]];
+    ["claude_code_command", "Claude Code command", false], ["desktop_steps", "Desktop app steps (one per line)", true],
+    ["desktop_install_steps", "Desktop app install steps (one per line)", true], ["desktop_install_command", "Desktop app install command", false],
+    ["key_steps", "API key steps (one per line)", true]];
   const els = {};
   const rows = KEYS.map(([k, label, isList]) => {
     const t = h("textarea", {id: "copy-" + k, rows: isList ? 5 : 2, placeholder: Array.isArray(def[k]) ? def[k].join("\n") : def[k] || ""});
@@ -235,7 +248,8 @@ async function health(view, {token}) {
       h("div", null, h("b", num(d.jobs_failed_24h)), "failed jobs (24 h)")),
     h("h2", "Server load"), h("p", `${num(l.media_queued)} reels waiting for media work · ${num(l.budget_used_today)} of ${num(l.budget_today)} used today · about ${l.sec_per_reel || "?"} s a reel.`),
     h("p", w.at ? `Worker seen ${ago(w.at)} on ${w.host || "?"}.` : h("b", "The worker is not running. Jobs will wait.")),
-    h("p", d.last_backup ? `Last backup ${ago(d.last_backup.at || d.last_backup)}.` : h("b", "No backup yet.")),
+    backupLine(d),
+    d.backup_failed ? h("p", {class: "msg err"}, `The last backup failed ${ago(d.backup_failed.at)}. ${d.backup_failed.message ? "Reason: " + d.backup_failed.message.replace(/\.?\s*$/, ". ") : ""}Run ./deploy/backup.sh to try again.`) : null,
     d.last_backup && d.last_backup.copy_ok === false ? h("p", {class: "msg err"}, "The off-site copy failed. Check BACKUP_COPY_CMD in deploy/.env, or copy the backups from the server (deploy/DEPLOY.md, Backups).") : null));
   } else view.append(empty(s.error));
   if (hz.ok) view.append(h("p", {class: "small muted"}, `Version ${hz.data.version} · database ${hz.data.db}.`));

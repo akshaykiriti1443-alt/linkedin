@@ -355,6 +355,19 @@ def end_sessions(conn, user_id: str, *, except_hash: str | None = None) -> int:
     return conn.execute(q).rowcount
 
 
+def sign_out_apps(conn, user_id: str) -> dict:
+    """Password reset/change (fix round 2): revoke every Claude connector token and every paired device (Chrome
+    extension and desktop app) of the member, so a stolen session cannot keep a back door. Jobs are kept."""
+    now = db.utcnow()
+    devs = conn.execute(db.devices.update().where(db.devices.c.user_id == user_id,
+                                                  db.devices.c.revoked_at.is_(None))
+                        .values(revoked_at=now)).rowcount
+    toks = conn.execute(db.oauth_tokens.update().where(db.oauth_tokens.c.user_id == user_id,
+                                                       db.oauth_tokens.c.revoked_at.is_(None))
+                        .values(revoked_at=now)).rowcount
+    return {"devices": int(devs or 0), "tokens": int(toks or 0)}
+
+
 def revoke_everything(conn, user_id: str) -> None:
     """Disabled user (11.1): sessions, device tokens and OAuth tokens revoked; active jobs canceled."""
     now = db.utcnow()
@@ -524,4 +537,7 @@ def _main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    from .storage import drop_root
+
+    drop_root("reelvault.server.security", sys.argv[1:])   # never write root-owned files in /data (fix round 2)
     sys.exit(_main(sys.argv[1:]))

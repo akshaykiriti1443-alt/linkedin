@@ -40,6 +40,23 @@ The app runs on your computer. Breakdowns use the Claude Code app signed in to y
 subscription (`brain = "claude-code"`), so there is no API key and no per-reel bill.
 Everything is stored in `C:\Users\<you>\ReelVault`.
 
+## ReelVault Members (server)
+
+ReelVault Members is the online version for a Skool community. Members sign up with an invite, add the Instagram
+accounts that win in their niche, and their own Chrome reads those reels through the ReelVault Members extension
+(their Instagram login never leaves the browser). ReelVault finds the outliers, shows what works (formats, hooks,
+sound), and writes scripts, Meta ads, 30-day plans and competitor reports. Each member brings their own AI: their
+Claude plan through the Claude connector, an API key, or this desktop app. No payments.
+
+- **Owner guide** (host it, invite and approve members, limits, risks, what to test first):
+  [members/OWNER-GUIDE.md](members/OWNER-GUIDE.md)
+- **Member guide** (sign up, extension, AI, competitors, outliers, playbooks, outputs, editor brief):
+  [members/MEMBER-GUIDE.md](members/MEMBER-GUIDE.md)
+- **Put it online:** [deploy/DEPLOY.md](deploy/DEPLOY.md)
+- **Technical blueprint:** [DESIGN-SAAS.md](DESIGN-SAAS.md)
+
+The desktop app below keeps working on its own; Members is a separate product that shares some code.
+
 ## What you get on disk
 
 ```

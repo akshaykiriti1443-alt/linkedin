@@ -24,10 +24,19 @@ def _uvicorn_argv(role: str) -> list[str]:
             "--log-level", "warning"]
 
 
+def _restore_first() -> None:
+    """RV_RESTORE_FROM (fix round 2): restore a database backup before web and worker open the database."""
+    if os.environ.get("RV_RESTORE_FROM", "").strip():
+        from .storage import restore_on_start
+
+        restore_on_start()
+
+
 def supervise() -> int:
     from .app import prepare_runtime, setup_logging
 
     setup_logging()
+    _restore_first()
     prepare_runtime()  # migrate + bootstrap once, before both processes start
     specs = {"web": _uvicorn_argv("web"), "worker": [sys.executable, "-m", "reelvault.server.jobs"]}
     procs: dict[str, subprocess.Popen] = {}

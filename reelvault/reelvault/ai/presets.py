@@ -271,11 +271,12 @@ def cost_line(model: str | None) -> str | None:
     d = _cost(model, 0, 1)
     if c is None or d is None:
         return None
-    return f"{_money(c)} a reel tagged, {_money(d)} a deep read"
+    return f"{_cents(c)} a reel tagged, {_cents(d)} a deep read"
 
 
-def _money(v: float) -> str:
-    """'about $0.03', or 'less than 1 cent' (fix round 1: '$0.00' read like a bug)."""
+def _cents(v: float) -> str:
+    """Per-reel price: 'about $0.03', or 'less than 1 cent' (fix round 1: '$0.00' read like a bug). Fix round 2:
+    a second _money() below (for whole-run totals) had replaced this one, so every model read 'under $1'."""
     return "less than 1 cent" if v < 0.005 else f"about ${v:.2f}"
 
 
@@ -310,7 +311,8 @@ def estimate(
     if mode == "desktop":
         hours = max(1, math.ceil((tags * 40 + deep * 150) / 3600)) if tags or deep else 0
         out["lines"] = [
-            f"The desktop app works through {tags} reels while it is open: about {hours} hours of work "
+            f"The desktop app works through {tags} reel{'s' if tags != 1 else ''} while it is open: about {hours} "
+            f"hour{'s' if hours != 1 else ''} of work "
             "on your Claude plan.",
             "Nothing runs while the app is closed.",
         ]

@@ -50,6 +50,7 @@ class CodeIn(Body):
 class PasswordIn(Body):
     current: str = ""
     new: str = ""
+    sign_out_everywhere: bool = True   # also sign out Claude and paired devices (fix round 2)
 
 
 class ResetIn(Body):
@@ -202,15 +203,24 @@ def signup(body: SignupIn, request: Request):
 
     now = db.utcnow()
     pw_hash = security.hash_password(body.password)  # slow: outside the transaction
+    from . import mailer
+
+    mailer_ok = mailer.configured()
     value = csrf = None
     with db.tx() as conn:
         if conn.execute(select(db.users.c.id).where(db.users.c.email == email)).first():
             raise ApiError(409, "busy", "There is already an account with that email. Sign in instead.")
         allow = conn.execute(select(db.allowlist.c.email).where(db.allowlist.c.email == email)).first()
-        if inv.kind == "single" or allow is not None:
+        # Fix round 2: being on the allowlist says the email belongs to a community member, not that the person
+        # typing owns it. An allowlisted signup gets in once they open the link we email them; without email set
+        # up it waits for the admin, who sees an "On the allowlist" badge (one click to approve).
+        if inv.kind == "single":
             status = "active"
         else:
             status = "active" if db.get_setting("signup_mode", conn=conn) == "active" else "pending"
+        verify_token = None
+        if status == "pending" and allow is not None and mailer_ok:
+            verify_token, vh = security.new_token("vfy")
         used = conn.execute(db.invites.update().where(
             db.invites.c.id == inv.id, db.invites.c.revoked_at.is_(None) | (db.invites.c.expires_at > now),
             (db.invites.c.uses_left.is_(None)) | (db.invites.c.uses_left > 0)).values(
@@ -226,10 +236,22 @@ def signup(body: SignupIn, request: Request):
                                       "answers": {}, "version": 0, "updated_at": now}, do_nothing=True)
         db.audit("signup", user_id=uid, actor=uid, detail={"status": status, "invite_kind": inv.kind}, ip=ip,
                  conn=conn)
+        if verify_token:
+            conn.execute(db.reset_links.insert().values(token_hash=vh, user_id=uid, created_by=VERIFY_KIND,
+                                                        expires_at=now + timedelta(hours=24)))
         user = conn.execute(select(db.users).where(db.users.c.id == uid)).first()
         if status == "active":
             value, csrf = security.create_session(conn, uid, request)
     if status != "active":
+        if verify_token:
+            sent = False
+            try:
+                sent = mailer.verify_email(user, mailer._url(f"#verify/{verify_token}"))  # noqa: SLF001
+            except Exception:  # noqa: BLE001
+                sent = False
+            if sent:
+                return JSONResponse({"user": None, "status": "pending", "message": VERIFY_COPY, "check_email": True},
+                                    status_code=201)
         _notify_admin_pending(user)
         return JSONResponse({"user": None, "status": "pending", "message": PENDING_COPY}, status_code=201)
     resp = JSONResponse({"user": me_json(user, csrf), "status": "active"}, status_code=201)
@@ -255,6 +277,22 @@ def _dummy_hash() -> str:
     return _DUMMY_HASH[0]
 
 
+LOGIN_PER_EMAIL_CLIENT = 5     # wrong passwords per (email, IP or IPv6 /64) per 15 min
+LOGIN_PER_IP = 20              # wrong passwords per IP per 15 min, any email
+LOGIN_PER_EMAIL = 50           # wrong passwords per email per 15 min from addresses this member never used
+KNOWN_ADDRESS_DAYS = 90
+
+
+def _known_address(conn, user_id: str, ip: str | None) -> bool:
+    """True when this member signed in from this IP address in the last 90 days (audit log)."""
+    if not ip:
+        return False
+    a = db.audit_log
+    since = db.utcnow() - timedelta(days=KNOWN_ADDRESS_DAYS)
+    return conn.execute(select(a.c.id).where(a.c.user_id == user_id, a.c.action.in_(("login", "signup")),
+                                             a.c.ip == ip, a.c.at >= since).limit(1)).first() is not None
+
+
 @router.post("/api/auth/login")
 def login(body: LoginIn, request: Request):
     ip = security.client_ip(request)
@@ -262,14 +300,23 @@ def login(body: LoginIn, request: Request):
     email = norm_email(body.email)
     msg = "Too many tries. Try again in 15 minutes."
     # Count the attempt atomically BEFORE the slow password check (concurrent guesses cannot slip past a
-    # read-only check); a right password gives the hits back, so only failures use up the 5 / 20 (11.1).
-    ratelimit.hit_all(request, [("login_email", email, 5), ("login_ip", None, 20)], "quarter", message=msg)
+    # read-only check); a right password gives the hits back, so only failures use up the limits (11.1).
+    # Fix round 2: the strict 5 is per (email, client), so nobody can lock a member out from another address.
+    # The per-email limit is much higher (50) and does not apply on an address this member signed in from
+    # before, so the member (or the admin) can still get in while someone guesses elsewhere.
     with db.tx(immediate=False) as conn:
         user = conn.execute(select(db.users).where(db.users.c.email == email)).first()
+        known = user is not None and _known_address(conn, user.id, ip)
+    limits = [("login_email", ratelimit.key(email, ck), LOGIN_PER_EMAIL_CLIENT), ("login_ip", None, LOGIN_PER_IP)]
+    if not known:
+        limits.append(("login_email_all", email, LOGIN_PER_EMAIL))
+    ratelimit.hit_all(request, limits, "quarter", message=msg)
     ok = security.verify_password(user.password_hash if user else _dummy_hash(), body.password or "")
     if user and ok:
-        ratelimit.refund("login_email", email, "quarter")
+        ratelimit.refund("login_email", ratelimit.key(email, ck), "quarter")
         ratelimit.refund("login_ip", ck, "quarter")
+        if not known:
+            ratelimit.refund("login_email_all", email, "quarter")
     if not user or not ok:
         db.audit("login_failed", user_id=user.id if user else None, actor="system", detail={}, ip=ip)
         raise ApiError(401, "not_signed_in", "Email or password is wrong.")
@@ -341,8 +388,16 @@ def change_password(body: PasswordIn, request: Request, user=Depends(security.cu
     with db.tx() as conn:
         conn.execute(db.users.update().where(db.users.c.id == user.id).values(password_hash=h))
         security.end_sessions(conn, user.id, except_hash=request.state.session.id_hash)
-        db.audit("password_changed", user_id=user.id, actor=user.id, ip=security.client_ip(request), conn=conn)
-    return {"ok": True}
+        apps = security.sign_out_apps(conn, user.id) if body.sign_out_everywhere else None
+        db.audit("password_changed", user_id=user.id, actor=user.id, ip=security.client_ip(request), conn=conn,
+                 detail={"signed_out_apps": apps} if apps else {})
+    out = {"ok": True, "signed_out_apps": bool(apps)}
+    if apps and (apps["devices"] or apps["tokens"]):
+        out["message"] = SIGNED_OUT_APPS
+    return out
+
+
+SIGNED_OUT_APPS = "We signed out Claude and your devices. Connect them again."
 
 
 @router.post("/api/auth/reset")
@@ -357,7 +412,7 @@ def reset_password(body: ResetIn, request: Request):
     th = security.sha256_hex(body.token or "")
     with db.tx(immediate=False) as conn:
         r = conn.execute(select(db.reset_links).where(db.reset_links.c.token_hash == th)).first()
-    if r is None or r.used_at is not None or r.expires_at <= db.utcnow():
+    if r is None or r.used_at is not None or r.expires_at <= db.utcnow() or r.created_by == VERIFY_KIND:
         raise bad_input("This reset link is not valid any more. Ask the admin for a new one.")
     ratelimit.refund("reset_ip", ck, "quarter")
     h = security.hash_password(body.new)
@@ -368,8 +423,48 @@ def reset_password(body: ResetIn, request: Request):
             raise bad_input("This reset link is not valid any more. Ask the admin for a new one.")
         conn.execute(db.users.update().where(db.users.c.id == r.user_id).values(password_hash=h))
         security.end_sessions(conn, r.user_id)
-        db.audit("password_reset", user_id=r.user_id, actor="self", ip=ip, conn=conn)
-    return {"ok": True}
+        # A reset is what a member does after a break-in: Claude tokens and paired devices go too (fix round 2).
+        apps = security.sign_out_apps(conn, r.user_id)
+        db.audit("password_reset", user_id=r.user_id, actor="self", ip=ip, conn=conn,
+                 detail={"signed_out_apps": apps})
+    out = {"ok": True, "signed_out_apps": True}
+    if apps["devices"] or apps["tokens"]:
+        out["message"] = SIGNED_OUT_APPS
+    return out
+
+
+VERIFY_KIND = "verify-email"
+VERIFY_COPY = "Check your email. Open the link we sent you to get in. It works for 24 hours."
+
+
+class VerifyIn(Body):
+    token: str = ""
+
+
+@router.post("/api/auth/verify-email")
+def verify_email(body: VerifyIn, request: Request):
+    """The link an allowlisted signup gets by email (fix round 2): proves the email, then lets them in."""
+    from . import api_admin
+
+    ck = ratelimit.client_key(request)
+    ratelimit.hit("verify_ip", ck, 20, "quarter")
+    th = security.sha256_hex(body.token or "")
+    bad = "This link is not valid any more. Sign in, or message the admin."
+    now = db.utcnow()
+    with db.tx() as conn:
+        r = conn.execute(select(db.reset_links).where(db.reset_links.c.token_hash == th,
+                                                      db.reset_links.c.created_by == VERIFY_KIND)).first()
+        if r is None or r.used_at is not None or r.expires_at <= now:
+            raise bad_input(bad)
+        conn.execute(db.reset_links.update().where(db.reset_links.c.token_hash == th).values(used_at=now))
+        u = conn.execute(select(db.users).where(db.users.c.id == r.user_id)).first()
+        if u is None or u.status != "pending":
+            return {"ok": True, "status": u.status if u else "gone"}
+        on_list = conn.execute(select(db.allowlist.c.email).where(db.allowlist.c.email == u.email)).first()
+        if on_list is None:
+            return {"ok": True, "status": "pending", "message": PENDING_COPY}
+        api_admin.approve_user(conn, u.id, actor="email_check")
+    return {"ok": True, "status": "active"}
 
 
 @router.post("/api/auth/reset-request")

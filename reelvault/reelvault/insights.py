@@ -390,8 +390,8 @@ def sub_formats(units: list[Unit], *, hit: float = 3.0, min_units: int = 3) -> l
     """Group competitor reels by format recipe (6.9). Deterministic: same units -> same groups and keys.
 
     Start with the full key (VF + headline_box, caption_style, face_bubble, broll_share, setting, framing). Groups
-    with < 3 units merge into their parent by dropping fields in DROP_ORDER. Groups with >= 3 units containing
-    >= 1 outlier are returned (each unit is in at most one group)."""
+    with >= 3 units containing >= 1 outlier are returned (each unit is in at most one group); every other group
+    (< 3 units, or no outlier) merges into its parent by dropping fields in DROP_ORDER."""
     pool = [u for u in units if not u.is_self and not u.is_collab and u.tagged and u.visual_ok
             and (u.tags or {}).get("visual_format") and u.weight > 0]
     pool.sort(key=lambda u: u.reel_id)
@@ -407,12 +407,8 @@ def sub_formats(units: list[Unit], *, hit: float = 3.0, min_units: int = 3) -> l
         nxt = []
         for key in sorted(groups):
             g = groups[key]
-            if len(g) >= min_units or level == len(DROP_ORDER):
-                if len(g) < min_units:
-                    continue
-                hits = [u for u in g if _is_hit(u, hit, any_hit)]
-                if not hits:
-                    continue
+            hits = [u for u in g if _is_hit(u, hit, any_hit)]
+            if len(g) >= min_units and hits:
                 vf = g[0].tags["visual_format"]
                 recipe = {}
                 for fld, _ in KEY_FIELDS:
@@ -427,6 +423,8 @@ def sub_formats(units: list[Unit], *, hit: float = 3.0, min_units: int = 3) -> l
                                        n=len(g), k=len({u.account_id for u in g}), hits=len(hits),
                                        example_reels=[u.reel_id for u in ex], dropped=list(dropped)))
             else:
+                # Not a format row (too small, or no outlier): the units go back into the pool for the parent level,
+                # so look-alike normal reels can never hide a sibling group's outliers (fix round 2).
                 nxt.extend(g)
         left = sorted(nxt, key=lambda u: u.reel_id)
         if not left:
@@ -550,13 +548,14 @@ def compute(units: list[Unit], *, hit: float = 3.0, alpha: int = 10, window_days
     W = sum(u.weight for u in comp)
     H0 = (sum(u.weight for u in comp if _is_hit(u, hit, any_hit)) / W) if W > 0 else 0.0
     accounts = sorted({u.account_id for u in comp})
-    any_hit_recent = any(u.score is not None and u.score >= hit for u in recent)
 
     rows: dict[str, list[dict]] = {}
     grid: dict[str, dict] = {}
     for dim in DIMENSIONS:
         table, _ = _lift_table(comp, dim, hit=hit, alpha=alpha, any_hit=any_hit)
-        rtable, _ = _lift_table(recent, dim, hit=hit, alpha=alpha, any_hit=any_hit_recent)
+        # The recent window uses the SAME hit rule as the full window (fix round 2): with no 3x reel lately, the
+        # recent base rate is 0, lift_recent is None and no Rising/Fading chip is shown.
+        rtable, _ = _lift_table(recent, dim, hit=hit, alpha=alpha, any_hit=any_hit)
         out = []
         for v, r in table.items():
             rr = rtable.get(v)
@@ -672,7 +671,7 @@ def _cards(rows: dict, by_id: dict, *, accounts: int, capabilities, topic_labels
 
 
 def format_cards(sub_rows: list[dict], formats: dict, by_id: dict, *, capabilities=None) -> list[dict]:
-    """FormatCards (6.7.5) for every sub-format row, can-make first, then lift."""
+    """FormatCards (6.7.5) for every sub-format row: lift >= 1 first, then can-make, then lift."""
     out = []
     for r in sub_rows:
         f = formats.get(r["value"]) or {}
@@ -690,7 +689,10 @@ def format_cards(sub_rows: list[dict], formats: dict, by_id: dict, *, capabiliti
                     "evidence": r["evidence"], "trend": r.get("trend"), "can_make": cm, "n": r["n"], "k": r["k"],
                     "examples": [_reel_ref(by_id[x]) for x in ex_ids[:6] if x in by_id],
                     "href": f"#format/{r['value']}"})
-    out.sort(key=lambda c: (not c["can_make"]["ok"], c["lift"] is None, -(c["lift"] or 0), -c["n"], c["id"]))
+    # Formats that beat normal first (fix round 2: can-make no longer lifts a 0.5x format above an 11x one), then
+    # can-make, then lift.
+    out.sort(key=lambda c: (c["lift"] is not None and c["lift"] < 1, not c["can_make"]["ok"], c["lift"] is None,
+                            -(c["lift"] or 0), -c["n"], c["id"]))
     return out
 
 
@@ -822,8 +824,12 @@ def you_vs_them(units: list[Unit], rows: dict, *, now: datetime, window_days: in
 
 # ---------------------------------------------------------------------------------------------- music (4.9 MusicRow)
 
-def music_rows(reels: Iterable[dict], *, limit: int = 30) -> list[dict]:
-    """reels: [{"id", "url", "audio", "is_hit": bool}] of priority-set competitor reels. Numbers only, no AI."""
+GENERIC_AUDIO = ("original audio", "original sound", "audio original", "son original")
+
+
+def music_rows(reels: Iterable[dict], *, limit: int = 30, outliers_only: bool = False) -> list[dict]:
+    """reels: [{"id", "url", "audio", "is_hit": bool}] of priority-set competitor reels. Numbers only, no AI.
+    outliers_only: keep only tracks at least one outlier used (the "Music the outliers used" list, fix round 2)."""
     agg: dict[tuple, dict] = {}
     for r in reels:
         a = r.get("audio") or {}
@@ -832,7 +838,7 @@ def music_rows(reels: Iterable[dict], *, limit: int = 30) -> list[dict]:
         if typ not in ("licensed", "original") or not title:
             continue
         kind = "licensed" if typ == "licensed" else ("reused_original" if a.get("is_reused") else "original")
-        if kind == "original" and title.lower() in ("original audio", "original sound"):
+        if kind in ("original", "reused_original") and title.lower() in GENERIC_AUDIO:
             continue
         key = (kind, title.lower(), (a.get("artist") or "").lower())
         row = agg.setdefault(key, {"title": title, "artist": a.get("artist") or None, "type": kind, "outliers": 0,
@@ -845,6 +851,8 @@ def music_rows(reels: Iterable[dict], *, limit: int = 30) -> list[dict]:
             row["_best"] = sc
             row["example_reel"] = {"id": r.get("id"), "url": r.get("url")}
     out = sorted(agg.values(), key=lambda x: (-x["outliers"], -x["reels"], x["title"].lower()))
+    if outliers_only:
+        out = [x for x in out if x["outliers"] >= 1]
     for x in out:
         x.pop("_best", None)
     return out[:limit]

@@ -484,7 +484,7 @@ def build_units(conn, user_id: str, account_ids: list[str] | None = None) -> tup
                               and x.score is not None)
     music_in = [{"id": x.id, "url": x.url, "audio": x.audio, "score": x.score,
                  "is_hit": (x.score or 0) >= ol.HIT} for x in cr if x.tier == "priority" and not x.is_collab]
-    note["_music"] = ins.music_rows(music_in)
+    note["_music"] = ins.music_rows(music_in, outliers_only=True)
     return units, note
 
 

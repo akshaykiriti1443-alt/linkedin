@@ -63,7 +63,10 @@ def test_single_invite_and_allowlist_go_straight_to_active(client, admin_client,
 
     admin_client.post("/api/admin/allowlist", json={"emails": ["Ally@Example.com"]})
     r = signup(client, community_code, email="ally@example.com")
-    assert r.json()["status"] == "active"
+    # fix round 2: the allowlist alone no longer lets someone in (no email set up here: the admin approves)
+    assert r.json()["status"] == "pending"
+    u = [x for x in admin_client.get("/api/admin/users?status=pending").json()["users"] if x["email"] == "ally@example.com"]
+    assert u and u[0]["on_allowlist"] is True
     # duplicate email
     assert signup(client, community_code, email="ally@example.com").status_code == 409
 
@@ -107,7 +110,10 @@ def test_concurrent_wrong_logins_are_throttled(app, member):
 def test_right_logins_do_not_use_up_the_limit(client, member):
     for _ in range(8):
         assert client.post("/api/auth/login", json={"email": member.email, "password": member.password}).status_code == 200
-    assert ratelimit.count("login_email", member.email, "quarter") == 0
+    with db.tx(immediate=False) as conn:
+        left = conn.execute(select(db.usage_counters.c.count).where(
+            db.usage_counters.c.scope.in_(("login_email", "login_email_all")))).scalars().all()
+    assert sum(left) == 0
     for _ in range(5):
         assert client.post("/api/auth/login", json={"email": member.email, "password": "nope-nope"}).status_code == 401
     assert client.post("/api/auth/login", json={"email": member.email, "password": member.password}).status_code == 429
@@ -125,7 +131,7 @@ def test_logout_password_change_and_reset_link(client, member, admin_client):
 
     link = admin_client.post(f"/api/admin/users/{member.id}/reset-link", json={}).json()
     token = link["url"].split("#reset/")[1]
-    assert client.post("/api/auth/reset", json={"token": token, "new": "a-brand-new-pass-77"}).json() == {"ok": True}
+    assert client.post("/api/auth/reset", json={"token": token, "new": "a-brand-new-pass-77"}).json()["ok"] is True
     assert client.get("/api/me").status_code == 401  # all sessions ended
     assert client.post("/api/auth/reset", json={"token": token, "new": "again-new-pass-88"}).status_code == 400
     assert client.post("/api/auth/login", json={"email": member.email,
@@ -231,7 +237,7 @@ def test_zapier_hooks(client, monkeypatch, make_user, community_code):
     h = {"X-Hook-Secret": "hook-secret-for-tests"}
     assert client.post("/api/hooks/skool-allowlist", json={"email": "z@example.com"}).status_code == 403
     assert client.post("/api/hooks/skool-allowlist", json={"email": "Z@example.com"}, headers=h).json() == {"ok": True}
-    assert signup(client, community_code, email="z@example.com").json()["status"] == "active"
+    assert signup(client, community_code, email="z@example.com").json()["status"] == "pending"   # fix round 2: email not proven
     left = make_user("left@example.com")
     assert client.post("/api/hooks/skool-removed", json={"email": "left@example.com"}, headers=h).json() == {"ok": True}
     with db.tx(immediate=False) as conn:

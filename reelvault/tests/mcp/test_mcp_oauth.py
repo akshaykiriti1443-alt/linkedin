@@ -304,8 +304,22 @@ def test_refresh_rotates_and_reuse_revokes_the_family(live, member):
     from reelvault.server import oauth
 
     assert oauth.verify_access(new["access_token"]) is not None
+    # fix round 2: the same refresh token again within 60 s while its successor is unused is a retry: a fresh pair,
+    # and the first answer's tokens keep working
+    retry = exchange(live.url, grant_type="refresh_token", refresh_token=tok["refresh_token"], client_id=cid)
+    assert retry.status_code == 200 and oauth.verify_access(new["access_token"]) is not None
+    used = exchange(live.url, grant_type="refresh_token", refresh_token=retry.json()["refresh_token"], client_id=cid)
+    assert used.status_code == 200
+    # once a successor was used, reusing a rotated token revokes the whole family
+    from reelvault.server import db, security
+
+    with db.tx() as c:   # and the grace window is over
+        c.execute(db.oauth_tokens.update().where(
+            db.oauth_tokens.c.token_hash == security.sha256_hex(tok["refresh_token"]))
+            .values(revoked_at=db.utcnow() - __import__("datetime").timedelta(minutes=5)))
     reuse = exchange(live.url, grant_type="refresh_token", refresh_token=tok["refresh_token"], client_id=cid)
     assert reuse.status_code == 400 and reuse.json()["error"] == "invalid_grant"
+    assert oauth.verify_access(used.json()["access_token"]) is None
     assert oauth.verify_access(new["access_token"]) is None
     assert oauth.verify_access(tok["access_token"]) is None
     dead = exchange(live.url, grant_type="refresh_token", refresh_token=new["refresh_token"], client_id=cid)
@@ -356,10 +370,12 @@ def test_dcr_limits_are_per_client_and_lenient_for_anthropic(live, member, monke
         assert register(live.url, CLAUDE_CB, "Same name", headers=hdr).status_code == 201, i
     over = register(live.url, CLAUDE_CB, "Same name", headers=hdr)
     assert over.status_code == 429 and "retry-after" in {k.lower() for k in over.headers}
-    assert register(live.url, CLAUDE_CB, "Other name", headers=hdr).status_code == 201   # a different client key
+    # fix round 2: a new name from the same IP no longer gets around it (plain 30 per IP, whatever the name)
+    assert register(live.url, CLAUDE_CB, "Other name", headers=hdr).status_code == 429
+    assert register(live.url, CLAUDE_CB, "Other name", headers={"X-Forwarded-For": "203.0.113.8"}).status_code == 201
     from reelvault.server import oauth
 
-    monkeypatch.setattr(oauth, "REGISTER_GLOBAL_HOUR", 82)   # 82 counted so far
+    monkeypatch.setattr(oauth, "REGISTER_GLOBAL_HOUR", 81)   # 81 counted so far (refused per-IP calls don't count)
     assert register(live.url, CLAUDE_CB, "Third", headers={"X-Forwarded-For": "198.51.100.2"}).status_code == 429
 
 

@@ -20,6 +20,7 @@ const DEBUG_ENDPOINTS = ["clipsUser", "profileInfo", "currentUser", "chaining"];
 // 5.7 cooldowns, used locally only when the stop could not be reported (the server's answer wins otherwise).
 const LOCAL_COOLDOWN_S = {rate_limited: 24 * 3600, warning: 24 * 3600, challenge: 24 * 3600, signed_out: 30 * 60,
                           http_error: 15 * 60};
+const SERVER_BACKOFF_S = [60, 300, 900];   // waits before a stored job is resumed after ReelVault failed it
 
 // ============================================================================================ small helpers
 
@@ -190,7 +191,9 @@ async function closeReadingTab() {
 // ============================================================================================ Instagram calls
 
 function classify(r, path, {allowNonJson = false} = {}) {
-  const apiPath = path.startsWith("/api/");
+  // Every JSON endpoint of the IG table, /api/ and /web/ alike, gets the 5.7 rules (fix round 2: a plain-text
+  // 401 from /web/search/topsearch/ used to read as "not found").
+  const apiPath = path.startsWith("/api/") || path.startsWith("/web/");
   const where = String(r.url || "");
   let wherePath = where;
   try { wherePath = new URL(where).pathname; } catch { /* keep the raw string */ }
@@ -226,10 +229,11 @@ function classify(r, path, {allowNonJson = false} = {}) {
 }
 
 // One Instagram call: budget + random gap first, then the request in the reading tab, then the 5.7 rules.
-async function ig(name, args = [], {kind = "ig", page = false, form = null, allowNonJson = false} = {}) {
+async function ig(name, args = [], {kind = "ig", page = false, form = null, allowNonJson = false, referrer = null} = {}) {
   const ep = IG[name];
   const path = ep.path(...args);
-  const spec = {method: ep.method, path, appId: IG.appId, asbdId: IG.asbdId};
+  // A plausible instagram.com page as the Referer, not the robots.txt reading page (fix round 2).
+  const spec = {method: ep.method, path, appId: IG.appId, asbdId: IG.asbdId, referrer: referrer || IG.origin + "/"};
   if (ep.form) spec.form = ep.form(...(form || []));
   for (let attempt = 0; ; attempt++) {
     await beatIfDue();
@@ -306,8 +310,31 @@ async function signInCheck() {
       await put({ig: res});
       return res;
     }
+    // Any other stop is remembered too (fix round 2): the 30-minute re-check guard then applies, and the popup
+    // can say what really happened instead of "signed out".
+    if (e instanceof IgStop) await put({ig: {signed_in: false, checked_at: now, error: e.code}});
     throw e;
   }
+}
+
+// A 5.7 stop outside a job (the sign-in check at pairing or the account re-check): stop reading Instagram for the
+// 5.7 time here, and tell the server so its lease answers and the web UI agree (fix round 2).
+const NO_JOB_STOPS = ["rate_limited", "warning", "challenge", "http_error"];
+async function stopWithoutJob(e) {
+  if (!(e instanceof IgStop) || !NO_JOB_STOPS.includes(e.code)) return false;
+  const until = Date.now() + LOCAL_COOLDOWN_S[e.code] * 1000;
+  await put({cooldown: {until, reason: e.code, local_only: true}});
+  badge("");
+  const stop = {code: e.code};
+  if (Number.isInteger(e.http_status)) stop.http_status = e.http_status;
+  if (typeof e.message === "string" && e.message !== e.code) stop.message = e.message.slice(0, 300);
+  try {
+    const r = await api("/hello", {version: VERSION, stop});
+    if (r.status === 200 && r.data && r.data.cooldown_until) {
+      await put({cooldown: {until: Date.parse(r.data.cooldown_until), reason: r.data.cooldown_reason || e.code}});
+    }
+  } catch { /* the local stop stays until the server hears of it */ }
+  return true;
 }
 
 // ============================================================================================ jobs
@@ -329,9 +356,10 @@ async function runPull(job) {
   for (;;) {
     if (st.pages >= PAGE_CAP) return {stop_reason: "page_cap", result: {recovery: st.recovery || null}};
     const req = st.req;
+    const referrer = p.handle ? `${IG.origin}/${encodeURIComponent(p.handle)}/reels/` : null;
     const res = req.source === "clips"
-      ? await ig("clipsUser", [], {form: [pk, req.max_id, st.page_size], page: st.pages > 0, allowNonJson: true})
-      : await ig("feedUser", [pk, req.max_id], {page: st.pages > 0});
+      ? await ig("clipsUser", [], {form: [pk, req.max_id, st.page_size], page: st.pages > 0, allowNonJson: true, referrer})
+      : await ig("feedUser", [pk, req.max_id], {page: st.pages > 0, referrer});
     const bodyText = JSON.stringify(res.data || "") + (res.text || "");
     // Cursor recovery (5.4 step 4): never a cooldown, never an "error" for the member.
     if (req.source === "clips" && res.status === 400 && /page_size/.test(bodyText) && st.page_size !== "12") {
@@ -700,7 +728,15 @@ async function runJob(raw, resumed) {
       if (until) await put({cooldown: {until, reason: e.code}});
       badge(["signed_out", "permission_denied"].includes(e.code) ? "!" : "");
     } else if (e instanceof ServerDown) {
-      keepLocal = true;                           // the server is away: resume from storage on a later tick
+      // The server is away or refused an upload: resume from storage later, with a growing wait (1, 5, 15 min),
+      // then let the server's lease expiry take the job back. Without the wait every 30-second tick re-read the
+      // same Instagram page (fix round 2).
+      const fails = ((resumed && resumed.server_fails) || 0) + 1;
+      if (fails <= SERVER_BACKOFF_S.length) {
+        keepLocal = true;
+        await put({job: {job, state: curJob ? curJob.state : {}, saved_at: Date.now(), server_fails: fails,
+                         resume_after: Date.now() + SERVER_BACKOFF_S[fails - 1] * 1000}});
+      }
     } else if (e instanceof Unpaired) {
       badge("!");
     } else {
@@ -747,7 +783,10 @@ async function tick(why = "alarm") {
     await loadPacing();
     if (tickN++ % 5 === 0 || why === "now") await hello();
     const stored = await get("job");
-    if (stored && stored.job) await runJob(stored.job, stored);
+    if (stored && stored.job) {
+      if (stored.resume_after && stored.resume_after > Date.now()) return;   // waiting after a server failure
+      await runJob(stored.job, stored);
+    }
     for (let i = 0; i < 25; i++) {               // keep going while the server has work
       const cd = await get("cooldown");
       const inCooldown = cd && cd.until > Date.now();
@@ -770,11 +809,12 @@ async function tick(why = "alarm") {
 // the member switched back in Chrome, only a new sign-in check can show it: at most every 30 min, and only while
 // work is waiting (like the signed_out re-check of 5.7), so an idle Chrome still makes no Instagram call.
 async function recheckAccount() {
-  const h = await get("hello"), igs = await get("ig");
+  const h = await get("hello"), igs = await get("ig"), cd = await get("cooldown");
   if (!h || !h.has_work) return;
+  if (cd && cd.until > Date.now()) return;                  // no Instagram call during a stop (fix round 2)
   if (igs && Date.now() - (igs.checked_at || 0) < 30 * 60_000) return;
   try { await signInCheck(); await hello(); }
-  catch (e) { if (!(e instanceof IgStop)) throw e; }
+  catch (e) { if (!(e instanceof IgStop)) throw e; await stopWithoutJob(e); }
 }
 
 function deviceName() {
@@ -814,7 +854,10 @@ async function claim(link) {
   if (cd && cd.until > Date.now() && cd.reason !== "signed_out") {
     igs = (await get("ig")) || {signed_in: false, waiting: true};   // no Instagram call during a stop
   } else {
-    try { igs = await signInCheck(); } catch (e) { console.warn("sign-in check failed", e); }
+    try { igs = await signInCheck(); } catch (e) {
+      if (await stopWithoutJob(e)) igs = {signed_in: false, waiting: true, error: e.code};
+      else console.warn("sign-in check failed", e);
+    }
   }
   try { await hello(); } catch { /* the next tick says hello */ }
   setTimeout(() => tick("now"), 500);

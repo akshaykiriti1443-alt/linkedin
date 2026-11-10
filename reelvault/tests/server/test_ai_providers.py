@@ -438,3 +438,12 @@ def test_rate_limit_requeues_with_run_after(rv_env, member, member_client, run_j
         j = c.execute(db.jobs.select().where(db.jobs.c.kind == "tag_reels")).first()
         reel = c.execute(db.reels.select().where(db.reels.c.id == rids[0])).first()
     assert j.state == "queued" and j.run_after is not None and reel.tag_state == "leased"
+
+
+def test_cost_line_is_per_reel_and_plurals():
+    """Fix round 2: a second _money() had replaced the per-reel one, so every model read 'under $1 a reel'."""
+    from reelvault.ai import presets
+
+    line = presets.cost_line("gemini-3.5-flash-lite")
+    assert "cent" in line and "under $1" not in line
+    assert "about 1 hour of work" in presets.estimate("desktop", reels_to_tag=12, deep_reads=0)["lines"][0]

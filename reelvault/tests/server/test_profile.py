@@ -312,7 +312,8 @@ def test_copy_endpoint_fills_the_mcp_url_and_admin_overrides(member_client, admi
     c = member_client.get("/api/copy").json()
     assert "defaults" not in c
     steps = c["copy"]["connector_steps"]
-    assert len(steps) == 5 and "http://localhost/mcp" in steps[2] and steps[1].startswith("Go to **Customize")
+    assert len(steps) == 6 and "http://localhost/mcp" in steps[2] and steps[1].startswith("Click **+ Add**")
+    assert "Always allow" in steps[5] and "Sign in now" in steps[3]   # fix round 2: Claude's current flow
     assert c["copy"]["claude_code_command"] == "claude mcp add --transport http --scope user reelvault http://localhost/mcp"
     assert admin_client.put("/api/admin/copy", json={"connector_steps": ["Open Claude.", "Add {MCP_URL}."]}
                             ).status_code == 200

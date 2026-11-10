@@ -177,7 +177,43 @@ def test_list_outliers_and_what_is_working(seeded):
     assert w["dimension"] == "visual_format" and "cards" in w and "rows" in w
 
 
+def _pair_extension(user_id: str, *, online: bool = True) -> None:
+    from datetime import timedelta
+
+    from reelvault.server import db, security
+
+    now = db.utcnow()
+    _t, th = security.new_token("rvd")
+    with db.tx() as c:
+        c.execute(db.devices.insert().values(id=db.new_id("dev"), user_id=user_id, kind="extension", name="Chrome",
+                                             token_hash=th, state=dict(db.DEVICE_STATE_DEFAULT), created_at=now,
+                                             last_seen_at=now if online else now - timedelta(hours=2)))
+
+
+def test_start_competitor_pull_without_extension_spends_no_pull(seeded):
+    """Fix round 2: with no Chrome extension paired nothing can read the pull, so none is queued or counted."""
+    from reelvault.server import db
+
+    url, tok = seeded["live"].mcp_url, seeded["token"]
+    new, again, comp = calls(url, tok, [("start_competitor_pull", {"handle": "@dental.growth.co", "mode": "first"}),
+                                        ("start_competitor_pull", {"handle": "dental.growth.co", "mode": "next"}),
+                                        ("list_competitors", {})])
+    d = data_of(new)
+    assert d["job_id"] is None and d["added"] and "nothing can read Instagram" in d["message"]
+    assert again.is_error and "Chrome extension" in again.content[0].text
+    c = data_of(comp)
+    assert c["extension"] == {"paired": False, "online": False} and "not paired" in c["extension_note"]
+    with db.read() as cn:
+        n = cn.execute(db.jobs.select().where(db.jobs.c.user_id == seeded["member"].id,
+                                                  db.jobs.c.kind == "ig_pull")).all()
+    assert n == []
+    _pair_extension(seeded["member"].id, online=False)
+    off = data_of(call(seeded, tok, "start_competitor_pull", {"handle": "dental.growth.co", "mode": "next"}))
+    assert off["job_id"] and off["message"] == "Queued. It starts when Chrome is open with the ReelVault extension on."
+
+
 def test_start_competitor_pull_queues_only(seeded):
+    _pair_extension(seeded["member"].id)
     url, tok = seeded["live"].mcp_url, seeded["token"]
     new, again, bad, status = calls(url, tok, [("start_competitor_pull", {"handle": "@garyvee", "mode": "first"}),
                                                ("start_competitor_pull", {"handle": "garyvee", "mode": "refresh"}),

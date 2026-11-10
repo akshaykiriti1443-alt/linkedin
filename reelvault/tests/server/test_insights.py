@@ -414,3 +414,53 @@ def test_sub_format_lift_uses_the_visual_format_base_rate():
     d2 = ins.compute(us2, now=NOW)
     assert row(d2, "sub_format", "fmt_only")["lift"] > 1.0
     assert all(r["value"] != "_none" for r in d2["rows"]["sub_format"])
+
+
+# ---------------------------------------------------------------------------------------------- fix round 2
+
+def _fx_unit(rid, acc, score, framing, setting="desk"):
+    t = {"visual_format": "VF01", "headline_box": True, "caption_style": "word_by_word_highlight", "face_bubble": False,
+         "broll_share": "none", "setting": setting, "framing": framing}
+    return Unit(reel_id=rid, account_id=acc, score=score, weight=1.0,
+                taken_at=datetime(2026, 10, 20, tzinfo=timezone.utc), tags=t)
+
+
+def test_cleaner_normal_reels_never_hide_a_format():
+    """4 look-alike normal reels (all 'medium') must not hide the 2 outliers framed 'close': the no-outlier group
+    goes back into the pool and merges into the parent with the outliers, as a messier set of the same reels does."""
+    hits = [_fx_unit("hit1", "A", 6.0, "close"), _fx_unit("hit2", "B", 4.5, "close")]
+    clean = [_fx_unit(f"n{i}", "A" if i % 2 else "B", 1.0, "medium") for i in range(4)] + hits
+    messy = [_fx_unit(f"n{i}", "A" if i % 2 else "B", 1.0, "medium" if i < 2 else "wide") for i in range(4)] + hits
+    a = [(g.recipe_key, g.n, g.hits) for g in ins.sub_formats(clean)]
+    b = [(g.recipe_key, g.n, g.hits) for g in ins.sub_formats(messy)]
+    assert a == b == [("VF01|hb=1|cap=word|fb=0|br=none|set=desk", 6, 2)]
+
+
+def test_recent_lift_uses_the_same_hit_rule():
+    """No 3x reel in the last 90 days: lift_recent is None and no Rising/Fading chip (the recent window must not
+    switch to the top-10% rule on its own)."""
+    now = datetime(2026, 11, 10, tzinfo=timezone.utc)
+    us = []
+
+    def u(rid, acc, score, vf, days, top10=False):
+        us.append(Unit(reel_id=rid, account_id=acc, score=score, weight=1.0, taken_at=now - timedelta(days=days),
+                       is_top10=top10, tags={"visual_format": vf, "hook_type": "question"}))
+
+    for i in range(15):
+        u(f"o_th{i}", "A" if i % 2 else "B", 4.0 if i < 3 else 1.0, "VF01", 120 + i)
+        u(f"o_ss{i}", "A" if i % 2 else "B", 1.0, "VF09", 120 + i)
+    for i in range(6):
+        u(f"r_th{i}", "A" if i % 2 else "B", 0.9, "VF01", 10 + i)
+    for i in range(12):
+        u(f"r_ss{i}", "A" if i % 2 else "B", 2.5 if i < 6 else 1.0, "VF09", 10 + i, top10=i < 6)
+    rows = {r["value"]: r for r in ins.compute(us, now=now)["rows"]["visual_format"]}
+    assert rows["VF01"]["lift_recent"] is None and rows["VF01"]["trend"] is None
+
+
+def test_music_rows_outliers_only_and_generic_titles():
+    reels = [{"id": "r1", "url": "u1", "score": 5, "is_hit": True, "audio": {"type": "licensed", "title": "Night Drive 2"}},
+             {"id": "r2", "url": "u2", "score": 1, "is_hit": False, "audio": {"type": "licensed", "title": "Night Drive 1"}},
+             {"id": "r3", "url": "u3", "score": 1, "is_hit": False,
+              "audio": {"type": "original", "title": "Original audio", "is_reused": True}}]
+    assert [m["title"] for m in ins.music_rows(reels)] == ["Night Drive 2", "Night Drive 1"]
+    assert [m["title"] for m in ins.music_rows(reels, outliers_only=True)] == ["Night Drive 2"]

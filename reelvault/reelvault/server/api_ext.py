@@ -26,7 +26,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
@@ -267,16 +266,17 @@ def instagram_health(admin=Depends(security.current_admin)):
 
 @router.get("/pair", include_in_schema=False)
 def pair_page():
-    html = """<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect the extension · ReelVault</title>
-</head><body style="font-family: system-ui, sans-serif; max-width: 36rem; margin: 3rem auto; padding: 0 1rem;
-line-height: 1.5"><h1 style="font-size: 1.4rem">Connect the ReelVault Members extension</h1>
-<ol><li>Copy the link of this page from the address bar (it ends with your code).</li>
-<li>Click the ReelVault Members icon in Chrome (the puzzle piece, then ReelVault Members).</li>
-<li>Paste the link in the box and click <b>Next</b>.</li></ol>
-<p>The code works for 10 minutes. Only paste links that you made yourself in ReelVault.</p>
-</body></html>"""
-    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+    """The page a pair link opens when the extension isn't there yet. Styled with the hashed <style> block of
+    oauth._page (fix round 2: inline style attributes were blocked by the site CSP, so it showed unstyled)."""
+    from .oauth import _page
+
+    body = ("<h1>Connect the ReelVault Members extension</h1>"
+            "<ol><li>Copy the link of this page from the address bar (it ends with your code).</li>"
+            "<li>Click the ReelVault Members icon in Chrome (the puzzle piece, then ReelVault Members).</li>"
+            "<li>Paste the link in the box and click <b>Next</b>.</li></ol>"
+            "<p>The code works for 10 minutes. Only paste links that you made yourself in ReelVault.</p>"
+            "<p class=\"who\">No extension yet? Open ReelVault and go to Settings &gt; Chrome extension.</p>")
+    return _page("Connect the extension · ReelVault", body)
 
 
 # ============================================================================================== device: pairing
@@ -374,6 +374,8 @@ async def hello(request: Request, dev=Depends(security.extension_device)):
             conn.execute(db.devices.update().where(db.devices.c.id == dev.id).values(**vals))
             jobs_ig.apply_ig_report(conn, d, body.get("ig"))
             d = conn.execute(select(db.devices).where(db.devices.c.id == dev.id)).first()
+            if jobs_ig.apply_stop_report(conn, d, body.get("stop")):
+                d = conn.execute(select(db.devices).where(db.devices.c.id == dev.id)).first()
         out = _pacing_reply(d)
         out["has_work"] = jobs_ig.has_work(dev.user_id)
         return out

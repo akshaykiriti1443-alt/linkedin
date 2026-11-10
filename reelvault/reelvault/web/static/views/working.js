@@ -26,15 +26,23 @@ export async function working(main, {query, token}) {
   }
   if ((s.pipeline || {}).left_to_tag || (s.pipeline || {}).failed_tags) view.append(h("p", null, pill(s.pipeline.line || `${num(s.pipeline.left_to_tag)} reels left to tag`, "busy")));
   if (arr(s.formats).length) {
-    const grid = h("div", {class: "grid3", id: "format-cards"}, arr(s.formats).map(formatCard));
+    // Fix round 2 (same rule as Home, D85): only formats that beat normal are "to copy"; the rest sit in a closed
+    // "Formats to avoid" list with no Write-scripts button.
+    const wins = list => arr(list).filter(f => f.lift == null || f.lift >= 1);
+    const avoid = arr(s.formats).filter(f => f.lift != null && f.lift < 1);
+    const grid = h("div", {class: "grid3", id: "format-cards"}, wins(s.formats).length ? wins(s.formats).map(formatCard)
+      : h("p", {class: "muted"}, "No format beats normal yet. More tagged reels will show what works."));
     const onlyMine = h("input", {type: "checkbox", id: "can-make-only", onchange: async e => {
       const f = await get("/api/formats" + (e.target.checked ? "?can_make=1" : ""));
       if (!f.ok) { toast(f.error); return; }
-      const list = arr(f.data.formats);
+      const list = wins(f.data.formats);
       clear(grid, list.length ? list.map(formatCard) : h("p", {class: "muted"}, "None of these fit what you said you can make. Change it in Settings > Profile, question 12."));
     }});
     view.append(h("section", {class: "stack"}, h("div", {class: "panel-head"}, h("h2", "Formats to copy"),
-      h("label", {class: "check"}, onlyMine, "Only formats I can make")), grid));
+      h("label", {class: "check"}, onlyMine, "Only formats I can make")), grid,
+      avoid.length ? h("details", {class: "panel", id: "formats-avoid"}, h("summary", `Formats to avoid (${avoid.length})`),
+        h("p", {class: "hint"}, "These did worse than normal for your competitors."),
+        h("ul", avoid.map(f => h("li", h("a", {href: f.href || "#format/" + f.id}, f.name || f.vf_label), " · ", f.line || "")))) : null));
   }
   if (arr(s.cards).length) view.append(h("section", {class: "stack"}, h("h2", "What makes reels outliers"), h("div", {class: "grid3"}, arr(s.cards).map(workingCard))));
   if (s.you_vs_them) {
@@ -108,6 +116,9 @@ function exampleCard(ex) {
       "aria-label": `Frame at ${mmss(fr.t)}`, title: `Frame at ${mmss(fr.t)}`}, h("span", mmss(fr.t))))), card.lastChild);
   }
   card.querySelector(".acts").prepend(h("a", {class: "btn ghost sm", href: `#reel/${ex.id}?tab=hook`}, hookFrame ? "Play at the hook" : "See the hook"));
+  if (ex.url && /^https:\/\/(www\.)?instagram\.com\//.test(ex.url)) {
+    card.querySelector(".acts").append(h("a", {class: "btn ghost sm", href: ex.url, target: "_blank", rel: "noopener noreferrer"}, "Open on Instagram"));
+  }
   return card;
 }
 

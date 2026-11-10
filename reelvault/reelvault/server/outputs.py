@@ -218,8 +218,18 @@ def _best_reels(
 
 
 def _format_examples(conn, user_id: str, fmt_id: str) -> list[str]:
+    """Source reels for 'Use this format': the outliers among the format's examples (fix round 2: the examples
+    are padded with normal reels for display). Only when none is an outlier, the format's other top reels."""
     f = db.get_owned(conn, db.formats, user_id, fmt_id)
-    return list(f.example_reels or [])[:3] if f is not None else []
+    if f is None:
+        return []
+    ex = list(f.example_reels or [])
+    if not ex:
+        return []
+    r = db.reels
+    rows = {x.id: x for x in conn.execute(select(r.c.id, r.c.band).where(r.c.user_id == user_id, r.c.id.in_(ex)))}
+    hits = [i for i in ex if i in rows and rows[i].band in OUTLIER_BANDS]
+    return (hits or ex)[:3]
 
 
 def _profile_ok(conn, user_id: str):
@@ -689,7 +699,7 @@ def _fallback_numbers(user_id: str, account_ids: list[str] | None) -> dict:
         "recent": _recent(sd.get("rows") or {}),
         "remake_candidates": cands[:15],
         "topic_coverage": {"pains": cover},
-        "music": sd.get("music") or [],
+        "music": [m for m in sd.get("music") or [] if (m.get("outliers") or 0) >= 1],
         "you_vs_them": sd.get("you_vs_them"),
         "data_note": note,
     }
@@ -739,16 +749,45 @@ def _insights_text(conn, user_id: str, caps: dict | None, *, limit: int = 6) -> 
     fmts = list(sd.get("formats") or [])[:3]
     for fc in fmts:
         lines.append(f"- format {fc.get('id')} · {fc.get('name')} ({fc.get('vf')}) · {fc.get('line')}")
-    music = sd.get("music") or []
+    music = [m for m in sd.get("music") or [] if (m.get("outliers") or 0) >= 1]   # only what outliers used
     if music:
         tracks = "; ".join(
             f"{m.get('title')}"
             + (f" by {m.get('artist')}" if m.get("artist") else "")
-            + f" ({m.get('type')}, {m.get('outliers', 0)} outliers)"
+            + f" ({m.get('type')}, {m.get('outliers', 0)} outlier{'' if m.get('outliers') == 1 else 's'})"
             for m in music[:8]
         )
         lines.append("Music the outliers used: " + untrusted.wrap(tracks, "music", 1200))
     return "\n".join(lines) or "(no strong patterns yet)", refs
+
+
+def _topics_line(rows) -> str:
+    """The topics line of an output brief (fix round 2: not the tag_reels wording, which asks for topics [] and a
+    new_topic that output schemas don't have)."""
+    if not rows:
+        return "Topics: none yet. Set topic to 'unsorted'."
+    return "Topics (set topic to one of these slugs, or 'unsorted'): " + "; ".join(
+        f"{t.slug}: {t.label}" for t in rows)
+
+
+def _measured_block(conn, user_id: str, rid: str) -> str:
+    """What ReelVault measured on the source video (fix round 2): the SoundMap cue list, music and Instagram audio,
+    and EditStats, so cue sheets build on the source's real sound pattern even without a deep read."""
+    from .work import cue_list, edit_text, sound_summary_text
+
+    sig = conn.execute(select(db.reel_signals.c.sound, db.reel_signals.c.edit).where(
+        db.reel_signals.c.reel_id == rid, db.reel_signals.c.user_id == user_id)).first()
+    if sig is None or (not sig.sound and not sig.edit):
+        return "\nMeasured: no sound map or edit numbers for this reel."
+    cues = cue_list(sig.sound, limit=24)
+    return (
+        "\nMeasured on the video (use these for cue times; 'Hear it in the original' refs must come from here):\n"
+        + sound_summary_text(sig.sound)
+        + "\n"
+        + edit_text(sig.edit)
+        + "\nSound cues: "
+        + ("; ".join(cues) if cues else "none detected")
+    )
 
 
 def _source_block(conn, user_id: str, rid: str) -> str:
@@ -761,8 +800,10 @@ def _source_block(conn, user_id: str, rid: str) -> str:
     head = (
         f"=== Source reel {rid} (@{h[0] if h else '?'}) · {r.url} · "
         + (f"{r.score:.1f}x this creator's normal" if r.score else "not scored")
+        + ("" if r.band in OUTLIER_BANDS else " · not an outlier (a normal reel of this format)")
         + " ==="
     )
+    head += _measured_block(conn, user_id, rid)
     if deep:
         keep = {
             k: deep.get(k)
@@ -894,7 +935,7 @@ def _week_dates(start: str, idx: int) -> list[str]:
 
 
 def build_brief(user_id: str, job_row, *, provider_name: str = "anthropic") -> dict:
-    from .work import _task, active_topics, digest, profile_text, render_prompt, topics_text
+    from .work import _task, active_topics, digest, profile_text, render_prompt
 
     out_id = (job_row.payload or {}).get("output_id")
     with db.read() as c:
@@ -938,8 +979,12 @@ def build_brief(user_id: str, job_row, *, provider_name: str = "anthropic") -> d
             fmt_note = ""
             for fid in b.get("sub_formats") or []:
                 fm = db.get_owned(c, db.formats, user_id, fid)
+                if fm is not None:
+                    # fix round 2: say the format id too, and _check_script holds the script to it
+                    fmt_note += (f"\nSub-format {fm.id} ({untrusted.escape(fm.name or taxonomy.label(fm.vf))}): "
+                                 f"set format to '{fm.vf}' and sub_format to '{fm.id}'.")
                 if fm is not None and fm.guide:
-                    fmt_note += f"\nSub-format {fm.id} ({fm.name}): set sub_format to '{fm.id}'.\nGuide: " + json.dumps(
+                    fmt_note += "\nGuide: " + json.dumps(
                         fm.guide, ensure_ascii=False
                     )
             data = "\n\n".join(
@@ -950,7 +995,7 @@ def build_brief(user_id: str, job_row, *, provider_name: str = "anthropic") -> d
                     member_t,
                     fmt_note.strip(),
                     "\n\n".join(_source_block(c, user_id, s) for s in srcs),
-                    "Topics: " + topics_text(active_topics(c, user_id)).replace("\n", "; "),
+                    _topics_line(active_topics(c, user_id)),
                     ("Scripts already written (don't repeat their hooks):\n" + untrusted.escape(prior))
                     if prior
                     else "",
@@ -1007,7 +1052,7 @@ def build_brief(user_id: str, job_row, *, provider_name: str = "anthropic") -> d
                     f"{what} Week {idx + 1} dates: {', '.join(dates)} (days past day {PLAN_DAYS} are dropped).",
                     member_t,
                     _plan_lists(c, user_id, caps),
-                    "Topics: " + topics_text(active_topics(c, user_id)).replace("\n", "; "),
+                    _topics_line(active_topics(c, user_id)),
                     ("Pillars already set: " + json.dumps((out.data or {}).get("pillars") or [], ensure_ascii=False))
                     if idx
                     else "",
@@ -1160,6 +1205,15 @@ def _check_script(c, user_id: str, out, s: dict, d: dict) -> dict:
     if s.get("sub_format"):
         if db.get_owned(c, db.formats, user_id, s["sub_format"]) is None:
             s["sub_format"] = ""
+    # "Use this format" (fix round 2): the script must be in the chosen sub-format's visual format.
+    want = [x for x in (((out.options or {}).get("based_on") or {}).get("sub_formats") or []) if isinstance(x, str)]
+    if want:
+        fm = db.get_owned(c, db.formats, user_id, want[0])
+        if fm is not None:
+            if s.get("format") != fm.vf:
+                raise Invalid(f"format must be {fm.vf}: this script uses sub-format {fm.id} "
+                              f"({fm.name or taxonomy.label(fm.vf)}), which is {fm.vf}.")
+            s["sub_format"] = fm.id
     slugs = {t.slug for t in active_topics(c, user_id)}
     if s.get("topic") not in slugs:
         s["topic"] = "unsorted"
@@ -1258,12 +1312,16 @@ def _check_report(c, user_id: str, out, rep: dict, d: dict) -> dict:
         if pm:
             cov.append({"pain": pm, "covered": bool(pc.get("covered"))})
     rep["pain_coverage"] = cov
-    handles = {a.get("handle") for a in nums.get("accounts") or []}
-    rep["competitors"] = (
-        [x for x in rep.get("competitors") or [] if x.get("handle", "").lstrip("@") in handles]
-        or rep.get("competitors")
-        or []
-    )
+    handles = {str(a.get("handle") if isinstance(a, dict) else a or "").lstrip("@").lower()
+               for a in nums.get("accounts") or []} - {""}
+    # Only the member's tracked accounts (fix round 2: an all-wrong list used to be kept as it was).
+    keep = [x for x in rep.get("competitors") or []
+            if str(x.get("handle", "")).lstrip("@").lower() in handles]
+    if rep.get("competitors") and not keep:
+        raise Invalid("competitors must use these handles: " + ", ".join(sorted(handles)) + ".")
+    for x in keep:
+        x["handle"] = str(x.get("handle", "")).lstrip("@").lower()
+    rep["competitors"] = keep
     return rep
 
 
@@ -1758,7 +1816,7 @@ def _report_md(rep: dict, numbers: dict) -> str:
             "## Customer pains nobody covers\n"
             + "\n".join(f"- {g.get('pain')}: {g.get('gap')} Idea: {g.get('idea')}" for g in rep["customer_gaps"])
         )
-    music = numbers.get("music") or []
+    music = [m for m in numbers.get("music") or [] if (m.get("outliers") or 0) >= 1]
     if music:
         parts.append(
             "## Music the outliers used\n"

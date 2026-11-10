@@ -335,8 +335,10 @@ test("Instagram requests come from the reading tab with the member's cookies, CS
     assert.equal(e.headers["x-csrftoken"], CSRF);
     assert.equal(e.cookies.sessionid, SESSIONID, "the browser attaches the HttpOnly session cookie itself");
     assert.equal(e.headers["sec-fetch-site"], "same-origin");
+    assert.ok(!/robots\.txt/.test(e.headers.referer || ""), "no robots.txt Referer: " + e.headers.referer);
   }
   for (const e of clips) {
+    assert.equal(e.headers.referer, "https://www.instagram.com/scaleit.demo/reels/");
     assert.equal(e.method, "POST");
     assert.equal(e.headers.origin, "https://www.instagram.com");
     assert.equal(e.form.target_user_id, PK);
@@ -433,7 +435,10 @@ test("video job: smallest version >= 480 px, Referer set by the DNR rule, no coo
     assert.ok(e.path.endsWith("_480.mp4"), `picked ${e.path}`);
     assert.deepEqual(e.cookies, {}, "CDN downloads go without cookies");
   }
-  assert.equal(igApi(log).filter(e => /^\/api\/v1\/media\/\d+\/info\/$/.test(e.path)).length, 3);
+  const infos = igApi(log).filter(e => /^\/api\/v1\/media\/\d+\/info\/$/.test(e.path));
+  assert.equal(infos.length, 3);
+  // fix round 2: API calls carry an instagram.com page as Referer, never the robots.txt reading page
+  for (const e of infos) assert.equal(e.headers.referer, "https://www.instagram.com/");
   const up = (await rv("/__test/requests")).data.requests.filter(q => q.method === "POST" && q.path.endsWith("/video"));
   assert.equal(up.length, 2, "only the two good videos are uploaded: " + JSON.stringify(up.map(q => [q.path, q.status, q.body_len])));
   await scenario();

@@ -5,7 +5,7 @@ import {h, clear, md, msg, say, busy, get, post, put, patch, del, api, arr, fiel
   loadCopy, refreshMe, pill, ago, num, every} from "../app.js";
 
 const MODES = [
-  ["claude_connector", "Use my Claude plan", "Your own Claude (Pro, Max, Team) does the work through our connector. No key needed."],
+  ["claude_connector", "Use my Claude plan", "Your own Claude plan does the work through our connector. No key needed."],
   ["api", "Paste an API key", "Gemini (free in most countries), Anthropic, OpenAI or OpenRouter. Runs on our server."],
   ["desktop", "Use the ReelVault desktop app", "Claude Code on your Windows computer does the work while the app is open."],
 ];
@@ -17,6 +17,7 @@ export async function aiSetup(box, {onboarding = false, onDone = null} = {}) {
     get("/api/ai/estimate?mode=desktop")]);
   if (!ai.ok) { clear(box, h("p", {class: "msg err"}, ai.error)); return; }
   const st = ai.data;
+  if (cat.ok) setNames(cat.data);
   const est = {claude_connector: eCon.ok ? eCon.data : null, api: eKey.ok ? eKey.data : null, desktop: eDesk.ok ? eDesk.data : null};
   let pick = box.dataset.pick || st.mode || "";
   const redraw = () => aiSetup(box, {onboarding, onDone});
@@ -159,13 +160,26 @@ function keyPanel(st, cat, copy, redraw, onDone, useFor) {
     useFor === "all" && arr(st.connections).length ? connectionsPanel(st, redraw, true) : null);
 }
 
+// Plain names for provider and preset ids (fix round 2: members saw "custom · llava-vision-test").
+const NAMES = {gemini: "Google Gemini", openai: "OpenAI", anthropic: "Anthropic", openrouter: "OpenRouter",
+  openai_compat: "Other service", custom: "Other service", groq: "Groq", mistral: "Mistral", deepseek: "DeepSeek"};
+function setNames(cat) {
+  for (const p of arr(cat && cat.providers)) if (p.id && p.label) NAMES[p.id] = p.label;
+  for (const p of arr(cat && cat.presets)) if (p.id && p.label) NAMES[p.id] = p.label;
+}
+const connName = c => NAMES[c.preset] || NAMES[c.provider] || "Other service";
+const STATUS_PILL = {ok: ["Works", "ok"], bad_key: ["Key doesn't work", "warn"], quota: ["Out of credit", "warn"],
+  untested: ["Not tested yet", "warn"], error: ["Didn't answer", "warn"], no_vision: ["Can't see images", "warn"],
+  rate_limited: ["Too busy right now", "warn"], bad_model: ["Model not found", "warn"]};
+const statusPill = s => pill(...(STATUS_PILL[s] || ["Needs a look", "warn"]));
+
 function connectionsPanel(st, redraw, inner = false) {
   const rows = arr(st.connections).map(c => {
     const out = msg();
     const modelIn = h("input", {value: c.model, "aria-label": "Model"});
     return h("div", {class: "card", dataset: {conn: c.id}},
-      h("div", {class: "row"}, h("b", (c.preset ? c.preset : c.provider) + " · " + c.model),
-        pill(c.status === "ok" ? "Works" : c.status === "bad_key" ? "Key doesn't work" : c.status === "quota" ? "Out of credit" : c.status, c.status === "ok" ? "ok" : "warn"),
+      h("div", {class: "row"}, h("b", connName(c) + " · " + c.model),
+        statusPill(c.status),
         c.is_default ? pill("Main", "busy") : null, c.use_for === "tagging" || st.tagging_conn_id === c.id ? pill("Tagging") : null,
         c.vision === false ? pill("Can't see images", "warn") : null),
       h("p", {class: "hint"}, `Key ${c.key || "none"} · ${num((c.usage_this_month || {}).calls || 0)} calls this month · tested ${ago(c.last_tested_at)}`),
@@ -187,7 +201,7 @@ function taggingPanel(st, cat, copy, redraw) {
   const t = arr(st.connections).find(c => c.id === st.tagging_conn_id);
   if (t) {
     return h("section", {class: "panel"}, h("h2", "Tagging key"),
-      h("p", `Reels are tagged with ${t.provider} · ${t.model}. Your main AI writes the scripts.`),
+      h("p", `Reels are tagged with ${connName(t)} · ${t.model}. Your main AI writes the scripts.`),
       h("div", {class: "row"}, h("button", {type: "button", class: "ghost", onclick: async e => {
         const r = await busy(e.currentTarget, () => put("/api/ai/mode", {mode: st.mode, tagging_conn_id: null}));
         toast(r.ok ? "Stopped. Your main AI tags reels again." : r.error); redraw();

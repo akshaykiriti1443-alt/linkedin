@@ -819,3 +819,25 @@ def test_silence_beat_needs_a_reason_and_laughter_gives_sd16():
               {"t": 14.0, "t_end": 15.0, "label": "crowd", "source": "ml", "confidence": "high", "score": 0.6}]
     m = soundmap.build(raw_with([]), laughs, [], duration=20.0, transcript=tr)
     assert "SD16" in m["pattern_hints"] and m["summary"]["sfx_counts"] == {}
+
+
+@needs_ced
+def test_dings_under_a_beat_bed_keep_their_onset_and_count(tmp_path, monkeypatch):
+    """Fix round 2: a ringing ding under a -20 dB beat bed is timed at its onset (not at a music kick under its
+    decaying tail) and is counted once (its tail is not a second 'ml' ding)."""
+    import numpy as np
+
+    monkeypatch.setenv("RV_MODELS_DIR", str(MODELS))
+    times = [1.5, 4.5, 7.5, 10.5]
+    for ding_len in (0.8, 1.2):
+        tr = make_media.Track(12.0)
+        tr.add(make_media.music(12.0, bpm=100, hats=False), 0.0, None, gain_db=-20)
+        for t in times:
+            tr.add(make_media.ding(ding_len), t, "ding", gain_db=-4)
+        p = tmp_path / f"dings_{ding_len}.wav"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "f32le", "-ar", str(make_media.SR), "-ac", "1", "-i", "-",
+                        str(p)], input=np.asarray(tr.done(), np.float32).tobytes(), check=True)
+        ev = [e for e in sound.fuse(sound.analyze(p)) if e["label"] == "ding"]
+        assert len(ev) == len(times), ev
+        for e, t in zip(sorted(ev, key=lambda e: e["t"]), times, strict=True):
+            assert abs(e["t"] - t) <= 0.12, (e, t)

@@ -50,10 +50,12 @@ The full click-by-click guide is [hosts/vps.md](hosts/vps.md).
    Put both in a Skool Classroom lesson that is hidden from logged-out visitors. Press **I posted it**.
    The code changes by itself every 30 days. The old one keeps working for 2 more days. You see the new one at sign-in.
 3. **Approve people.** New signups with the code wait for you. The admin menu shows a number when someone waits.
-   Open Admin > Members, check their Skool profile link, and press **Approve** or **Reject**.
-   People on your allowlist, or with a single-use invite, get in at once.
-4. **Turn off people who left.** Admin > Members > **Sync members**. Upload the member export from Skool (CSV).
-   ReelVault lists the accounts that are no longer in your group. Tick them and press **Turn off**.
+   Open Admin > Members, check their Skool profile link, and press **Approve** or **Say no**.
+   People with a single-use invite get in at once. People on your allowlist get in once they open the link we
+   email them. If email is not set up, they wait for you with an **On the allowlist** badge.
+4. **Turn off people who left.** Admin > Members, panel **Check who is still in the community**. Upload the member
+   export from Skool (CSV) and press **Check**. ReelVault lists the accounts that are no longer in your group. Tick
+   them and press **Turn off the ticked members**.
 
 ## The Chrome extension
 
@@ -68,6 +70,8 @@ Members read Instagram through their own Chrome with the ReelVault extension.
   (`scp root@YOUR_SERVER_IP:/root/ReelVault/reelvault/dist/*.zip .`), open the
   [Chrome Web Store developer dashboard](https://chrome.google.com/webstore/devconsole), add a new item, upload the
   ZIP, and choose **Unlisted**. The privacy policy address is `https://app.scaleitads.com/#privacy`.
+  When the store approves it, copy the listing link, add `EXTENSION_STORE_URL=<that link>` to your `.env`, and
+  restart (`docker compose up -d`). Members then get a one-click install button.
 - **ZIP for you and beta testers (until the store says yes).** Members download it from
   `https://app.scaleitads.com/download/reelvault-members-extension.zip`, extract it, open `chrome://extensions`,
   turn on **Developer mode**, press **Load unpacked**, and pick the extracted folder.
@@ -152,7 +156,7 @@ cd /root/ReelVault/reelvault/deploy && docker compose exec app python -m reelvau
 ```
 For real numbers, give it a real reel with speech:
 `docker compose cp reel.mp4 app:/data/tmp/reel.mp4`, then run the same line with `--video /data/tmp/reel.mp4` at the end.
-Put the two printed lines in `deploy/.env` and run `./deploy/setup.sh update`.
+Put the two printed lines in `deploy/.env`, then go back one folder and update: `cd .. && ./deploy/setup.sh update`.
 
 Rough sizes (measured on a 2-CPU build box): one priority reel about 28 s, one sample reel about 9 s,
 one pull of 100 reels about 11 minutes, one member's first setup (10 competitors) about 2 hours.

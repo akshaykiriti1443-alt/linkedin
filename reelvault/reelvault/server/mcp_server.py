@@ -254,9 +254,16 @@ def t_list_competitors(uid: str) -> dict:
     with db.read() as c:
         rows = c.execute(db.scoped(c, a, uid).order_by(a.c.created_at.asc(), a.c.handle.asc())).all()
         summ = api_accounts._summaries(c, uid, rows)  # noqa: SLF001 - WP4 read helper
+        ext = api_accounts.extension_state(c, uid)
     keep = ("id", "handle", "full_name", "followers", "role", "status", "reels_count", "outliers", "baseline_views",
             "cursor_done", "last_pull_at", "pulling", "url")
-    return _fit_json({"accounts": wrap_third_party([{k: s.get(k) for k in keep} for s in summ])}, ("accounts",))
+    note = None if ext["online"] else (
+        "The ReelVault Chrome extension is not paired, so pulls can't run." if not ext["paired"]
+        else "Chrome with the ReelVault extension is not open, so pulls wait until it is.")
+    out = {"extension": ext, "accounts": wrap_third_party([{k: s.get(k) for k in keep} for s in summ])}
+    if note:
+        out["extension_note"] = note
+    return _fit_json(out, ("accounts",))
 
 
 def t_start_pull(uid: str, handle: str, mode: str) -> dict:
@@ -269,6 +276,13 @@ def t_start_pull(uid: str, handle: str, mode: str) -> dict:
     a = db.accounts
     with db.read() as c:
         acc = c.execute(db.scoped(c, a, uid).where(a.c.handle == h)).first()
+        ext = api_accounts.extension_state(c, uid)
+    if not ext["paired"]:
+        # Nothing can read Instagram for this member (fix round 2): don't spend one of today's pulls on it.
+        if acc is None and mode == "first":
+            api_accounts.add_accounts(user, [h], pull=False)
+            return {"job_id": None, "added": True, "extension": ext, "message": NO_EXTENSION_ADDED.format(h=h)}
+        raise ToolFail(NO_EXTENSION)
     if acc is None:
         if mode != "first":
             raise ToolFail(f"@{h} is not tracked yet. Use mode 'first' to add it and read its newest 100 reels.")
@@ -281,10 +295,18 @@ def t_start_pull(uid: str, handle: str, mode: str) -> dict:
         note = res.get("note") or res.get("schedule_note")
     if not job:
         raise ToolFail("ReelVault could not queue that pull. Check the account in ReelVault.")
-    msg = "Queued. Your Chrome extension will read it in the next minutes."
+    msg = "Queued. Your Chrome extension will read it in the next minutes." if ext["online"] else \
+        "Queued. It starts when Chrome is open with the ReelVault extension on."
     if job.get("run_after"):
         msg = note or "You've done today's pulls. This one starts tomorrow."
-    return {"job_id": job["id"], "message": msg}
+    return {"job_id": job["id"], "extension": ext, "message": msg}
+
+
+NO_EXTENSION = ("Nothing can read Instagram for this member yet, so no pull was queued. Ask the member to install the "
+                "ReelVault Chrome extension (ReelVault > Settings > Chrome extension) and keep Chrome open.")
+NO_EXTENSION_ADDED = ("Added @{h}, but nothing can read Instagram for this member yet, so no pull was queued. Ask the "
+                      "member to install the ReelVault Chrome extension (ReelVault > Settings > Chrome extension) and "
+                      "keep Chrome open. Then pull it again.")
 
 
 def t_job_status(uid: str, job_id: str) -> dict:

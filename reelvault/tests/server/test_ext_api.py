@@ -916,3 +916,52 @@ def test_too_old_extension_gets_no_work(ext, member, anon):
     assert lz["job"] is None and lz["reason"] == "update"
     ext.post("/hello", {"version": "2.0.0"})
     assert ext.lease()["job"] is not None
+
+
+# ============================================================================================== fix round 2
+
+def _clear_cooldown(device_id):
+    with db.tx() as conn:
+        dev = conn.execute(select(db.devices).where(db.devices.c.id == device_id)).first()
+        conn.execute(db.devices.update().where(db.devices.c.id == device_id).values(
+            state=dict(dev.state, cooldown_until=None, cooldown_reason=None)))
+        conn.execute(db.jobs.update().where(db.jobs.c.state == "waiting").values(run_after=None))
+
+
+def test_http_error_rounds_end_the_job(ext, member):
+    """A call that keeps failing with 5xx is not retried forever: each http_error round spends an attempt, and the
+    third round in a row fails the job for good (the pull keeps its cursor)."""
+    aid, jid, _job = leased_pull(ext, member)
+    for rnd in range(1, jobs_ig.HTTP_ERROR_ROUNDS + 1):
+        r = ext.post(f"/jobs/{jid}/fail", {"code": "http_error", "http_status": 500})
+        assert r.status_code == 200 and r.json()["cooldown_until"]
+        row = jobs.get(jid)
+        if rnd < jobs_ig.HTTP_ERROR_ROUNDS:
+            assert row.state == "waiting" and row.attempts == rnd and row.result["http_error_rounds"] == rnd
+            _clear_cooldown(ext.device_id)
+            lz = ext.lease(["ig_pull"])
+            assert lz["job"] and lz["job"]["id"] == jid
+        else:
+            assert row.state == "failed" and "kept giving errors" in row.error_message
+    assert account_row(aid).status == "active"
+
+
+def test_rate_limited_round_still_refunds_its_attempt(ext, member):
+    _aid, jid, _job = leased_pull(ext, member)
+    ext.post(f"/jobs/{jid}/fail", {"code": "rate_limited", "http_status": 429})
+    assert jobs.get(jid).attempts == 0
+
+
+def test_hello_stop_sets_a_cooldown_without_a_job(ext, member):
+    """A 429 / checkpoint hit by the sign-in check (no job) is reported in hello: the device gets the 5.7 stop."""
+    r = ext.post("/hello", {"version": "2.0.0", "ig": {"signed_in": False, "checked_at": 1, "error": "rate_limited"},
+                            "stop": {"code": "rate_limited", "http_status": 429}})
+    assert r.status_code == 200 and r.json()["cooldown_reason"] == "rate_limited" and r.json()["cooldown_until"]
+    with db.tx(immediate=False) as conn:
+        dev = conn.execute(select(db.devices).where(db.devices.c.id == ext.device_id)).first()
+    assert dev.state["signed_in"] is True            # a 429 is not "signed out"
+    add_account(member)
+    confirm(ext.device_id)
+    assert ext.lease()["reason"] == "cooldown"
+    r = ext.post("/hello", {"version": "2.0.0", "stop": {"code": "not_a_stop"}})
+    assert r.json()["cooldown_reason"] == "rate_limited"

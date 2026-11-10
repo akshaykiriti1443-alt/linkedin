@@ -34,6 +34,8 @@ import re
 import threading
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
@@ -60,8 +62,14 @@ REFRESH_TTL = timedelta(days=30)
 CODE_TTL = timedelta(minutes=5)
 CIMD_TTL = timedelta(hours=24)
 CIMD_MAX_BYTES = 64 * 1024
-CIMD_TIMEOUT = 10.0
+CIMD_TIMEOUT = 4.0                  # httpx per-operation timeout inside the CIMD fetch thread
+CIMD_WAIT = 5.0                     # hard cap a request waits for a CIMD fetch, however slowly bytes arrive
+CIMD_MAX_CONCURRENT = 4             # CIMD fetches run in their own small pool, never in the shared threadpool
+CIMD_FAIL_TTL = 180.0               # failed fetches are remembered (negative cache), seconds
+CIMD_FETCH_PER_KEY_HOUR = 30        # cache-miss fetches per client (IP or IPv6 /64), before any session lookup
+CIMD_FETCH_GLOBAL_HOUR = 300
 DCR_UNUSED = timedelta(days=30)
+DCR_NEVER_USED = timedelta(hours=24)   # a DCR client never used at /oauth/token is dropped after a day
 CLAUDE_CALLBACKS = ("https://claude.ai/api/mcp/auth_callback", "https://claude.com/api/mcp/auth_callback")
 LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1")
 LOOPBACK_PATH = "/callback"
@@ -74,6 +82,7 @@ CORS = {"Access-Control-Allow-Origin": "*"}
 
 # 11.6 limits
 REGISTER_PER_KEY_HOUR = 30          # per (IP, redirect_uri, client_name); x10 from Anthropic's range
+REGISTER_PER_IP_HOUR = 30           # per IP (or IPv6 /64) whatever the name or redirect; x10 from Anthropic's range
 REGISTER_GLOBAL_HOUR = 500
 TOKEN_PER_KEY_MINUTE = 120          # per (IP, client_id)
 TOKEN_GLOBAL_MINUTE = 3000
@@ -268,8 +277,85 @@ def _fetch_cimd(url: str) -> dict:
     return keep
 
 
-def resolve_client(client_id: str, *, refresh: bool = False) -> Client:
-    """CIMD URL (fetched, cached 24 h) or a registered DCR client. Raises OAuthError(invalid_client)."""
+MEMBER_BUSY = "Too many apps are connecting right now. Wait a minute and try again."
+_CIMD_POOL = ThreadPoolExecutor(max_workers=CIMD_MAX_CONCURRENT, thread_name_prefix="rv-cimd")
+_CIMD_SLOTS = threading.BoundedSemaphore(CIMD_MAX_CONCURRENT)
+_CIMD_FAILED: dict[str, tuple[float, OAuthError]] = {}
+_CIMD_FAILED_LOCK = threading.Lock()
+
+
+def _cimd_failed(url: str) -> OAuthError | None:
+    with _CIMD_FAILED_LOCK:
+        hit = _CIMD_FAILED.get(url)
+        if hit is None:
+            return None
+        if hit[0] < time.monotonic():
+            _CIMD_FAILED.pop(url, None)
+            return None
+        return hit[1]
+
+
+def _remember_failed(url: str, err: OAuthError) -> None:
+    with _CIMD_FAILED_LOCK:
+        if len(_CIMD_FAILED) > 5000:     # bounded: drop the expired ones, then the oldest
+            now = time.monotonic()
+            for k in [k for k, v in _CIMD_FAILED.items() if v[0] < now] or list(_CIMD_FAILED)[:1000]:
+                _CIMD_FAILED.pop(k, None)
+        _CIMD_FAILED[url] = (time.monotonic() + CIMD_FAIL_TTL, err)
+
+
+def reset_cimd_guard() -> None:
+    """Tests: forget failed fetches."""
+    with _CIMD_FAILED_LOCK:
+        _CIMD_FAILED.clear()
+
+
+def _guarded_fetch_cimd(url: str, rate_key: str | None) -> dict:
+    """_fetch_cimd behind the fix round 2 guards: a negative cache, per-client and server-wide limits on fetches,
+    at most CIMD_MAX_CONCURRENT fetches at once in their own pool (a refused request does not wait), and a hard
+    CIMD_WAIT deadline for the caller. A slow or tarpit host can no longer hold the shared request threadpool."""
+    cached = _cimd_failed(url)
+    if cached is not None:
+        raise cached
+    busy = OAuthError("temporarily_unavailable", "Too many client metadata fetches. Try again later.", 503,
+                      redirectable=False, member=MEMBER_BUSY)
+    try:
+        limits = [("oauth_cimd_all", "global", CIMD_FETCH_GLOBAL_HOUR)]
+        if rate_key:
+            limits.insert(0, ("oauth_cimd", rate_key, ratelimit.ip_limit(CIMD_FETCH_PER_KEY_HOUR,
+                                                                          rate_key.split(":", 1)[-1])))
+        ratelimit.hit_all(None, limits, "hour")
+    except ratelimit.TooMany:
+        raise busy from None
+    if not _CIMD_SLOTS.acquire(blocking=False):
+        raise busy
+
+    def run() -> dict:
+        try:
+            return _fetch_cimd(url)
+        finally:
+            _CIMD_SLOTS.release()
+
+    try:
+        fut = _CIMD_POOL.submit(run)
+    except RuntimeError:
+        _CIMD_SLOTS.release()
+        raise busy from None
+    try:
+        return fut.result(timeout=CIMD_WAIT)
+    except FutureTimeout:
+        err = OAuthError("invalid_client", "The client metadata document took too long to load.",
+                         redirectable=False, member=MEMBER_CIMD)
+        _remember_failed(url, err)
+        raise err from None
+    except OAuthError as e:
+        _remember_failed(url, e)
+        raise
+
+
+def resolve_client(client_id: str, *, refresh: bool = False, rate_key: str | None = None) -> Client:
+    """CIMD URL (fetched, cached 24 h) or a registered DCR client. Raises OAuthError(invalid_client).
+    rate_key: the requesting client's ratelimit.client_key, so cache-miss fetches are limited per client."""
     if not client_id or not isinstance(client_id, str):
         raise OAuthError("invalid_request", "client_id is missing.", redirectable=False, member=MEMBER_INCOMPLETE)
     t = db.oauth_clients
@@ -291,7 +377,7 @@ def resolve_client(client_id: str, *, refresh: bool = False) -> Client:
         if fresh:
             md = dict(row.metadata or {})
         else:
-            md = _fetch_cimd(client_id)
+            md = _guarded_fetch_cimd(client_id, rate_key)
             md["_fetched_at"] = db.iso(now)
             with db.tx() as c:
                 db.upsert(c, t, {"client_id": client_id, "kind": "cimd", "metadata": md,
@@ -428,6 +514,20 @@ def grant_authorization_code(form: dict) -> dict:
     return out
 
 
+REFRESH_GRACE = timedelta(seconds=60)
+
+
+def _in_refresh_grace(conn, row, now) -> bool:
+    """True when `row` (a rotated refresh token) was rotated less than REFRESH_GRACE ago and the refresh token it
+    was rotated into has not been used or revoked yet."""
+    rotated = row.revoked_at
+    if rotated is None or now - rotated > REFRESH_GRACE:
+        return False
+    t = db.oauth_tokens
+    succ = conn.execute(select(t.c.replaced_by, t.c.revoked_at).where(t.c.token_hash == row.replaced_by)).first()
+    return succ is not None and succ.replaced_by is None and succ.revoked_at is None
+
+
 def grant_refresh(form: dict) -> dict:
     token = form.get("refresh_token") or ""
     client_id = form.get("client_id") or ""
@@ -442,7 +542,18 @@ def grant_refresh(form: dict) -> dict:
         row = conn.execute(select(t).where(t.c.token_hash == h, t.c.kind == "refresh")).first()
         if row is None or row.client_id != client_id:
             raise OAuthError("invalid_grant", "This refresh token is not valid.")
-        if row.replaced_by is not None or row.revoked_at is not None:
+        grace = row.replaced_by is not None and _in_refresh_grace(conn, row, now)
+        if grace and row.expires_at > now and _user_active(conn, row.user_id) \
+                and not _reconfirm_due(conn, row.user_id):
+            # The same refresh token again within REFRESH_GRACE of its rotation while the token it was rotated
+            # into is still unused: a retry after a lost answer, or two refreshes at once. Hand out a fresh pair
+            # in the same family and leave the first answer's tokens working (fix round 2).
+            err = None
+            out = _issue(conn, client_id=row.client_id, user_id=row.user_id, family_id=row.family_id,
+                         resource=row.resource or resource_url())
+            out.pop("_refresh_hash", None)
+            log.info("refresh token retried within the grace window")
+        elif row.replaced_by is not None or row.revoked_at is not None:
             if row.replaced_by is not None:
                 n = _revoke_family(conn, row.family_id)    # reuse of a rotated token: kill the chain
                 log.warning("refresh token reuse: family revoked (%d tokens)", n)
@@ -519,6 +630,11 @@ def cleanup(now=None) -> dict:
         stale = conn.execute(cl.delete().where(
             cl.c.kind == "dcr", func.coalesce(cl.c.last_used_at, cl.c.created_at) < now - DCR_UNUSED,
             cl.c.client_id.not_in(live))).rowcount
+        # registered but never used at /oauth/token: kept one day, not 30 (fix round 2)
+        stale += conn.execute(cl.delete().where(
+            cl.c.kind == "dcr", cl.c.last_used_at.is_(None), cl.c.created_at < now - DCR_NEVER_USED,
+            cl.c.client_id.not_in(select(t.c.client_id)),
+            cl.c.client_id.not_in(select(c_t.c.client_id)))).rowcount
         stale += conn.execute(cl.delete().where(
             cl.c.kind == "cimd", func.coalesce(cl.c.last_used_at, cl.c.created_at) < now - DCR_UNUSED,
             cl.c.client_id.not_in(live))).rowcount
@@ -616,11 +732,11 @@ class AuthRequest:
     resource: str
 
 
-def _check_request(params: dict) -> AuthRequest:
+def _check_request(params: dict, rate_key: str | None = None) -> AuthRequest:
     """Validate an authorize request. Errors with redirectable=False must be shown as a page (7.3.2 step 2)."""
     client_id = params.get("client_id") or ""
     redirect_uri = params.get("redirect_uri") or ""
-    client = resolve_client(client_id)
+    client = resolve_client(client_id, rate_key=rate_key)
     if not redirect_uri:
         raise OAuthError("invalid_request", "redirect_uri is missing.", redirectable=False, member=MEMBER_INCOMPLETE)
     if not redirect_allowed(redirect_uri) or not redirect_matches(client.redirect_uris, redirect_uri):
@@ -650,7 +766,8 @@ def _consent_html(ar: AuthRequest, user, csrf: str, params: dict) -> HTMLRespons
     body = (f"<h1>Connect Claude to ReelVault</h1>"
             f"<p><b>{host}</b> wants to use your ReelVault account.</p>"
             "<p>It can read your profile, competitors and reels, and save analyses and scripts. "
-            "It can't see your password or API keys.</p>"
+            "It can also add competitors and ask your Chrome extension to read their reels, within your daily "
+            "limits. It can't see your password or API keys.</p>"
             f"<p class=\"who\">Signed in as {html.escape(user.email)}. You can disconnect it any time in "
             "Settings &gt; AI.</p>"
             f"<form method=\"post\" action=\"/oauth/authorize\">{hidden}"
@@ -663,7 +780,7 @@ def _consent_html(ar: AuthRequest, user, csrf: str, params: dict) -> HTMLRespons
 def _authorize_get(request: Request) -> Response:
     params = {k: request.query_params.get(k) for k in FIELDS}
     try:
-        ar = _check_request(params)
+        ar = _check_request(params, ratelimit.client_key(request))
     except OAuthError as e:
         if not e.redirectable or not params.get("redirect_uri"):
             log.info("authorize refused: %s", e.description)
@@ -709,7 +826,7 @@ def _authorize_post(request: Request, form: dict) -> Response:
         return _error_page("This page expired. Go back to Claude and press Connect again.", 403)
     params = {k: form.get(k) for k in FIELDS}
     try:
-        ar = _check_request(params)
+        ar = _check_request(params, ratelimit.client_key(request))
     except OAuthError as e:
         if not e.redirectable:
             log.info("authorize refused: %s", e.description)
@@ -823,6 +940,9 @@ def _register_sync(request: Request, body: Any) -> JSONResponse:
     ip = security.client_ip(request)
     ck = ratelimit.client_key(request)
     try:
+        # The plain per-client limit comes first and, once over it, nothing else is counted: a client that
+        # changes client_name on every call can no longer fill the server-wide budget (fix round 2).
+        ratelimit.hit("oauth_reg_ip", ck, ratelimit.ip_limit(REGISTER_PER_IP_HOUR, ip), "hour")
         ratelimit.hit_all(request, [
             ("oauth_reg", ratelimit.key(ck, "|".join(sorted(uris)), name),
              ratelimit.ip_limit(REGISTER_PER_KEY_HOUR, ip)),

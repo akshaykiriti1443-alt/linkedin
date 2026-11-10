@@ -74,7 +74,8 @@ export async function join(main, {parts, query}) {
       skool_url: skool.value.trim() || null, code: code.value.trim()}));
     if (!r.ok) { say(out, r); return; }
     if (r.data.status === "pending") {
-      clear(main, h("div", {class: "view"}, brandHead("You're on the list"), h("div", {class: "panel"}, h("p", PENDING),
+      const check = !!r.data.check_email;
+      clear(main, h("div", {class: "view"}, brandHead(check ? "Check your email" : "You're on the list"), h("div", {class: "panel"}, h("p", check ? r.data.message : PENDING),
         h("a", {class: "btn ghost", href: "#login"}, "Go to log in"))));
       return;
     }
@@ -105,10 +106,27 @@ export async function reset(main, {parts}) {
     const r = await busy(form.querySelector("button"), () => post("/api/auth/reset", {token: parts[0] || "", new: pw.value}));
     if (!r.ok) { say(out, r); return; }
     clear(main, h("div", {class: "view"}, brandHead("Password changed"), h("div", {class: "panel"},
-      h("p", "Your new password works now. Log in with it."), h("a", {class: "btn", href: "#login"}, "Log in"))));
+      h("p", "Your new password works now. Log in with it."),
+      r.data && r.data.message ? h("p", r.data.message) : null,
+      h("a", {class: "btn", href: "#login"}, "Log in"))));
   }}, field("New password", pw, "At least 10 characters."), field("Type it again", pw2), out,
   h("div", {class: "row"}, h("button", {type: "submit"}, "Save my new password")));
   clear(main, h("div", {class: "view"}, brandHead("Pick a new password"), form));
+}
+
+/** #verify/<token>: the link an allowlisted signup gets by email (fix round 2). One click, then log in. */
+export async function verify(main, {parts}) {
+  const out = msg();
+  const btn = h("button", {type: "button", onclick: async () => {
+    const r = await busy(btn, () => post("/api/auth/verify-email", {token: parts[0] || ""}));
+    if (!r.ok) { say(out, r); return; }
+    const ok = r.data.status === "active";
+    clear(main, h("div", {class: "view"}, brandHead(ok ? "You're in" : "Thanks"), h("div", {class: "panel"},
+      h("p", ok ? "Your email is confirmed. Log in to start." : (r.data.message || "Your email is confirmed.")),
+      h("a", {class: "btn", href: "#login"}, "Log in"))));
+  }}, "Confirm my email");
+  clear(main, h("div", {class: "view"}, brandHead("Confirm your email"), h("div", {class: "panel"},
+    h("p", "Click the button to confirm this is your email and get into ReelVault."), out, h("div", {class: "row"}, btn))));
 }
 
 /** Shown instead of every page while the member must re-confirm with the current community code. */

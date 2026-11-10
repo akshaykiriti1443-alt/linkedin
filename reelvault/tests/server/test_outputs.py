@@ -511,3 +511,52 @@ def test_cue_sheet_reads_plainly():
     sounds = [r[2] for r in rows]
     assert sounds[0].startswith("music in · ") and "SD15" not in sounds[0]
     assert sounds[1] == "hit" and sounds[2] == "whoosh"
+
+
+# ============================================================================================== fix round 2
+
+def test_report_drops_made_up_competitor_handles(world):
+    uid = world["uid"]
+    set_mode(uid, "desktop")
+    _oid, jid = work.create_output(uid, "competitor_report", {})
+    with db.read() as c:
+        j = c.execute(select(db.jobs).where(db.jobs.c.id == jid)).first()
+    ans = fake_answer("CompetitorReport", work.build_task(uid, j)["prompt"])
+    comp = (ans.get("competitors") or [{"handle": "x", "what_they_do": "talks", "what_works": "VF01"}])[0]
+    bad = dict(ans, competitors=[dict(comp, handle="alexhormozi_not_tracked")])
+    with pytest.raises(work.Invalid, match="competitors must use these handles"):
+        work.save_result(uid, j, bad, {"via": "desktop"})
+
+
+def test_use_format_brief_has_measured_sound_and_checks_the_format(world):
+    uid, rids, fid = world["uid"], world["rids"], world["fid"]
+    set_mode(uid, "desktop")
+    extra = add_reel(uid, world["aid"], score=1.3, band="normal")
+    with db.tx() as c:   # display examples padded with a normal reel: it must not become a source
+        c.execute(db.formats.update().where(db.formats.c.id == fid).values(example_reels=[extra, rids[2], rids[0]]))
+        snap = c.execute(select(db.insight_snapshots).where(db.insight_snapshots.c.user_id == uid)).first()
+        music = list(snap.data["music"]) + [{"title": "Night Drive 1", "type": "licensed", "outliers": 0}]
+        c.execute(db.insight_snapshots.update().where(db.insight_snapshots.c.id == snap.id)
+                  .values(data=dict(snap.data, music=music)))
+    _oid, jid = work.create_output(uid, "reel_script", {"count": 1, "based_on": {"sub_formats": [fid], "auto": False}})
+    with db.read() as c:
+        j = c.execute(select(db.jobs).where(db.jobs.c.id == jid)).first()
+        out = c.execute(select(db.outputs).where(db.outputs.c.id == j.payload["output_id"])).first()
+    assert extra not in (out.inputs or {}).get("reel_ids", [])
+    task = work.build_task(uid, j)
+    prompt = task["prompt"]
+    whole = json.dumps(task, ensure_ascii=False)
+    assert "Measured on the video" in prompt and "Sound cues:" in prompt and "EditStats" in prompt
+    assert "new_topic" not in prompt and "Topics (set topic to one of these slugs" in prompt
+    assert "Song A" in whole and "Night Drive 1" not in whole      # only music an outlier used
+    pack = fake_answer("ReelScriptPack", prompt)
+    p = json.loads(json.dumps(pack))
+    p["scripts"][0]["format"] = "VF04"
+    with pytest.raises(work.Invalid, match="format must be VF01"):
+        work.save_result(uid, j, p, {"via": "desktop"})
+    p["scripts"][0]["format"] = "VF01"
+    p["scripts"][0]["sub_format"] = ""
+    work.save_result(uid, j, p, {"via": "desktop"})
+    with db.read() as c:
+        saved = c.execute(select(db.outputs).where(db.outputs.c.id == j.payload["output_id"])).first()
+    assert saved.data["scripts"][0]["sub_format"] == fid

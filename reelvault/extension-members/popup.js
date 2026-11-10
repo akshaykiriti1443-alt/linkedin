@@ -12,7 +12,9 @@ function n(x) { return Number(x || 0).toLocaleString("en-US"); }
 
 function igText(ig) {
   if (!ig) return "Instagram: not checked yet.";
-  if (ig.waiting) return "Instagram asked us to slow down. ReelVault checks your Instagram account when the wait is over.";
+  if (ig.error === "challenge") return "Instagram wants you to confirm it's you. Open instagram.com and follow the steps. ReelVault waits a day, then checks again.";
+  if (ig.waiting || ["rate_limited", "warning"].includes(ig.error)) return "Instagram asked us to slow down. ReelVault checks your Instagram account when the wait is over.";
+  if (ig.error === "http_error") return "Instagram didn't answer. ReelVault tries again later.";
   if (!ig.signed_in) return "You're signed out of Instagram in Chrome. Sign in at instagram.com, then open this again.";
   return `ReelVault reads Instagram as @${ig.username}.`;
 }

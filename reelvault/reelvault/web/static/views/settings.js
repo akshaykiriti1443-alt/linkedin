@@ -44,6 +44,7 @@ async function account(main, {token}) {
   const s = sa.ok ? sa.data : {active: false};
   const days = h("select", {id: "support-days", "aria-label": "For how long"}, [1, 3, 7].map(n => h("option", {value: n, selected: n === 7}, n === 1 ? "1 day" : `${n} days`)));
   // Delete
+  const signOutAll = h("input", {type: "checkbox", id: "pw-sign-out-all", checked: true});
   const delPw = h("input", {type: "password", autocomplete: "current-password", id: "delete-password"});
   const delOut = msg();
   clear(main, h("div", {class: "view"}, settingsTabs("account"), h("h1", "Your account"),
@@ -51,9 +52,10 @@ async function account(main, {token}) {
       h("dt", "Limits"), h("dd", `${me.limits.max_accounts} competitors · ${me.limits.pulls_per_day} pulls a day · ${me.limits.outputs_per_day} outputs a day`))),
     h("section", {class: "panel"}, h("h2", "Look"), themeSel),
     h("section", {class: "panel"}, h("h2", "Change your password"), h("div", {class: "grid2"}, field("Current password", cur), field("New password", nw, "At least 10 characters.")), pwOut,
+      h("label", {class: "check"}, signOutAll, " Also sign out Claude, the Chrome extension and the desktop app"),
       h("div", {class: "row"}, h("button", {type: "button", onclick: async e => {
-        const r = await busy(e.currentTarget, () => post("/api/auth/password", {current: cur.value, new: nw.value}));
-        say(pwOut, r, "Changed. You're signed out on your other devices.");
+        const r = await busy(e.currentTarget, () => post("/api/auth/password", {current: cur.value, new: nw.value, sign_out_everywhere: signOutAll.checked}));
+        say(pwOut, r, r.ok && r.data && r.data.message ? `Changed. ${r.data.message}` : "Changed. You're signed out on your other devices.");
         if (r.ok) { cur.value = ""; nw.value = ""; await refreshMe(); }
       }}, "Change my password"))),
     h("section", {class: "panel", id: "support-access"}, h("div", {class: "panel-head"}, h("h2", "Let the admin see your account"), s.active ? pill("On", "warn") : pill("Off")),

@@ -3,7 +3,7 @@
 
 // One Instagram API call from the extension's own instagram.com reading tab. The browser attaches the member's
 // cookies itself; the extension never reads them, except csrftoken from document.cookie inside this tab.
-export async function igFetch({method, path, form, appId, asbdId}) {
+export async function igFetch({method, path, form, appId, asbdId, referrer}) {
   const csrf = (document.cookie.match(/(?:^|; )csrftoken=([^;]+)/) || [])[1] || "";
   const h = {"X-IG-App-ID": appId, "X-ASBD-ID": asbdId, "X-IG-WWW-Claim": "0",
              "X-Requested-With": "XMLHttpRequest", "X-CSRFToken": csrf};
@@ -11,8 +11,11 @@ export async function igFetch({method, path, form, appId, asbdId}) {
   try {
     // redirect "follow": the final URL tells a checkpoint (/challenge/), a suspended account (/accounts/suspended/)
     // and a login wall (/accounts/login/) apart (5.7). With "manual" every redirect looked like "signed out".
+    // referrer: a same-origin instagram.com page (allowed in the fetch init), never this robots.txt reading page.
+    const ref = typeof referrer === "string" && referrer.startsWith(location.origin + "/") ? referrer : location.origin + "/";
     const r = await fetch(new URL(path, location.origin), {method, credentials: "include", headers: h,
-      redirect: "follow", body: method === "POST" ? new URLSearchParams(form).toString() : undefined});
+      redirect: "follow", referrer: ref, referrerPolicy: "strict-origin-when-cross-origin",
+      body: method === "POST" ? new URLSearchParams(form).toString() : undefined});
     const text = r.type === "opaqueredirect" ? "" : await r.text();
     return {status: r.status, type: r.type, url: r.url, redirected: !!r.redirected,
             ct: r.headers.get("content-type") || "", text: text.slice(0, 3e6), page: location.href};

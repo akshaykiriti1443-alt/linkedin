@@ -295,4 +295,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    from .storage import drop_root
+
+    drop_root("reelvault.server.bench", sys.argv[1:])   # never write root-owned files in /data (fix round 2)
     sys.exit(main())

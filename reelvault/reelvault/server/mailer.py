@@ -177,6 +177,12 @@ def youre_in(user) -> bool:
     return send(user.email, "You're in: your ReelVault account is ready", text)
 
 
+def verify_email(user, url: str) -> bool:
+    text = (f"Hi {user.name},\n\nYou signed up for ReelVault with this email. Open this link within 24 hours to "
+            f"get in:\n\n{url}\n\nIf it wasn't you, ignore this email and tell the community admin.\n")
+    return send(user.email, "Confirm your email for ReelVault", text)
+
+
 def reset_link(user, url: str) -> bool:
     text = (f"Hi {user.name},\n\nSomeone asked to reset your ReelVault password. If it was you, open this link "
             f"within 24 hours and pick a new password:\n\n{url}\n\n"
