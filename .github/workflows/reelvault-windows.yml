@@ -87,3 +87,28 @@ jobs:
           if (-not $s.version) { throw "new version not running" }
           if (-not (Test-Path "$rv\chrome-extension\manifest.json")) { throw "extension folder missing" }
           Invoke-RestMethod -Method Post -ContentType "application/json" -Body '{}' http://127.0.0.1:8765/api/quit | Out-Null
+
+      - name: ReelVault Members on this computer (localhost installer)
+        shell: powershell
+        run: |
+          .\reelvault\install-members.ps1 -Source .\reelvault -NoLaunch -NoWhisper
+          $rvm = "$env:USERPROFILE\ReelVault-Members"
+          if (-not (Test-Path "$rvm\chrome-extension\manifest.json")) { throw "extension folder missing" }
+          if (-not (Test-Path "$env:USERPROFILE\Desktop\ReelVault Members.lnk")) { throw "desktop icon missing" }
+          Start-Process "$rvm\env\Scripts\pythonw.exe" -ArgumentList "-m reelvault.members_local --no-browser" -WorkingDirectory $rvm
+          $ok = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            try { $h = Invoke-RestMethod http://localhost:8800/healthz -TimeoutSec 3; $ok = $true; break } catch { Start-Sleep -Seconds 2 }
+          }
+          if (-not $ok) { Get-Content "$rvm\members.log" -Tail 40 -ErrorAction SilentlyContinue; throw "members app did not start" }
+          $h | ConvertTo-Json -Depth 4
+          $pw = ((Get-Content "$rvm\login.txt") | Where-Object { $_ -like "Password:*" }) -replace "Password:\s*", ""
+          $s = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+          $body = @{ email = "owner@reelvault.local"; password = $pw } | ConvertTo-Json
+          $r = Invoke-RestMethod -Method Post -Uri http://localhost:8800/api/auth/login -Body $body -ContentType "application/json" -Headers @{ Origin = "http://localhost:8800" } -WebSession $s
+          $me = Invoke-RestMethod -Uri http://localhost:8800/api/me -WebSession $s
+          "signed in as $($me.email) role=$($me.role) ai_mode=$($me.ai_mode)"
+          if ($me.role -ne "admin") { throw "owner login failed" }
+          $page = Invoke-WebRequest -UseBasicParsing http://localhost:8800/
+          if ($page.StatusCode -ne 200) { throw "web app page did not load" }
+          Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*reelvault.members_local*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
