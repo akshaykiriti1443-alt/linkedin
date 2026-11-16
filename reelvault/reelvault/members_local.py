@@ -9,6 +9,7 @@ Everything lives in %USERPROFILE%\\ReelVault-Members (or $RVM_HOME):
     chrome-extension\\ the Chrome extension built for http://localhost:8800 (Load unpacked)
     login.txt        your owner login
     secret-key.txt   the key that encrypts saved API keys (keep it; never share it)
+    onex-sso-secret.txt  the shared secret OneX uses to sign members in (put the same value in OneX)
 
 The web app and the job worker run in this one process. Your AI work runs through Claude Code on this
 computer (your Claude plan): the launcher pairs a desktop worker for the owner account automatically.
@@ -89,7 +90,10 @@ def configure() -> dict:
         pw = "rv-" + secrets.token_urlsafe(10)
         login.write_text(f"ReelVault Members (on this computer)\nOpen: {URL}\nEmail: {OWNER_EMAIL}\n"
                          f"Password: {pw}\n", encoding="utf-8")
+    sso = _read_or_make(HOME / "onex-sso-secret.txt", lambda: secrets.token_urlsafe(32))
+    os.environ.setdefault("ONEX_URL", "http://localhost:3000")
     os.environ.update({
+        "ONEX_SSO_SECRET": sso,
         "DATA_DIR": str(HOME / "data"), "PUBLIC_URL": URL, "RV_MASTER_KEYS": key,
         "ADMIN_EMAIL": OWNER_EMAIL, "ADMIN_PASSWORD": pw, "RV_MODELS_DIR": str(HOME / "models"),
         "LOG_LEVEL": os.environ.get("LOG_LEVEL", "warning"),

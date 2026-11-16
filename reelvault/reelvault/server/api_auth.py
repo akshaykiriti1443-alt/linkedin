@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import zipfile
 from datetime import timedelta
@@ -629,3 +630,103 @@ def export_me(request: Request, user=Depends(security.current_user)):
     db.audit("export", user_id=user.id, actor=user.id, ip=security.client_ip(request))
     return Response(buf.getvalue(), media_type="application/zip",
                     headers={"Content-Disposition": 'attachment; filename="reelvault-export.zip"'})
+
+
+# ============================================================================================== OneX sign-in
+# The owner's OneX app (app.scaleitads.com) signs its members in to ReelVault with one click.
+# OneX makes a short ticket:  v1.<base64url(JSON payload)>.<base64url(HMAC-SHA256(secret, "v1." + payload))>
+# payload = {"email": "...", "name": "...", "exp": <unix seconds, at most 10 minutes ahead>, "nonce": "<random>"}
+# and sends the member to  <ReelVault>/sso/onex?t=<ticket>.  The secret is ONEX_SSO_SECRET (same value on
+# both sides). OneX only signs tickets for people it trusts, so they come in active (no approval queue).
+
+SSO_MAX_AHEAD_S = 600
+
+
+def _sso_page(message: str, status: int = 400):
+    from fastapi.responses import HTMLResponse
+    import html
+
+    back = os.environ.get("ONEX_URL", "").strip()
+    link = f'<p><a href="{html.escape(back)}">Back to OneX</a></p>' if back else ""
+    body = (f"<!doctype html><meta charset='utf-8'><title>ReelVault</title>"
+            f"<body style='font-family:system-ui;max-width:520px;margin:12vh auto;padding:0 16px'>"
+            f"<h1>ReelVault</h1><p>{html.escape(message)}</p>{link}</body>")
+    return HTMLResponse(body, status_code=status)
+
+
+def _b64d(s: str) -> bytes:
+    import base64
+
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+
+def verify_onex_ticket(ticket: str, secret: str, now: float | None = None) -> dict:
+    """Return the payload of a valid ticket, or raise ValueError with a plain reason."""
+    import hashlib
+    import hmac
+    import time as _time
+
+    parts = (ticket or "").split(".")
+    if len(parts) != 3 or parts[0] != "v1":
+        raise ValueError("This sign-in link is not valid.")
+    want = hmac.new(secret.encode(), f"v1.{parts[1]}".encode(), hashlib.sha256).digest()
+    try:
+        got = _b64d(parts[2])
+        payload = json.loads(_b64d(parts[1]))
+    except Exception:
+        raise ValueError("This sign-in link is not valid.")
+    if not hmac.compare_digest(want, got):
+        raise ValueError("This sign-in link is not valid.")
+    now = _time.time() if now is None else now
+    exp = payload.get("exp")
+    if not isinstance(exp, (int, float)) or exp < now or exp > now + SSO_MAX_AHEAD_S:
+        raise ValueError("This sign-in link has expired. Go back to OneX and click ReelVault again.")
+    email = norm_email(str(payload.get("email") or ""))
+    nonce = str(payload.get("nonce") or "")
+    if "@" not in email or len(nonce) < 12:
+        raise ValueError("This sign-in link is not valid.")
+    return {"email": email, "name": str(payload.get("name") or "")[:80], "nonce": nonce}
+
+
+@router.get("/sso/onex")
+def sso_onex(t: str, request: Request):
+    from fastapi.responses import RedirectResponse
+
+    secret = os.environ.get("ONEX_SSO_SECRET", "").strip()
+    if len(secret) < 32:
+        return _sso_page("Sign-in from OneX is not set up yet. The admin needs to add ONEX_SSO_SECRET.", 503)
+    ratelimit.hit("sso_onex", ratelimit.client_key(request), 30, "minute", message="Too many tries. Wait a minute.")
+    try:
+        data = verify_onex_ticket(t, secret)
+    except ValueError as e:
+        return _sso_page(str(e))
+    used = db.bump(db.usage_counters, {"scope": "global", "key": f"sso:{data['nonce']}",
+                                       "window": db.utcnow().strftime("%Y-%m-%d")}, count=1)
+    if used.get("count") != 1:
+        return _sso_page("This sign-in link was already used. Go back to OneX and click ReelVault again.")
+    u = db.users
+    now = db.utcnow()
+    with db.tx() as conn:
+        user = conn.execute(select(u).where(u.c.email == data["email"])).first()
+        if user is not None and user.status == "disabled":
+            return _sso_page("Your ReelVault account is turned off. Message the community admin.", 403)
+        if user is None:
+            uid = db.new_id("usr")
+            conn.execute(u.insert().values(
+                id=uid, email=data["email"], name=data["name"] or data["email"].split("@")[0],
+                password_hash=security.hash_password(security.new_token("sso")[0]), status="active", role="member",
+                created_at=now, membership_checked_at=now, settings=dict(db.USER_SETTINGS_DEFAULT)))
+            db.upsert(conn, db.profiles, {"user_id": uid, "brand_id": "me", "status": "empty", "answers": {},
+                                          "updated_at": now}, do_nothing=True)
+            db.audit("signup_onex", user_id=uid, actor=uid, ip=security.client_ip(request), conn=conn)
+        else:
+            uid = user.id
+            vals = {"last_login_at": now, "last_seen_at": now, "membership_checked_at": now}
+            if user.status == "pending":
+                vals["status"] = "active"
+            conn.execute(u.update().where(u.c.id == uid).values(**vals))
+        value, _csrf = security.create_session(conn, uid, request)
+        db.audit("login_onex", user_id=uid, actor=uid, ip=security.client_ip(request), conn=conn)
+    resp = RedirectResponse("/", status_code=303)
+    security.set_session_cookie(resp, value)
+    return resp

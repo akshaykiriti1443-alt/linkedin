@@ -53,8 +53,11 @@ Read this first. It replaces the chat history of the cloud session that built th
   listing, detectors on real reels (needs 20-30 labelled reels from the owner).
 - Known gap: optional Postgres mode has a daily-jobs scheduling failure in CI (non-blocking; SQLite is
   the default).
-- Next likely asks: let the owner log in with his own email; host on app.scaleitads.com with OneX
-  single sign-on (needs the OneX code); run base path `/reelvault`.
+- OneX one-click sign-in is built on the ReelVault side: `GET /sso/onex?t=<ticket>` (in
+  `server/api_auth.py`, tests in `tests/server/test_sso_onex.py`), secret `ONEX_SSO_SECRET`
+  (local: `ReelVault-Members\onex-sso-secret.txt`). The OneX side is described in
+  `reelvault/INTEGRATE-ONEX.md` and is done inside the OneX project folder (named like "0to1x" on his PC).
+- Next likely asks: let the owner log in with his own email; host ReelVault at a subdomain and wire OneX to it.
 
 ## How to work here
 - Git branch with all of this: `claude/kind-dijkstra-0o03in`.
