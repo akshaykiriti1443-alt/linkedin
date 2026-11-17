@@ -53,10 +53,15 @@ Read this first. It replaces the chat history of the cloud session that built th
   listing, detectors on real reels (needs 20-30 labelled reels from the owner).
 - Known gap: optional Postgres mode has a daily-jobs scheduling failure in CI (non-blocking; SQLite is
   the default).
-- OneX one-click sign-in is built on the ReelVault side: `GET /sso/onex?t=<ticket>` (in
-  `server/api_auth.py`, tests in `tests/server/test_sso_onex.py`), secret `ONEX_SSO_SECRET`
-  (local: `ReelVault-Members\onex-sso-secret.txt`). The OneX side is described in
-  `reelvault/INTEGRATE-ONEX.md` and is done inside the OneX project folder (named like "0to1x" on his PC).
+- OneX one-click sign-in AND the embedded page (D86): OneX shows ReelVault inside its own page (iframe at
+  `/app/w/<wid>/reelvault/...`, OneX sidebar + header). ReelVault side: `GET /sso/onex?t=<ticket>&embed=1&parent=..&theme=..&to=..`
+  (`server/api_auth.py`), `frame-ancestors` from `ONEX_URL` on `/` and `/sso/onex` only (`server/settings.py`,
+  `server/app.py`; local members mode `RV_LOCAL_MEMBERS=1` also allows `http://localhost:*`), embed mode in
+  `web/static/theme.js` + `embed.js` (origin-checked postMessage), OneX's look in `web/static/app.css` + self-hosted
+  fonts. Tests: `tests/server/test_sso_onex.py`, `test_embed_framing.py`, `tests/web/ui.test.mjs`. Secret
+  `ONEX_SSO_SECRET` (local: `ReelVault-Members\onex-sso-secret.txt`). Findings API for OneX's Ad studio:
+  `GET /api/onex/v1/findings` (`reelvault/docs/onex-findings-api.md`). Both sides: `reelvault/INTEGRATE-ONEX.md`;
+  the OneX code lives in the OneX project folder (named like "0to1x" on his PC).
 - Next likely asks: let the owner log in with his own email; host ReelVault at a subdomain and wire OneX to it.
 
 ## How to work here

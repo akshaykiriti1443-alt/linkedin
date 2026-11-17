@@ -87,6 +87,18 @@ Pick one and put it in `deploy/.env`, then restart (`./deploy/setup.sh update`):
   `MAIL_FROM=ReelVault <no-reply@scaleitads.com>` on a domain you verified there.
 - or `SMTP_URL=smtp://USER:PASSWORD@smtp.yourmail.com:587` from your email provider.
 
+## Show ReelVault inside OneX (optional)
+
+OneX can show ReelVault inside its own page, with one sign-in. `deploy/.env` has these two lines under "OneX" (add them if your `.env` is older):
+```
+# ONEX_URL=https://app.scaleitads.com
+# ONEX_SSO_SECRET=
+```
+Remove the `#` in front of both, put a new long random value after `ONEX_SSO_SECRET=`, then restart
+(`./deploy/setup.sh update`). Do not set `RV_LOCAL_MEMBERS` on a server. In Vercel (OneX) set
+`REELVAULT_URL` to this server's address and the same `ONEX_SSO_SECRET`. Without `ONEX_URL`, no site can show
+ReelVault in a frame. The details are in `INTEGRATE-ONEX.md`.
+
 ## Zapier (optional)
 
 If you use Zapier with Skool, ReelVault can add new Skool members to the allowlist by itself.

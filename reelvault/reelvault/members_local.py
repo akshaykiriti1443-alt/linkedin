@@ -94,6 +94,7 @@ def configure() -> dict:
     os.environ.setdefault("ONEX_URL", "http://localhost:3000")
     os.environ.update({
         "ONEX_SSO_SECRET": sso,
+        "RV_LOCAL_MEMBERS": "1",   # lets OneX on any localhost port show ReelVault inside its page (D86)
         "DATA_DIR": str(HOME / "data"), "PUBLIC_URL": URL, "RV_MASTER_KEYS": key,
         "ADMIN_EMAIL": OWNER_EMAIL, "ADMIN_PASSWORD": pw, "RV_MODELS_DIR": str(HOME / "models"),
         "LOG_LEVEL": os.environ.get("LOG_LEVEL", "warning"),

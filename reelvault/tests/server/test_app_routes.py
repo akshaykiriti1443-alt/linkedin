@@ -1,15 +1,15 @@
 """Route order and edge behaviour (DESIGN-SAAS.md 12.2, 13: ROUTERS, SPA paths, MCP mounted last)."""
 from starlette.routing import Mount
 
-from reelvault.server import (api_accounts, api_admin, api_ai, api_auth, api_ext, api_files, api_outputs,
-                              api_profile, api_reels, oauth)
+from reelvault.server import (api_accounts, api_admin, api_ai, api_auth, api_ext, api_files, api_onex,
+                              api_outputs, api_profile, api_reels, oauth)
 from reelvault.server import app as app_module
 
 
 def test_routers_list_is_exactly_section_13():
     assert app_module.ROUTERS == [api_auth.router, api_admin.router, api_files.router, api_ext.router,
                                   api_accounts.router, api_reels.router, api_ai.router, api_outputs.router,
-                                  api_profile.router, oauth.router]
+                                  api_profile.router, oauth.router, api_onex.router]
 
 
 def test_mcp_is_mounted_last_and_spa_has_no_catch_all(app):
@@ -31,7 +31,8 @@ def test_core_routes_exist(app):
                  ("PATCH", "/api/admin/users/{user_id}"), ("POST", "/api/admin/users/{user_id}/approve"),
                  ("POST", "/api/admin/invites/community"), ("POST", "/api/admin/sync-members"),
                  ("POST", "/api/hooks/skool-removed"), ("GET", "/api/jobs"), ("POST", "/api/jobs/{job_id}/retry"),
-                 ("GET", "/api/home"), ("GET", "/files/{user_id}/{rel:path}"), ("GET", "/api/version")]:
+                 ("GET", "/api/home"), ("GET", "/files/{user_id}/{rel:path}"), ("GET", "/api/version"),
+                 ("GET", "/api/onex/v1/findings")]:
         assert want in have, want
 
 

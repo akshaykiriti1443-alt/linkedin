@@ -1,5 +1,5 @@
 /* #join[/code], #login, #reset/<token>, and the re-confirm screen (4.2). */
-import {h, clear, md, msg, say, busy, post, get, S, go, field, refreshMe, toast, localStore} from "../app.js";
+import {h, clear, md, msg, say, busy, post, get, S, go, field, refreshMe, toast, localStore, EMBED} from "../app.js";
 
 const CHROME_NOTE = "You'll need Chrome, Edge or Brave on a computer to read Instagram reels.";
 const PENDING = "Thanks! The community admin will approve you soon. You'll get an email if email is set up; otherwise try logging in later.";
@@ -143,6 +143,6 @@ export async function reconfirm(main) {
     location.reload();
   }}, h("p", md("To keep ReelVault for members only, type the **current community code**. You'll find it in the Skool Classroom.")),
   field("Community code", code), out, h("div", {class: "row"}, h("button", {type: "submit"}, "Continue"),
-    h("button", {type: "button", class: "ghost", onclick: async () => { await post("/api/auth/logout", {}); S.me = null; location.hash = "#login"; location.reload(); }}, "Log out")));
+    EMBED ? null : h("button", {type: "button", class: "ghost", onclick: async () => { await post("/api/auth/logout", {}); S.me = null; location.hash = "#login"; location.reload(); }}, "Log out")));
   clear(main, h("div", {class: "view"}, brandHead("Are you still in the community?"), form));
 }

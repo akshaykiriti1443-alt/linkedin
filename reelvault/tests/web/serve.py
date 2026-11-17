@@ -203,7 +203,7 @@ def seed(fake_port: int) -> dict:
                 with db.tx() as conn:
                     conn.execute(rl.update().where(rl.c.id == rid).values(cover_path=f"reels/{rid}/cover.jpg"))
                 _cover(storage.member_path(uid, f"reels/{rid}/cover.jpg"), top.index(rid))
-        except Exception as e:  # noqa: BLE001 - media tools missing: the UI still works without deep reads
+        except (Exception, SystemExit) as e:  # noqa: BLE001 - media tools missing (make_media exits): the UI still works without deep reads
             print(f"seed: deep reads skipped ({e})", file=sys.stderr)
         js.queue_insights(uid)
         jobs.drain(("light",))
@@ -437,6 +437,10 @@ def main(argv=None) -> int:
         if p == 8765 or not 9000 <= p <= 9999:  # default 9240-9259; other runs pass their own range
             raise SystemExit("Web tests use ports 9000-9999 (default 9240-9259), never 8765.")
     os.environ["SERVER_CDN_FETCH"] = "0"
+    # The embed tests play OneX at http://localhost:<port + 4> (a page Playwright serves; no server listens there).
+    os.environ["ONEX_URL"] = f"http://localhost:{a.port + 4}"
+    os.environ["ONEX_SSO_SECRET"] = "s" * 40   # test-only value (this server listens on 127.0.0.1 only)
+    os.environ.pop("RV_LOCAL_MEMBERS", None)
     from reelvault.server import api_admin, db, dev
 
     info = dev.configure(a.port, a.data_dir)

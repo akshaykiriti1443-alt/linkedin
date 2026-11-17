@@ -59,8 +59,74 @@ class Settings:
     test_pacing: bool = False
     test_allow_http_cimd: bool = False
     mail_from: str | None = None
+    onex_url: str = ""            # ONEX_URL: the OneX app that may frame ReelVault (DESIGN-SAAS.md D86)
+    local_members: bool = False   # RV_LOCAL_MEMBERS: set by members_local.configure() on the owner's PC
 
     # ---- derived
+    @property
+    def is_local_members(self) -> bool:
+        """ReelVault Members on this computer: the flag AND a plain-http localhost PUBLIC_URL. A hosted server with
+        the flag set by mistake (https PUBLIC_URL) is never loosened."""
+        u = urlparse(self.public_url)
+        return self.local_members and u.scheme == "http" and (u.hostname or "") in ("localhost", "127.0.0.1")
+
+    @property
+    def onex_origin(self) -> str | None:
+        """'scheme://host[:port]' of ONEX_URL in lower case, or None when it is unset or not a clean origin.
+        Allowed: https, or plain http only on localhost / 127.0.0.1. No userinfo, path, query or fragment.
+        Written the way a browser writes an origin (what OneX sends as parent and what event.origin shows): the
+        default port (443 for https, 80 for http) is left out, so ':443' still matches. An empty port ('host:'),
+        port 0 and a trailing dot in the host are refused."""
+        raw = self.onex_url
+        if not raw:
+            return None
+        try:
+            u = urlparse(raw)
+            host = (u.hostname or "").lower()
+            port = u.port  # raises ValueError on a bad port
+        except ValueError:
+            return None
+        netloc = u.netloc.lower()
+        if not host or "@" in netloc or u.username is not None or u.password is not None:
+            return None
+        if u.path not in ("", "/") or u.query or u.fragment or u.params:
+            return None
+        # A clean host[:port] only: nothing that could end the CSP directive (spaces, ';', ',', quotes).
+        if not netloc or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789.-:" for c in netloc) or \
+                netloc.count(":") > 1:
+            return None
+        if netloc.endswith(":") or port == 0 or host.endswith(".") or host.startswith(".") or ".." in host:
+            return None
+        scheme = u.scheme.lower()
+        if not (scheme == "https" or (scheme == "http" and host in ("localhost", "127.0.0.1"))):
+            return None
+        default = 443 if scheme == "https" else 80
+        return f"{scheme}://{host}" + (f":{port}" if port is not None and port != default else "")
+
+    def frame_ancestors(self) -> str:
+        """The CSP frame-ancestors directive for the pages OneX may frame ("/" and "/sso/onex")."""
+        origin = self.onex_origin
+        if self.is_local_members:
+            return "frame-ancestors " + " ".join(([origin] if origin else []) +
+                                                 ["http://localhost:*", "http://127.0.0.1:*"])
+        if origin:
+            return "frame-ancestors " + origin
+        return "frame-ancestors 'none'"
+
+    def parent_origin_ok(self, origin: str | None) -> bool:
+        """True when `origin` may be the embed parent: exactly ONEX_URL's origin, or (local members mode only)
+        any http://localhost:<port> or http://127.0.0.1:<port>."""
+        if not isinstance(origin, str) or not origin:
+            return False
+        if self.onex_origin is not None and origin == self.onex_origin:
+            return True
+        if self.is_local_members:
+            for prefix in ("http://localhost:", "http://127.0.0.1:"):
+                if origin.startswith(prefix):
+                    port = origin[len(prefix):]
+                    return 1 <= len(port) <= 5 and all(c in "0123456789" for c in port)
+        return False
+
     @property
     def public_host(self) -> str:
         """Host (and port when not default) of PUBLIC_URL, e.g. 'app.example.com' or 'localhost:9100'."""
@@ -153,6 +219,8 @@ def _load() -> Settings:
         test_pacing=_flag("RV_TEST_PACING"),
         test_allow_http_cimd=_flag("RV_TEST_ALLOW_HTTP_CIMD"),
         mail_from=(os.environ.get("MAIL_FROM") or "").strip() or None,
+        onex_url=os.environ.get("ONEX_URL", "").strip().rstrip("/"),
+        local_members=_flag("RV_LOCAL_MEMBERS"),
     )
 
 

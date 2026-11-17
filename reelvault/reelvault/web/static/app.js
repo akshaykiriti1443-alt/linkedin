@@ -1,6 +1,9 @@
 /* ReelVault Members web app (DESIGN-SAAS.md section 9 and WP7). Plain JS modules, no build step, no CDN.
    Hash routes (#home, #reel/<id>, ...). Every page is built with h(), which only ever sets text, never HTML,
-   so competitor captions and other third-party text can't inject markup. */
+   so competitor captions and other third-party text can't inject markup.
+   Inside the OneX page (embed mode, D86) the OneX sidebar is the navigation: see embed.js. */
+import {EMBED, post as tellOneX, start as startEmbed, sendHeight} from "./embed.js";
+export {EMBED};
 
 // ============================================================================================ DOM helpers
 export function h(tag, attrs, ...kids) {
@@ -117,8 +120,11 @@ export async function api(method, url, body, {quiet = false} = {}) {
     out.error = (data && data.error) || `Something went wrong (code ${res.status}). Try again.`;
     if (res.status === 401 && !quiet && !/^\/api\/auth\//.test(url) && S.me) {
       S.me = null;
-      toast("You were signed out. Log in again.");
-      go("#login");
+      if (EMBED) signedOut();
+      else {
+        toast("You were signed out. Log in again.");
+        go("#login");
+      }
     }
     if (res.status === 429 && res.headers.get("Retry-After") && !out.error) out.error = "Too many tries. Wait a minute and try again.";
   }
@@ -153,6 +159,7 @@ export async function loadCopy() {
 // ============================================================================================ small UI parts
 let toastTimer = 0;
 export function toast(text) {
+  if (EMBED) { tellOneX("rv:toast", {text: String(text ?? "").slice(0, 300)}); return; }
   const t = $("#toast");
   if (!t) return;
   t.textContent = text; t.hidden = false;
@@ -377,6 +384,7 @@ const ROUTES = {
   settings: ["settings", "settings"], admin: ["admin", "admin"],
 };
 const PUBLIC = new Set(["join", "login", "reset", "verify", "privacy", "help"]);
+const AUTH = new Set(["join", "login", "reset", "verify"]);
 
 export function go(hash) { if (location.hash === hash) route(); else location.hash = hash; }
 export function parseHash() {
@@ -386,17 +394,54 @@ export function parseHash() {
   return {name: parts[0] || "", parts: parts.slice(1), query: new URLSearchParams(q || "")};
 }
 
-function markReady() { document.documentElement.dataset.view = "ready"; document.documentElement.dataset.ready = location.hash; }
+function markReady() { document.documentElement.dataset.view = "ready"; document.documentElement.dataset.ready = location.hash; announce(); }
+
+/** Embed mode: tell OneX the page is drawn (rv:ready the first time, then rv:route) and send the new height. */
+let announced = false;
+function announce() {
+  if (!EMBED) return;
+  const h1 = $("#main h1");
+  const msg = {route: location.hash.replace(/^#/, ""), title: h1 ? h1.textContent.trim().slice(0, 120) : ""};
+  tellOneX(announced ? "rv:route" : "rv:ready", msg);
+  announced = true;
+  sendHeight(true);
+}
+/** Embed mode without a ReelVault session: OneX signs the member in again (once per page load). Never #login. */
+let toldSignedOut = false;
+function signedOut() {
+  S.me = null;
+  S.view = Symbol("signed-out");   // a page still loading stops drawing over this line
+  shell(null, true);
+  clear(mainEl(), h("p", {class: "muted", role: "status"}, "Signing you in…"));
+  document.documentElement.dataset.view = "ready";
+  document.documentElement.dataset.ready = location.hash;
+  if (!toldSignedOut) { toldSignedOut = true; tellOneX("rv:signed-out", {}); }
+  sendHeight(true);
+}
+
 async function route() {
   const r = parseHash();
   const token = Symbol(r.name);
   S.view = token;
   document.documentElement.dataset.view = "loading";
-  if (!r.name) { go(S.me ? "#home" : "#login"); return; }
-  if (S.me === null && !PUBLIC.has(r.name)) await refreshMe();
+  // A page with no hash (for example "/" right after the OneX sign-in): check the session first, then pick.
+  if (!r.name) {
+    if (S.me === null) await refreshMe();
+    if (S.view !== token) return;
+    if (S.me || !EMBED) { location.replace("#" + (S.me ? "home" : "login")); return; }
+    signedOut(); return;
+  }
+  if (S.me === null && (!PUBLIC.has(r.name) || (EMBED && AUTH.has(r.name)))) await refreshMe();
   if (S.view !== token) return;
   const me = S.me;
-  if (!PUBLIC.has(r.name) && !me) { go("#login" + (r.name ? "?back=" + encodeURIComponent(location.hash) : "")); return; }
+  if (EMBED && AUTH.has(r.name)) {   // no log-in or join screens inside OneX: OneX signs the member in
+    if (me) location.replace("#home"); else signedOut();
+    return;
+  }
+  if (!PUBLIC.has(r.name) && !me) {
+    if (EMBED) { signedOut(); return; }
+    go("#login" + (r.name ? "?back=" + encodeURIComponent(location.hash) : "")); return;
+  }
   if (me && me.reconfirm_needed && !PUBLIC.has(r.name)) { shell(null, true); const m = await import("./views/auth.js"); m.reconfirm(mainEl()); markReady(); return; }
   if ((r.name === "login" || r.name === "join") && me && !r.query.get("next")) { go("#home"); return; }
   if (r.name === "admin" && me && me.role !== "admin") { go("#home"); return; }
@@ -418,6 +463,7 @@ async function route() {
     document.documentElement.dataset.ready = location.hash;
     const h1 = $("h1", main);
     document.title = (h1 ? h1.textContent + " · " : "") + "ReelVault Members";
+    announce();
   }
 }
 window.addEventListener("hashchange", () => { closeMenu(); route(); });
@@ -465,6 +511,16 @@ function shell(name, plain = false) {
     if (shellKind !== "plain") { clear(root, h("main", {id: "main", class: "plain"})); shellKind = "plain"; }
     return;
   }
+  if (EMBED) {   // inside OneX: no nav, no brand, no account links. OneX's sidebar moves between the sections.
+    if (shellKind !== "embed") {
+      clear(root, h("div", {class: "embedbar"}, h("a", {class: "embedjobs", id: "embedjobs", href: "#home", hidden: true})),
+        h("main", {id: "main", class: "main"}));
+      shellKind = "embed";
+      pollSoon(50);
+    }
+    renderNavJobs();
+    return;
+  }
   const navName = NAV_OF[name] || name;
   if (shellKind !== "app") {
     const nav = h("nav", {class: "nav", "aria-label": "Main"},
@@ -493,7 +549,7 @@ function shell(name, plain = false) {
   renderNavJobs();
 }
 function renderNavJobs() {
-  const el = $("#navjob");
+  const el = $("#navjob") || $("#embedjobs");
   if (!el) return;
   const n = S.jobs.filter(j => j.state === "running" || j.state === "queued").length;
   el.hidden = !n;
@@ -506,4 +562,5 @@ async function logout() {
 }
 
 // ============================================================================================ start
+startEmbed();
 route();

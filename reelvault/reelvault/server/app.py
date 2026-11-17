@@ -35,14 +35,24 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
 ROUTERS = [api_auth.router, api_admin.router, api_files.router, api_ext.router, api_accounts.router,
            api_reels.router, api_ai.router, api_outputs.router, api_profile.router, oauth.router]
+ROUTERS.append(__import__(__package__ + ".api_onex", fromlist=["router"]).router)  # OneX findings API (server-to-server)
 
 DEVICE_PREFIXES = ("/api/ext/v2/", "/api/worker/")
 MAX_JSON_BODY = 8 * 1024 * 1024
 MAX_ANY_BODY = 60 * 1024 * 1024
 
-CSP = ("default-src 'self'; img-src 'self' data:; media-src 'self'; style-src 'self'; script-src 'self'; "
-       "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
-       "form-action 'self' https://claude.ai https://claude.com http://localhost:* http://127.0.0.1:*")
+FRAME_NONE = "frame-ancestors 'none'"
+# Only these HTML paths may be shown inside the OneX app (an iframe): the SPA and the OneX sign-in (D86).
+FRAMEABLE_PATHS = ("/", "/sso/onex")
+
+
+def csp_for(frame_ancestors: str = FRAME_NONE) -> str:
+    return ("default-src 'self'; img-src 'self' data:; media-src 'self'; style-src 'self'; script-src 'self'; "
+            "connect-src 'self'; font-src 'self'; " + frame_ancestors + "; base-uri 'none'; "
+            "form-action 'self' https://claude.ai https://claude.com http://localhost:* http://127.0.0.1:*")
+
+
+CSP = csp_for(FRAME_NONE)
 
 
 # ============================================================================================== logging
@@ -172,7 +182,10 @@ class EdgeMiddleware:
                     raise StarletteHTTPException(413)
             return message
 
-        https = get_settings().is_https
+        s = get_settings()
+        https = s.is_https
+        # frame-ancestors lists the OneX origin(s) only on the two frameable paths; everything else stays 'none'.
+        fa = s.frame_ancestors() if path in FRAMEABLE_PATHS else FRAME_NONE
 
         async def send_wrapped(message):
             if message["type"] == "http.response.start":
@@ -182,9 +195,10 @@ class EdgeMiddleware:
                 ct = next((v for k, v in hs if k.lower() == b"content-type"), b"")
                 if ct.startswith(b"text/html"):
                     if b"content-security-policy" not in names:
-                        hs.append((b"content-security-policy", CSP.encode()))
+                        hs.append((b"content-security-policy", csp_for(fa).encode()))
                     hs.append((b"referrer-policy", b"same-origin"))
-                    hs.append((b"x-frame-options", b"DENY"))
+                    if fa == FRAME_NONE and b"x-frame-options" not in names:
+                        hs.append((b"x-frame-options", b"DENY"))
                 if https:
                     hs.append((b"strict-transport-security", b"max-age=31536000"))
                 if cors_ok:

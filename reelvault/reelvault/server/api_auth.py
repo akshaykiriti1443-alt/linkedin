@@ -638,20 +638,66 @@ def export_me(request: Request, user=Depends(security.current_user)):
 # payload = {"email": "...", "name": "...", "exp": <unix seconds, at most 10 minutes ahead>, "nonce": "<random>"}
 # and sends the member to  <ReelVault>/sso/onex?t=<ticket>.  The secret is ONEX_SSO_SECRET (same value on
 # both sides). OneX only signs tickets for people it trusts, so they come in active (no approval queue).
+#
+# Embedded in OneX (D86, INTEGRATE-ONEX.md): OneX adds  &embed=1&parent=<OneX origin>&theme=light|dark&to=<route>.
+# Every extra parameter is checked here, and the redirect is built only from checked parts:
+#   no embed:  "/"  or  "/#<route>"
+#   embed:     "/?embed=1&parent=<origin>[&theme=..]#<route or home>"
+# so it can never send the browser to another site.
 
 SSO_MAX_AHEAD_S = 600
 
+# The hash routes OneX may open inside its page. Identical in web/static/embed.js and OneX's reelvaultRoutes.ts.
+# Left out on purpose: admin, login, join, reset, verify.
+ONEX_ROUTE_RE = re.compile(r"^(home|onboarding|competitors|competitor|discover|reels|reel|working|format|banks|create|"
+                           r"outputs|output|settings|help|privacy)(/[A-Za-z0-9_-]{1,64}){0,2}"
+                           r"(\?[A-Za-z0-9_.~%+=&-]{1,200})?$")
+ONEX_ROUTE_MAX = 300
 
-def _sso_page(message: str, status: int = 400):
+SSO_STATUS = {"not_set_up": 503, "bad_link": 400, "expired": 400, "used": 400, "turned_off": 403, "too_many": 429}
+
+
+class TicketError(ValueError):
+    """A ticket that does not work. str(e) is the plain sentence for the member; .code is the error-page code."""
+
+    def __init__(self, message: str, code: str = "bad_link"):
+        super().__init__(message)
+        self.code = code
+
+
+def onex_route_ok(route) -> bool:
+    return isinstance(route, str) and 0 < len(route) <= ONEX_ROUTE_MAX and ONEX_ROUTE_RE.fullmatch(route) is not None
+
+
+def _sso_page(message: str, status: int | None = None, code: str = "bad_link", embed_parent: str | None = None,
+              headers: dict | None = None):
+    """The plain page /sso/onex shows when it cannot sign the member in. CSP-safe: no inline style or script.
+    Inside the OneX page (embed_parent set) it tells OneX what went wrong through /static/embed-error.js."""
     from fastapi.responses import HTMLResponse
     import html
 
-    back = os.environ.get("ONEX_URL", "").strip()
-    link = f'<p><a href="{html.escape(back)}">Back to OneX</a></p>' if back else ""
-    body = (f"<!doctype html><meta charset='utf-8'><title>ReelVault</title>"
-            f"<body style='font-family:system-ui;max-width:520px;margin:12vh auto;padding:0 16px'>"
-            f"<h1>ReelVault</h1><p>{html.escape(message)}</p>{link}</body>")
-    return HTMLResponse(body, status_code=status)
+    from .settings import get_settings
+
+    status = status or SSO_STATUS.get(code, 400)
+    esc = html.escape
+    if embed_parent:
+        body_attrs = (f' data-rv-error="{esc(code)}" data-rv-message="{esc(message)}"'
+                      f' data-rv-parent="{esc(embed_parent)}"')
+        link = ""
+        script = '<script src="/static/embed-error.js" defer></script>'
+    else:
+        back = get_settings().onex_url
+        ok_back = back.startswith("https://") or back.startswith("http://")
+        body_attrs = ""
+        link = f'<p><a href="{esc(back)}">Back to OneX</a></p>' if ok_back else ""
+        script = ""
+    doc = ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+           "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+           "<meta name=\"color-scheme\" content=\"light dark\"><title>ReelVault</title>"
+           "<link rel=\"stylesheet\" href=\"/static/app.css\"><script src=\"/static/theme.js\"></script></head>"
+           f"<body{body_attrs}><main class=\"plain\"><div class=\"view\"><h1>ReelVault</h1><p>{esc(message)}</p>"
+           f"{link}</div></main>{script}</body></html>")
+    return HTMLResponse(doc, status_code=status, headers={"Cache-Control": "no-store", **(headers or {})})
 
 
 def _b64d(s: str) -> bytes:
@@ -661,56 +707,144 @@ def _b64d(s: str) -> bytes:
 
 
 def verify_onex_ticket(ticket: str, secret: str, now: float | None = None) -> dict:
-    """Return the payload of a valid ticket, or raise ValueError with a plain reason."""
+    """Return {email, name, nonce, exp} of a valid ticket, or raise TicketError (a ValueError) with a plain reason."""
     import hashlib
     import hmac
+    import math
     import time as _time
 
+    bad = "This sign-in link is not valid."
     parts = (ticket or "").split(".")
     if len(parts) != 3 or parts[0] != "v1":
-        raise ValueError("This sign-in link is not valid.")
+        raise TicketError(bad)
     want = hmac.new(secret.encode(), f"v1.{parts[1]}".encode(), hashlib.sha256).digest()
     try:
         got = _b64d(parts[2])
         payload = json.loads(_b64d(parts[1]))
     except Exception:
-        raise ValueError("This sign-in link is not valid.")
+        raise TicketError(bad)
     if not hmac.compare_digest(want, got):
-        raise ValueError("This sign-in link is not valid.")
+        raise TicketError(bad)
+    if not isinstance(payload, dict):
+        raise TicketError(bad)
     now = _time.time() if now is None else now
     exp = payload.get("exp")
-    if not isinstance(exp, (int, float)) or exp < now or exp > now + SSO_MAX_AHEAD_S:
-        raise ValueError("This sign-in link has expired. Go back to OneX and click ReelVault again.")
+    if isinstance(exp, bool) or not isinstance(exp, (int, float)) or not math.isfinite(exp) or exp < now \
+            or exp > now + SSO_MAX_AHEAD_S:
+        raise TicketError("This sign-in link has expired. Go back to OneX and click ReelVault again.", "expired")
     email = norm_email(str(payload.get("email") or ""))
     nonce = str(payload.get("nonce") or "")
     if "@" not in email or len(nonce) < 12:
-        raise ValueError("This sign-in link is not valid.")
-    return {"email": email, "name": str(payload.get("name") or "")[:80], "nonce": nonce}
+        raise TicketError(bad)
+    return {"email": email, "name": str(payload.get("name") or "")[:80], "nonce": nonce, "exp": float(exp)}
+
+
+# Single-use nonces live in usage_counters ("sso:<nonce>" here, "onexapi:<nonce>" in api_onex.py). A row is useless
+# once its window (a UTC date) is more than a day old: tickets live at most 10 minutes and API timestamps at most
+# 5 minutes off. So old rows are swept, at most once an hour per process per prefix, and never fail a request.
+NONCE_KEEP_DAYS = 2
+NONCE_SWEEP_EVERY_S = 3600
+_nonce_swept: dict[str, float] = {}
+
+
+def prune_old_nonces(prefix: str, now: float | None = None, force: bool = False) -> int:
+    """Delete global usage_counters rows whose key starts with `prefix` (e.g. "sso:") and whose window is older than
+    NONCE_KEEP_DAYS days. Returns the number of rows deleted (0 when skipped or on any database error)."""
+    import time as _time
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import delete
+
+    now = _time.time() if now is None else now
+    if not prefix or (not force and now - _nonce_swept.get(prefix, 0.0) < NONCE_SWEEP_EVERY_S):
+        return 0
+    _nonce_swept[prefix] = now
+    cutoff = (datetime.fromtimestamp(now, timezone.utc) - timedelta(days=NONCE_KEEP_DAYS)).strftime("%Y-%m-%d")
+    t = db.usage_counters
+    upper = prefix[:-1] + chr(ord(prefix[-1]) + 1)   # key range [prefix, upper): uses the primary-key index
+    try:
+        with db.tx() as conn:
+            res = conn.execute(delete(t).where(t.c.scope == "global", t.c.key >= prefix, t.c.key < upper,
+                                               t.c.window < cutoff))
+            return int(res.rowcount or 0)
+    except Exception:  # noqa: BLE001 - housekeeping only; the sign-in already succeeded
+        import logging
+
+        logging.getLogger(__name__).warning("could not sweep old %s nonces", prefix, exc_info=True)
+        return 0
+
+
+def onex_landing(*, embed: bool, parent: str | None, theme: str | None, to: str | None) -> str:
+    """The 303 Location after a OneX sign-in, built only from checked parts (no open redirect)."""
+    from urllib.parse import urlencode
+
+    if embed and parent:
+        q = [("embed", "1"), ("parent", parent)] + ([("theme", theme)] if theme else [])
+        return "/?" + urlencode(q) + "#" + (to or "home")
+    return "/#" + to if to else "/"
 
 
 @router.get("/sso/onex")
-def sso_onex(t: str, request: Request):
+def sso_onex(request: Request, t: str | None = None, embed: str | None = None, to: str | None = None,
+             theme: str | None = None, parent: str | None = None):
+    # t is optional on purpose: a link without a ticket gets the bad_link page (and rv:error inside OneX), not
+    # FastAPI's JSON 422, which OneX could only show as "can't reach ReelVault" after its 15 s timeout.
+    from datetime import datetime, timezone
+
     from fastapi.responses import RedirectResponse
+
+    from .settings import get_settings
+
+    s = get_settings()
+    # ---- the optional embed parameters: each one is a fixed choice or strictly checked, else dropped
+    want_embed = embed == "1"
+    theme_v = theme if theme in ("light", "dark") else None
+    to_v = to if onex_route_ok(to) else None
+    parent_v = None
+    if want_embed:
+        parent_v = parent if s.parent_origin_ok(parent) else s.onex_origin
+        if parent_v is None:  # nobody may frame us: sign in as a normal page
+            want_embed = False
+    ep = parent_v if want_embed else None
 
     secret = os.environ.get("ONEX_SSO_SECRET", "").strip()
     if len(secret) < 32:
-        return _sso_page("Sign-in from OneX is not set up yet. The admin needs to add ONEX_SSO_SECRET.", 503)
-    ratelimit.hit("sso_onex", ratelimit.client_key(request), 30, "minute", message="Too many tries. Wait a minute.")
+        return _sso_page("Sign-in from OneX is not set up yet. The admin needs to add ONEX_SSO_SECRET.",
+                         code="not_set_up", embed_parent=ep)
     try:
+        ratelimit.hit("sso_onex", ratelimit.client_key(request), 30, "minute",
+                      message="Too many tries. Wait a minute.")
+    except ApiError as e:
+        return _sso_page("Too many tries. Wait a minute, then try again.", code="too_many", embed_parent=ep,
+                         headers=e.headers)
+    try:
+        if not t:
+            raise TicketError("This sign-in link is not valid.")
         data = verify_onex_ticket(t, secret)
-    except ValueError as e:
-        return _sso_page(str(e))
-    used = db.bump(db.usage_counters, {"scope": "global", "key": f"sso:{data['nonce']}",
-                                       "window": db.utcnow().strftime("%Y-%m-%d")}, count=1)
+    except TicketError as e:
+        return _sso_page(str(e), code=e.code, embed_parent=ep)
+    # The nonce counter window is the ticket's own expiry date (UTC), so a nonce can't be reused after midnight.
+    window = datetime.fromtimestamp(data["exp"], timezone.utc).strftime("%Y-%m-%d")
+    used = db.bump(db.usage_counters, {"scope": "global", "key": f"sso:{data['nonce']}", "window": window}, count=1)
     if used.get("count") != 1:
-        return _sso_page("This sign-in link was already used. Go back to OneX and click ReelVault again.")
+        return _sso_page("This sign-in link was already used. Go back to OneX and click ReelVault again.",
+                         code="used", embed_parent=ep)
+    prune_old_nonces("sso:")
+    # Already signed in here as the same active member (OneX opens ReelVault again): keep that session.
+    sess, sess_user = security.load_session(request)
+    reuse = (sess is not None and sess_user is not None and sess_user.status == "active"
+             and sess_user.email == data["email"])
     u = db.users
     now = db.utcnow()
+    ip = security.client_ip(request)
+    value = None
     with db.tx() as conn:
         user = conn.execute(select(u).where(u.c.email == data["email"])).first()
         if user is not None and user.status == "disabled":
-            return _sso_page("Your ReelVault account is turned off. Message the community admin.", 403)
+            return _sso_page("Your ReelVault account is turned off. Message the community admin.",
+                             code="turned_off", embed_parent=ep)
         if user is None:
+            reuse = False
             uid = db.new_id("usr")
             conn.execute(u.insert().values(
                 id=uid, email=data["email"], name=data["name"] or data["email"].split("@")[0],
@@ -718,15 +852,21 @@ def sso_onex(t: str, request: Request):
                 created_at=now, membership_checked_at=now, settings=dict(db.USER_SETTINGS_DEFAULT)))
             db.upsert(conn, db.profiles, {"user_id": uid, "brand_id": "me", "status": "empty", "answers": {},
                                           "updated_at": now}, do_nothing=True)
-            db.audit("signup_onex", user_id=uid, actor=uid, ip=security.client_ip(request), conn=conn)
+            db.audit("signup_onex", user_id=uid, actor=uid, ip=ip, conn=conn)
         else:
             uid = user.id
+            if reuse and sess_user.id != uid:
+                reuse = False
             vals = {"last_login_at": now, "last_seen_at": now, "membership_checked_at": now}
             if user.status == "pending":
                 vals["status"] = "active"
             conn.execute(u.update().where(u.c.id == uid).values(**vals))
-        value, _csrf = security.create_session(conn, uid, request)
-        db.audit("login_onex", user_id=uid, actor=uid, ip=security.client_ip(request), conn=conn)
-    resp = RedirectResponse("/", status_code=303)
-    security.set_session_cookie(resp, value)
+        if not reuse:
+            value, _csrf = security.create_session(conn, uid, request)
+        db.audit("login_onex", user_id=uid, actor=uid, ip=ip, detail={"embed": want_embed, "reused": reuse},
+                 conn=conn)
+    resp = RedirectResponse(onex_landing(embed=want_embed, parent=parent_v, theme=theme_v, to=to_v), status_code=303)
+    resp.headers["Cache-Control"] = "no-store"
+    if value is not None:
+        security.set_session_cookie(resp, value)
     return resp
