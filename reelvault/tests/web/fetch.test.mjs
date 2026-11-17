@@ -184,7 +184,7 @@ for (const [width, scheme] of [[1280, "light"], [1280, "dark"], [390, "light"], 
       await shot(page, `${name}-${tag}`);
     }
     const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-    assert.equal(bg === "rgb(16, 18, 26)", scheme === "dark", `body background ${bg} for ${scheme}`);
+    assert.equal(bg === "rgb(13, 11, 26)", scheme === "dark", `body background ${bg} for ${scheme}`);
     await page.context().close();
     const admin = await newPage(width, scheme);
     await mockApi(admin, "admin");
