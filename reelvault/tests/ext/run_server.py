@@ -93,7 +93,10 @@ def build_app():
         conn.execute(db.users.insert().values(id=uid, email="member@example.com", name="Mia Member",
                                               password_hash=hash_password("member-pass-123"), status="active",
                                               role="member", created_at=now, membership_checked_at=now,
-                                              settings=dict(db.USER_SETTINGS_DEFAULT)))
+                                              # ext_e2e.mjs tests the logged-in pull: keep it on that layer when the
+                                              # server knows read modes (DESIGN-FETCH.md 4.1). POST /__test/read_mode
+                                              # switches it for the fetch-engine cases.
+                                              settings=dict(db.USER_SETTINGS_DEFAULT, read_mode="logged_in_only")))
     state["uid"] = uid
 
     def dev():
@@ -140,6 +143,16 @@ def build_app():
         the test can prove the extension's validate.js refuses them (5.4.0)."""
         b = await req.json()
         jobs_ig.payload_problem = (lambda kind, p: None) if b.get("off") else real_problem
+        return {"ok": True}
+
+    @r.post("/__test/read_mode")
+    async def read_mode(req: Request):
+        """{"read_mode": "auto" | "logged_out_only" | "logged_in_only"}: the member's choice (DESIGN-FETCH.md 4.1)."""
+        b = await req.json()
+        with db.tx() as conn:
+            row = conn.execute(select(db.users.c.settings).where(db.users.c.id == uid)).first()
+            conn.execute(db.users.update().where(db.users.c.id == uid)
+                         .values(settings=dict(row.settings or {}, read_mode=b["read_mode"])))
         return {"ok": True}
 
     @r.post("/__test/confirm")

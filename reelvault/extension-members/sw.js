@@ -1,13 +1,17 @@
 // ReelVault Members Reader: service worker (DESIGN-SAAS.md 5.2-5.7).
 // Loop: every 30 s (alarm) ask the paired ReelVault server for work (server-only call; idle Chrome makes ZERO
 // Instagram calls). One job at a time, one Instagram request at a time, in the extension's own pinned reading tab.
+// Fetch engine (DESIGN-FETCH.md): a pull reads LOGGED OUT first (no cookie is sent: reader.js igAnonFetch,
+// strategies.js, ladder.js), then the paced logged-in pull fills in what is missing.
 import {SERVERS, BUILD} from "./config.js";
-import {IG, CDN_DOMAINS, isCdnUrl, WARNING_RE, CHALLENGE_RE} from "./endpoints.js";
+import {IG, CDN_DOMAINS, isCdnUrl, WARNING_RE, CHALLENGE_RE, LO_IDS, LI_OF} from "./endpoints.js";
 import {parseIg} from "./bigint.js";
-import {validateJob, parsePairLink, isNewer, IG_KINDS, KINDS, isPk, isCursor} from "./validate.js";
+import {validateJob, parsePairLink, isNewer, IG_KINDS, KINDS, isPk, isCursor, isLsd, isHandle} from "./validate.js";
 import {DEFAULTS, merge, Budget, BudgetStop} from "./pacing.js";
 import {trimMedia, trimUser, isReel, keepForTarget, videoOf, coverOf, keysTree} from "./trim.js";
-import {igFetch, readIds, readSkool, readLinkedIn} from "./reader.js";
+import {igFetch, igAnonFetch, readIds, readSkool, readLinkedIn} from "./reader.js";
+import {loRequest, loInterpret, cleanDocIds, probeFields, pkFromCode} from "./strategies.js";
+import {runLoStage, LoFail, HARD_BLOCKS} from "./ladder.js";
 
 const VERSION = chrome.runtime.getManifest().version;
 const local = chrome.storage.local;
@@ -21,6 +25,15 @@ const DEBUG_ENDPOINTS = ["clipsUser", "profileInfo", "currentUser", "chaining"];
 const LOCAL_COOLDOWN_S = {rate_limited: 24 * 3600, warning: 24 * 3600, challenge: 24 * 3600, signed_out: 30 * 60,
                           http_error: 15 * 60};
 const SERVER_BACKOFF_S = [60, 300, 900];   // waits before a stored job is resumed after ReelVault failed it
+// Logged-out blocks (DESIGN-FETCH.md table 2.3), applied here at once. The server computes the same and its later
+// time wins. Hours: [first, repeat]. "rate" doubles from 6 h up to 48 h.
+const HOUR_MS = 3600_000;
+const LO_ALL_OFF_H = {rate: [6, 48], challenge: [24, 48], walls: [2, 6]};
+const LO_ONE_OFF_H = {login_wall: [6, 24], changed: [24, 24], empty: [6, 6]};
+const LI_WAIT_MIN = {rate: 15, challenge: 60};   // no logged-in call this soon after a logged-out block
+const NO_VIEWS_OFF_H = 24;
+const PROBE_CALLS_MAX = 12;
+const FETCH_LOG_MAX = 60;
 
 // ============================================================================================ small helpers
 
@@ -48,7 +61,15 @@ class Unpaired extends Error {}                    // no token, or the token was
 class TabError extends Error {}
 
 let effPacing = DEFAULTS;
-async function loadPacing() { effPacing = merge(DEFAULTS, await get("server_pacing"), BUILD); }
+let fetchCfg = null;                 // hello.fetch of a server that knows the fetch engine, else null
+let docIds = cleanDocIds(null);      // GraphQL doc ids: the server's (hello.fetch.doc_ids) or the built-in ones
+async function loadPacing() {
+  effPacing = merge(DEFAULTS, await get("server_pacing"), BUILD);
+  const h = await get("hello");
+  fetchCfg = h && h.fetch && typeof h.fetch === "object" ? h.fetch : null;
+  docIds = cleanDocIds(fetchCfg && fetchCfg.doc_ids);
+  loMem = await loState();
+}
 
 const budget = new Budget({get: () => get("budget"), set: v => put({budget: v})},
                           {sleep, limits: () => effPacing});
@@ -59,6 +80,122 @@ async function take(kind, opts) {
     if (e instanceof BudgetStop) throw new IgStop("budget", {cooldown_s: Math.ceil(e.waitMs / 1000), message: e.what});
     throw e;
   }
+}
+
+// ============================================================================================ logged-out state
+
+// chrome.storage.local.lo (DESIGN-FETCH.md 3.3). Times are ms. A logged-out block lives here only: it never sets
+// the logged-in cooldown and never changes the sign-in state.
+const LO_FRESH = {cooldown_until: 0, cooldown_reason: null, blocks: 0, strategy_off: {}, li_not_before: 0,
+                  detail_off_until: 0, repeats: {}, empties: {}, doc_ok: {}};
+let loMem = {...LO_FRESH};
+async function loState() {
+  const v = (await get("lo")) || {};
+  return {...LO_FRESH, ...v, strategy_off: {...(v.strategy_off || {})}, repeats: {...(v.repeats || {})},
+          empties: {...(v.empties || {})}, doc_ok: {...(v.doc_ok || {})}};
+}
+async function saveLo(lo) { loMem = lo; await put({lo}); }
+const toMs = v => typeof v === "number" && Number.isFinite(v) ? v : (typeof v === "string" ? (Date.parse(v) || 0) : 0);
+const toIso = v => (v && v > Date.now()) ? new Date(v).toISOString() : null;
+
+// What the server says about this device's logged-out state (hello, lease, items, fail). The later time wins.
+async function mergeServerLo(v) {
+  if (!v || typeof v !== "object") return;
+  const lo = await loState();
+  const cu = toMs(v.cooldown_until ?? v.lo_cooldown_until);
+  if (cu > lo.cooldown_until) {
+    lo.cooldown_until = cu;
+    lo.cooldown_reason = String(v.cooldown_reason ?? v.lo_cooldown_reason ?? lo.cooldown_reason ?? "rate").slice(0, 40);
+  }
+  if (v.strategy_off && typeof v.strategy_off === "object") {
+    for (const [k, t] of Object.entries(v.strategy_off)) {
+      if (LO_IDS.includes(k)) lo.strategy_off[k] = Math.max(lo.strategy_off[k] || 0, toMs(t));
+    }
+  }
+  const nb = toMs(v.li_not_before);
+  if (nb > lo.li_not_before) lo.li_not_before = nb;
+  await saveLo(lo);
+}
+
+function loReport(lo = loMem) {      // the "lo" part of the lease call
+  const off = {};
+  for (const [k, t] of Object.entries(lo.strategy_off)) if (t > Date.now()) off[k] = new Date(t).toISOString();
+  const cooling = lo.cooldown_until > Date.now();
+  return {cooldown_until: toIso(lo.cooldown_until), ...(cooling ? {cooldown_reason: lo.cooldown_reason || "rate"} : {}), strategy_off: off};
+}
+
+// Table 2.3, applied at once after one logged-out answer.
+async function mirrorLo(strategy, res) {
+  const lo = await loState(), now = Date.now();
+  let dirty = false;
+  const offOne = ([first, repeat]) => {
+    const n = lo.repeats[strategy] = (lo.repeats[strategy] || 0) + 1;
+    lo.strategy_off[strategy] = Math.max(lo.strategy_off[strategy] || 0, now + (n > 1 ? repeat : first) * HOUR_MS);
+    dirty = true;
+  };
+  if (res.status === "ok") {                         // "reset after the first ok"
+    if (lo.blocks || lo.repeats.challenge || lo.repeats[strategy] || lo.empties[strategy]) dirty = true;
+    lo.blocks = 0; delete lo.repeats.challenge; delete lo.repeats[strategy]; delete lo.empties[strategy];
+  } else if (res.code === "rate") {
+    lo.blocks += 1;
+    const h = Math.min(LO_ALL_OFF_H.rate[1], LO_ALL_OFF_H.rate[0] * 2 ** (lo.blocks - 1));
+    lo.cooldown_until = Math.max(lo.cooldown_until, now + h * HOUR_MS); lo.cooldown_reason = "rate";
+    lo.li_not_before = Math.max(lo.li_not_before, now + LI_WAIT_MIN.rate * 60_000);
+    dirty = true;
+  } else if (res.code === "challenge") {
+    const n = lo.repeats.challenge = (lo.repeats.challenge || 0) + 1;
+    lo.cooldown_until = Math.max(lo.cooldown_until, now + LO_ALL_OFF_H.challenge[n > 1 ? 1 : 0] * HOUR_MS);
+    lo.cooldown_reason = "challenge";
+    lo.li_not_before = Math.max(lo.li_not_before, now + LI_WAIT_MIN.challenge * 60_000);
+    dirty = true;
+  } else if (LO_ONE_OFF_H[res.code] && res.code !== "empty") {
+    offOne(LO_ONE_OFF_H[res.code]);
+  } else if (res.code === "empty") {                 // one gated post only skips that reel; 3 in a row switch off
+    lo.empties[strategy] = (lo.empties[strategy] || 0) + 1;
+    if (lo.empties[strategy] >= 3) { delete lo.empties[strategy]; offOne(LO_ONE_OFF_H.empty); }
+    dirty = true;
+  }
+  if (dirty) await saveLo(lo);
+}
+
+// The ladder's wider blocks: a login wall on 2+ strategies in one job, and 3 details in a row without views.
+async function loBlock(kind, read) {
+  const lo = await loState(), now = Date.now();
+  if (kind === "walls") {
+    const n = lo.repeats.walls = (lo.repeats.walls || 0) + 1;
+    lo.cooldown_until = Math.max(lo.cooldown_until, now + LO_ALL_OFF_H.walls[n > 1 ? 1 : 0] * HOUR_MS);
+    lo.cooldown_reason = "login_wall";
+  } else if (kind === "no_views" && read === "auto") {
+    lo.detail_off_until = Math.max(lo.detail_off_until, now + NO_VIEWS_OFF_H * HOUR_MS);
+  } else return;
+  await saveLo(lo);
+}
+
+// ============================================================================================ fetch log
+
+let curLayer = null;                 // "lo" | "li": which way the running job reads right now (for the popup)
+async function setLayer(layer) {     // the popup line "Reading without your login" follows at once
+  if (curLayer === layer) return;
+  curLayer = layer;
+  const u = await get("ui_job");
+  if (u && curJob && u.kind === curJob.job.kind) await put({ui_job: {...u, layer}});
+}
+
+// Every Instagram call of the running job, for Fetch health: {strategy, status, code, http, ms, items, at}.
+function logCall(strategy, status, code, http, ms, items = 0) {
+  if (!curJob || !strategy) return;
+  const log = (curJob.state.log ??= []);
+  log.push({strategy, status, code: code || null, http: Number.isInteger(http) ? http : 0, ms: Math.max(0, Math.round(ms || 0)),
+            items, at: Math.floor(Date.now() / 1000)});
+  if (log.length > FETCH_LOG_MAX) log.splice(0, log.length - FETCH_LOG_MAX);
+}
+function lastLogItems(n) {
+  const log = curJob && curJob.state.log;
+  if (log && log.length) log[log.length - 1].items = n;
+}
+function pendingLog() {              // only a server that knows the fetch engine gets the log
+  const log = fetchCfg && curJob && curJob.state.log;
+  return log && log.length ? log.slice(0, FETCH_LOG_MAX) : null;
 }
 
 // ============================================================================================ ReelVault server
@@ -93,6 +230,14 @@ async function apiOk(path, body) {
 let curJob = null;     // {job, state}
 let lastBeat = 0;
 
+// An upload of the running job. It carries the fetch log since the last upload.
+async function post(path, body) {
+  const log = pendingLog();
+  const r = await apiOk(path, log ? {...body, fetch_log: log} : body);
+  if (log && curJob && curJob.state.log) curJob.state.log.splice(0, log.length);
+  return r;
+}
+
 async function progress(done, total, message, extra = {}) {
   if (!curJob) return;
   const igs = await get("ig");
@@ -101,7 +246,7 @@ async function progress(done, total, message, extra = {}) {
   if (r.status === 409 || r.status === 404) throw new Dropped();
   if (r.data && r.data.cancel) throw new Canceled(r.data.reason || "");
   lastBeat = Date.now();
-  await put({ui_job: {kind: curJob.job.kind, message, done, total, at: Date.now()}});
+  await put({ui_job: {kind: curJob.job.kind, message, done, total, layer: curLayer, at: Date.now()}});
 }
 
 async function beatIfDue() {
@@ -229,21 +374,84 @@ function classify(r, path, {allowNonJson = false} = {}) {
 }
 
 // One Instagram call: budget + random gap first, then the request in the reading tab, then the 5.7 rules.
-async function ig(name, args = [], {kind = "ig", page = false, form = null, allowNonJson = false, referrer = null} = {}) {
+async function ig(name, args = [], {kind = "ig", page = false, form = null, allowNonJson = false, referrer = null, li = null} = {}) {
   const ep = IG[name];
   const path = ep.path(...args);
+  const liId = li || LI_OF[name] || null;
   // A plausible instagram.com page as the Referer, not the robots.txt reading page (fix round 2).
   const spec = {method: ep.method, path, appId: IG.appId, asbdId: IG.asbdId, referrer: referrer || IG.origin + "/"};
   if (ep.form) spec.form = ep.form(...(form || []));
   for (let attempt = 0; ; attempt++) {
     await beatIfDue();
     await take(kind, {page: page && attempt === 0});
+    await setLayer("li");
+    const t0 = Date.now();
     const r = await inTab(igFetch, [spec]);
-    const res = classify(r, path, {allowNonJson});
+    let res;
+    try { res = classify(r, path, {allowNonJson}); }
+    catch (e) {
+      if (e instanceof IgStop) logCall(liId, "blocked", e.code, e.http_status || r.status, Date.now() - t0);
+      throw e;
+    }
+    const fine = res.status >= 200 && res.status < 300;
+    logCall(liId, fine ? "ok" : "error", fine ? null : "http_error", res.status, Date.now() - t0);
     if (!res.retry) return res;
     if (attempt >= 2) throw new IgStop("http_error", {http_status: res.status || null});
     await waitWithBeat(effPacing.retry_ms[Math.min(attempt, effPacing.retry_ms.length - 1)]);
   }
+}
+
+// One LOGGED-OUT call: the logged-out budget and gap first, then the request in the reading tab with NO cookies
+// (reader.js igAnonFetch), then table 2.3. a: {handle, code, pk, pageId, cursor, lsd, doc}. Returns the result of
+// strategies.js loInterpret, or {status: "skipped", code} when nothing was sent.
+async function loCall(strategy, a = {}, {page = false, probe = false} = {}) {
+  const skipped = code => ({status: "skipped", code, http: 0, items: 0});
+  const now = Date.now();
+  const cd = await get("cooldown");
+  // A logged-in block also stops logged-out reads on this device.
+  if (cd && cd.until > now && cd.reason !== "signed_out") return skipped("cooling");
+  const lo = loMem;
+  if (lo.cooldown_until > now && (!probe || HARD_BLOCKS.includes(lo.cooldown_reason))) return skipped("cooling");
+  const ids = docIds[strategy] || [];
+  const bump = a.doc ? 1 : 0;
+  const idx = ids.length ? ((lo.doc_ok[strategy] || 0) + bump) % ids.length : 0;
+  const spec = loRequest(strategy, a, {lsd: a.lsd, docId: ids[idx]});
+  if (spec.skip) { logCall(strategy, "skipped", spec.skip, 0, 0); return skipped(spec.skip); }
+  let res, calls = 0;
+  for (let attempt = 0; ; attempt++) {
+    await beatIfDue();
+    // Open (or find) the reading tab first, so the random gap runs right before the request goes out.
+    try { await readingTab(); } catch { /* inTab below opens it again or stops with http_error */ }
+    try { await budget.take(page ? "lo_page" : "lo"); }
+    catch (e) {
+      if (!(e instanceof BudgetStop)) throw e;
+      if (e.what.startsWith("lo_")) return {...skipped("budget"), calls};   // only the logged-out budget is used up
+      throw new IgStop("budget", {cooldown_s: Math.ceil(e.waitMs / 1000), message: e.what});
+    }
+    await setLayer("lo");
+    const t0 = Date.now();
+    const r = await inTab(igAnonFetch, [spec]);
+    calls += 1;
+    res = loInterpret(strategy, r);
+    res.ms = Date.now() - t0;
+    if (!res.retry || attempt >= 1) break;         // 5xx or network: once more after the retry wait
+    logCall(strategy, res.status, res.code, res.http, res.ms);
+    await waitWithBeat(effPacing.retry_ms[0]);
+  }
+  res.calls = calls;
+  // The newest lsd token of this browser, in memory only (chrome.storage.session): a video job has no page of its
+  // own to take it from. It is never uploaded.
+  if (res.lsd && isLsd(res.lsd)) await session.set({lo_lsd: {v: res.lsd, at: Date.now()}});
+  res.more_ids = res.code === "changed" && bump === 0 && ids.length > 1;
+  logCall(strategy, res.status, res.code, res.http, res.ms, res.items || 0);
+  if (!res.more_ids) await mirrorLo(strategy, res);            // a rotated doc id gets one try with the next id
+  if ((res.status === "ok" || res.status === "partial") && bump && (loMem.doc_ok[strategy] || 0) !== idx) {   // keep the id that works
+    const cur = await loState(); cur.doc_ok[strategy] = idx; await saveLo(cur);
+  }
+  if (res.status === "ok" && probe && (loMem.strategy_off[strategy] || 0) > 0) {   // the re-test switched it back on
+    const cur = await loState(); delete cur.strategy_off[strategy]; delete cur.repeats[strategy]; await saveLo(cur);
+  }
+  return res;
 }
 
 async function maybeDebug(endpoint, data) {
@@ -291,11 +499,11 @@ async function signInCheck() {
     const ids = await inTab(readIds, []);
     let user = null;
     if (isPk(ids.ds_user_id)) {
-      const r = await ig("userInfo", [ids.ds_user_id]);
+      const r = await ig("userInfo", [ids.ds_user_id], {li: "li_session"});
       if (r.status === 200 && r.data && r.data.user) user = r.data.user;
     }
     if (!user) {
-      const r = await ig("currentUser", []);
+      const r = await ig("currentUser", [], {li: "li_session"});
       await maybeDebug("currentUser", r.data);
       if (r.status === 200 && r.data && r.data.user) user = r.data.user;
     }
@@ -315,6 +523,19 @@ async function signInCheck() {
     if (e instanceof IgStop) await put({ig: {signed_in: false, checked_at: now, error: e.code}});
     throw e;
   }
+}
+
+// Before the first logged-in call of a job. A logged-out stage does not need it (DESIGN-FETCH.md 2.1).
+async function ensureSignedIn() {
+  let cd = await get("cooldown");
+  if (cd && cd.until > Date.now() && cd.reason === "signed_out") {
+    try { await hello(); } catch { /* keep the local word */ }   // "Try again" in ReelVault clears it
+    cd = await get("cooldown");
+    if (cd && cd.until > Date.now() && cd.reason === "signed_out") throw new IgStop("signed_out");   // no call
+  }
+  let igs = await get("ig");
+  if (!igs || !igs.signed_in || Date.now() - (igs.checked_at || 0) > SIX_H) igs = await signInCheck();
+  if (!igs.signed_in) throw new IgStop("signed_out");
 }
 
 // A 5.7 stop outside a job (the sign-in check at pairing or the account re-check): stop reading Instagram for the
@@ -339,8 +560,50 @@ async function stopWithoutJob(e) {
 
 // ============================================================================================ jobs
 
+// What the ladder (ladder.js) needs from the worker for one job.
+function loIo(job) {
+  const p = job.payload;
+  return {
+    call: loCall,
+    upload: async body => {
+      const up = (await post(`/jobs/${job.id}/items`, body)).data || {};
+      if (up.lo) await mergeServerLo(up.lo);
+      const n = (curJob.state.collected || 0) + (up.accepted || 0);
+      await progress(n, p.target, `Read ${n} of ${p.target} reels`);
+      return up;
+    },
+    save: saveState,
+    off: s => (loMem.strategy_off[s] || 0) > Date.now(),
+    detailOff: () => loMem.detail_off_until > Date.now(),
+    block: kind => loBlock(kind, p.read),
+    limits: () => effPacing,
+  };
+}
+
 async function runPull(job) {
   const p = job.payload, st = curJob.state;
+  st.stage ??= p.plan.lo ? "lo" : "li";
+  if (st.stage === "lo") {                       // stage 1: logged out, no cookies (DESIGN-FETCH.md 2.1)
+    let out;
+    try { out = await runLoStage(job, st, loIo(job)); }
+    catch (e) {
+      if (e instanceof LoFail) throw new IgStop(e.code, {lo: e.lo, http_status: e.http_status});
+      throw e;
+    }
+    if (out.end !== "resume") return {stop_reason: out.stop_reason, result: {recovery: null}};
+    const rs = out.resume;                       // stage 2: the logged-in top-up, from the top
+    if (!rs || typeof rs !== "object" || !["clips", "feed"].includes(rs.source)
+        || (rs.max_id !== null && rs.max_id !== undefined && !isCursor(rs.max_id))) {
+      throw new IgStop("bad_job", {message: "bad resume"});
+    }
+    st.stage = "li";
+    st.req = {source: rs.source, max_id: rs.max_id ?? null, saved: false};
+    if (st.lo && isPk(st.lo.pk)) st.pk = st.lo.pk;
+    st.account_sent = !!(st.lo && st.lo.accountSent);
+    await saveState();
+    await progress(st.collected || 0, p.target, "Reading with your Instagram login");
+  }
+  await ensureSignedIn();                        // the sign-in check runs when the logged-in stage starts
   st.pages ??= 0; st.page_size ??= "50"; st.clips_bad ??= 0; st.collected ??= 0;
   let account = st.account || null;
   if (!st.pk) {
@@ -401,10 +664,12 @@ async function runPull(job) {
     if (paging.max_id && !isCursor(paging.max_id)) throw new IgStop("parse_error", {raw_keys: ["paging.max_id"]});
     await maybeDebug(req.source === "clips" ? "clipsUser" : "feedUser", d);
     const items = raw.filter(m => keepForTarget(m, pk)).map(trimMedia);
+    lastLogItems(items.length);
     const body = {page: st.pages + 1, items,
                   paging: {...paging, source: req.source, request_max_id: req.max_id || null}};
     if (account && !st.account_sent) body.account = account;
-    const up = (await apiOk(`/jobs/${job.id}/items`, body)).data;
+    const up = (await post(`/jobs/${job.id}/items`, body)).data;
+    if (up && up.lo) await mergeServerLo(up.lo);
     st.account_sent = true;
     st.pages += 1;
     st.collected += up.accepted || 0;
@@ -432,10 +697,42 @@ async function runPull(job) {
   }
 }
 
+// A profile without the login: the profile page, then web_profile_info, both with no cookies. null = use the login.
+async function loUser(job) {
+  const p = job.payload, st = curJob.state;
+  st.lo ??= {lsd: null};
+  for (const s of ["lo_profile_page", "lo_web_profile"]) {
+    if (!p.plan.strategies.includes(s) || (loMem.strategy_off[s] || 0) > Date.now()) continue;
+    const r = await loCall(s, {handle: p.handle, lsd: st.lo.lsd});
+    await saveState();
+    if (r.status === "skipped") { st.lo.skip = r.code; return null; }     // nothing was sent
+    if (r.code === "not_found") throw new IgStop("not_found", {http_status: 404});
+    if (r.private) throw new IgStop("private");
+    if (r.status === "blocked" && HARD_BLOCKS.includes(r.code)) {
+      throw new IgStop("lo_blocked", {lo: {class: r.code, strategy: s, http: r.http || 0}});
+    }
+    if (r.user && isPk(r.user.pk)) return r.user;
+    // A real answer without the profile: a login wall unless Instagram said which block it was.
+    st.lo.last = {class: r.status === "blocked" && r.code ? r.code : "login_wall", strategy: s, http: r.http || 0};
+  }
+  return null;
+}
+
 async function runProfile(job) {
-  const u = await resolveUser(job.payload.handle);
-  if (job.payload.purpose === "competitor") await apiOk(`/jobs/${job.id}/items`, {account: u, items: []});
-  else await apiOk("/ig-user", {job_id: job.id, user: u});
+  const p = job.payload;
+  curJob.state.lo ??= {lsd: null};
+  let u = p.plan.lo ? await loUser(job) : null;
+  if (!u) {
+    if (!p.plan.li) {                            // the member chose "never use my login"
+      const last = curJob.state.lo && curJob.state.lo.last;
+      if (last) throw new IgStop("lo_blocked", {lo: last});      // only a real Instagram answer is a block
+      throw new IgStop("budget", {cooldown_s: loWaitS(), message: "lo_skipped " + ((curJob.state.lo || {}).skip || "")});
+    }
+    await ensureSignedIn();
+    u = await resolveUser(p.handle);
+  }
+  if (p.purpose === "competitor") await post(`/jobs/${job.id}/items`, {account: u, items: []});
+  else await post("/ig-user", {job_id: job.id, user: u});
   return {stop_reason: "no_more", result: {found: true}};
 }
 
@@ -491,20 +788,98 @@ async function uploadVideo(job, reelId, blob, cover) {
   } finally { clearTimeout(t); }
 }
 
+// A fresh video URL without the login (DESIGN-FETCH.md 3.3, P2): lo_post_gql(code), no cookies, logged-out budget.
+// Returns the media, or null when the login has to do it (or the reel is skipped). Throws lo_blocked on a hard block.
+const LSD_MAX_AGE = 6 * 3600_000;
+// st.lo_real: the last REAL logged-out answer that stopped the logged-out way ({class, strategy, http}). A skipped
+// call (no lsd, cooling, budget, switched off) sent nothing to Instagram, so it never becomes a block report.
+async function loVideoMedia(job, it) {
+  const p = job.payload, st = curJob.state;
+  if (!p.plan || !p.plan.lo || st.lo_off) return null;
+  const offUntil = loMem.strategy_off.lo_post_gql || 0;
+  if (st.lo_used >= Math.min(p.plan.lo_budget, 30) || offUntil > Date.now()) {
+    st.lo_off = true; st.lo_skip = offUntil > Date.now() ? "cooling" : "budget"; return null;
+  }
+  if (!st.lsd) {
+    const {lo_lsd} = await session.get("lo_lsd");
+    if (lo_lsd && isLsd(lo_lsd.v) && Date.now() - lo_lsd.at < LSD_MAX_AGE) st.lsd = lo_lsd.v;
+  }
+  if (!st.lsd) {                     // no fresh token (Chrome restarted, or 6 h passed): one profile page read first
+    const got = await loFreshLsd(job, it);
+    if (got === "stop") return null;
+  }
+  const r = await loCall("lo_post_gql", {code: it.code, lsd: st.lsd});
+  if (r.status === "skipped") { st.lo_off = true; st.lo_skip = r.code; return null; }   // nothing was sent
+  st.lo_used = (st.lo_used || 0) + (r.calls || 1);
+  if (r.lsd) st.lsd = r.lsd;
+  if (r.status === "blocked" && HARD_BLOCKS.includes(r.code)) {
+    throw new IgStop("lo_blocked", {lo: {class: r.code, strategy: "lo_post_gql", http: r.http || 0}});
+  }
+  if (r.status === "blocked") st.lo_real = {class: r.code || "login_wall", strategy: "lo_post_gql", http: r.http || 0};
+  const m = r.media;
+  if ((r.status === "ok" || r.status === "partial") && m && sid(m.pk) === it.ig_pk && videoOf(m)) {
+    lastLogItems(1);
+    return m;
+  }
+  if (r.code === "empty" || r.code === "not_found") return null;        // a gated post: the login may still read it
+  st.lo_off = true;                                                      // after the first block: the login only
+  return null;
+}
+
+// A fresh lsd token without the login: the profile page of the reel's account (cookie-less, like any visitor).
+// Returns "ok" (st.lsd is set) or "stop" (st.lo_off is set; st.lo_real when Instagram really answered).
+async function loFreshLsd(job, it) {
+  const p = job.payload, st = curJob.state;
+  const s = "lo_profile_page";
+  if (!isHandle(it.handle) || !p.plan.strategies.includes(s) || (loMem.strategy_off[s] || 0) > Date.now()) {
+    st.lo_off = true; st.lo_skip = "no_lsd"; return "stop";
+  }
+  const r = await loCall(s, {handle: it.handle});
+  if (r.status === "skipped") { st.lo_off = true; st.lo_skip = r.code; return "stop"; }
+  st.lo_used = (st.lo_used || 0) + (r.calls || 1);
+  if (r.status === "blocked" && HARD_BLOCKS.includes(r.code)) {
+    throw new IgStop("lo_blocked", {lo: {class: r.code, strategy: s, http: r.http || 0}});
+  }
+  if (r.lsd && isLsd(r.lsd)) { st.lsd = r.lsd; return "ok"; }
+  st.lo_off = true;
+  if (r.status === "blocked") st.lo_real = {class: r.code || "login_wall", strategy: s, http: r.http || 0};
+  else st.lo_skip = "no_lsd";                     // the page loaded but had no token: not a block
+  return "stop";
+}
+
+// How long to wait before a logged-out try makes sense again (a skipped job never reports a block).
+function loWaitS() {
+  const now = Date.now();
+  const until = Math.max(loMem.cooldown_until || 0, loMem.strategy_off.lo_post_gql || 0);
+  return Math.max(900, Math.min(6 * 3600, Math.ceil((until - now) / 1000) || 3600));
+}
+
 async function runVideos(job) {
-  const items = job.payload.items, st = curJob.state;
-  st.i ??= 0; st.failed ??= []; st.uploaded ??= 0; st.media_info ??= 0;
+  const items = job.payload.items, st = curJob.state, plan = job.payload.plan;
+  st.i ??= 0; st.failed ??= []; st.uploaded ??= 0; st.media_info ??= 0; st.lo_used ??= 0;
   await installRefererRule();
   for (; st.i < items.length; st.i++) {
     const it = items[st.i];
-    if (st.media_info >= effPacing.media_info_max) throw new IgStop("budget", {cooldown_s: 3600, message: "media_info"});
-    const r = await ig("mediaInfo", [it.ig_pk]);
-    st.media_info += 1;
-    if (r.status === 400 || r.status === 404) { st.failed.push({reel_id: it.reel_id, reason: "not_found"}); continue; }
-    const m = r.data && Array.isArray(r.data.items) ? r.data.items[0] : null;
-    if (r.status !== 200 || !m) throw new IgStop("parse_error", {raw_keys: Object.keys(r.data || {}).slice(0, 50)});
-    const mpk = sid(String(m.id || "").split("_")[0]) || sid(m.pk);
-    if (mpk !== it.ig_pk) { st.failed.push({reel_id: it.reel_id, reason: "mismatch"}); continue; }
+    let m = await loVideoMedia(job, it);
+    if (!m) {
+      if (plan && !plan.li) {                    // "never use my login": skip this reel, or stop when nothing works
+        if (st.lo_off && !st.uploaded && !st.failed.length) {
+          // A real block from Instagram: report it as it was. Nothing sent: wait, with no block (no strike).
+          if (st.lo_real) throw new IgStop("lo_blocked", {lo: st.lo_real});
+          throw new IgStop("budget", {cooldown_s: loWaitS(), message: "lo_skipped " + (st.lo_skip || "")});
+        }
+        st.failed.push({reel_id: it.reel_id, reason: "login_needed"}); await saveState(); continue;   // tried again later
+      }
+      if (!st.signed_checked) { await ensureSignedIn(); st.signed_checked = true; }   // the login starts here
+      if (st.media_info >= effPacing.media_info_max) throw new IgStop("budget", {cooldown_s: 3600, message: "media_info"});
+      const r = await ig("mediaInfo", [it.ig_pk]);
+      st.media_info += 1;
+      if (r.status === 400 || r.status === 404) { st.failed.push({reel_id: it.reel_id, reason: "not_found"}); continue; }
+      m = r.data && Array.isArray(r.data.items) ? r.data.items[0] : null;
+      if (r.status !== 200 || !m) throw new IgStop("parse_error", {raw_keys: Object.keys(r.data || {}).slice(0, 50)});
+      const mpk = sid(String(m.id || "").split("_")[0]) || sid(m.pk);
+      if (mpk !== it.ig_pk) { st.failed.push({reel_id: it.reel_id, reason: "mismatch"}); continue; }
+    }
     const v = videoOf(m);
     if (!v || !isCdnUrl(v.url)) { st.failed.push({reel_id: it.reel_id, reason: "no_video"}); continue; }
     await take("cdn");
@@ -603,6 +978,124 @@ async function runCheck(job) {
   return {stop_reason: "no_more", result: {checked: cands.length}};
 }
 
+// ---------------------------------------------------------------------------------------------- ig_probe (3.4)
+// "Test my connection": one call per row, logged-out pacing, at most 12 calls. Each row is posted when it ends.
+
+function probeRows(p) {
+  const h0 = p.handles[0], h1 = p.handles[1] || null;
+  const rows = [["lo_profile_page", h0], ["lo_reels_page", h0], ["lo_reels_gql", h0], ["lo_web_profile", h0],
+                ["lo_posts_gql", h0], ["lo_post_gql", h0], ["lo_media_gql", h0], ["lo_embed", h0]];
+  if (h1) rows.push(["lo_profile_page", h1]);
+  rows.push(["li_session", null], ["li_clips", h1 || h0]);
+  return rows.filter(([s]) => p.want.includes(s));
+}
+
+async function probeLo(s, h, P) {
+  const c = (P.ctx[h] ??= {});
+  const row = (status, code, res = {}) => ({strategy: s, layer: "logged_out", handle: h, status, code: code || null,
+    http: res.http || 0, ms: res.ms || 0, items: res.items || 0,
+    fields: status === "ok" || status === "partial" ? probeFields(res) : []});
+  const now = Date.now();
+  if (P.over) return row("skipped", "budget");
+  // No logged-out row during a rate or challenge cooldown. Per-strategy switch-offs are ignored: this is the re-test.
+  if (P.loEnded || (loMem.cooldown_until > now && HARD_BLOCKS.includes(loMem.cooldown_reason))) return row("skipped", "cooling");
+  if (P.calls >= PROBE_CALLS_MAX) return row("skipped", "budget");
+  const reel = c.reel || c.maybe || null;
+  const args = {handle: h, lsd: c.lsd, pageId: c.pageId, cursor: s === "lo_posts_gql" ? c.cursor : null,
+                code: reel ? reel.code : null,
+                pk: s === "lo_media_gql" ? (reel ? (reel.pk || pkFromCode(reel.code)) : null) : c.pk};
+  const res = await loCall(s, args, {probe: true});
+  if (res.status === "skipped") return row("skipped", res.code);
+  P.calls += res.calls || 1;
+  if (res.lsd) c.lsd = res.lsd;
+  if (isPk(res.pk) && !c.pk) c.pk = res.pk;
+  if (s === "lo_profile_page") { c.pageId = res.pageId || null; c.cursor = res.cursor || null; }
+  if (!c.reel) {                                   // the first reel found, for the three detail rows
+    const st = (res.stubs || []).find(x => x.reel);
+    const m = (res.medias || [])[0];
+    const n = (res.nodes || []).find(x => x.is_video);
+    if (st) c.reel = {code: st.code, pk: st.pk};
+    else if (m) c.reel = {code: m.code, pk: isPk(sid(m.pk)) ? sid(m.pk) : null};
+    else if (n) c.reel = {code: n.shortcode, pk: isPk(sid(n.id)) ? sid(n.id) : null};
+  }
+  if (!c.maybe && res.stubs && res.stubs.length) c.maybe = {code: res.stubs[0].code, pk: res.stubs[0].pk};
+  if (HARD_BLOCKS.includes(res.code)) P.loEnded = true;         // a rate result ends the logged-out rows
+  return row(res.status, res.code, res);
+}
+
+async function probeLi(s, h, P) {
+  const t0 = Date.now();
+  const row = (status, code, x = {}) => ({strategy: s, layer: "logged_in", handle: s === "li_session" ? null : h, status,
+    code: code || null, http: x.http || 0, ms: x.calls ? Date.now() - t0 : 0, items: x.items || 0, fields: x.fields || []});
+  if (P.over) return {row: row("skipped", "budget")};   // the 4th probe of the day posts skipped rows
+  const cd = await get("cooldown");
+  if (cd && cd.until > t0) {                       // no logged-in call during a stop
+    const out = cd.reason === "signed_out";
+    return {row: row(out && s === "li_session" ? "blocked" : "skipped", out ? "signed_out" : "cooling")};
+  }
+  if (loMem.li_not_before > t0) return {row: row("skipped", "cooling")};   // the login waits after a logged-out block
+  try {
+    let igs = await get("ig");
+    if (s === "li_session") {                      // a test checks fresh: one call, never the 6-hour cache
+      if (P.over || P.calls >= PROBE_CALLS_MAX) return {row: row("skipped", "budget")};
+      igs = await signInCheck(); P.calls += 1;
+      return {row: igs.signed_in ? row("ok", null, {http: 200, calls: 1, fields: ["signed_in"]})
+                                 : row("blocked", "signed_out", {http: 200, calls: 1})};
+    }
+    if (!igs || !igs.signed_in) return {row: row("skipped", "signed_out")};
+    if (P.over || P.calls >= PROBE_CALLS_MAX) return {row: row("skipped", "budget")};
+    let pk = (P.ctx[h] || {}).pk;
+    if (!isPk(pk)) {                               // the logged-out rows found nobody: one logged-in lookup
+      const r = await ig("profileInfo", [h]);
+      P.calls += 1;
+      const u = r.status === 200 && r.data && r.data.data && r.data.data.user;
+      pk = u ? trimUser(u).pk : null;
+    }
+    if (!isPk(pk)) return {row: row("skipped", "no_user")};
+    if (P.calls >= PROBE_CALLS_MAX) return {row: row("skipped", "budget")};
+    const r = await ig("clipsUser", [], {form: [pk, null, "12"], allowNonJson: true,
+                                         referrer: `${IG.origin}/${encodeURIComponent(h)}/reels/`});
+    P.calls += 1;
+    const ok = r.status === 200 && r.data && Array.isArray(r.data.items);
+    const medias = ok ? r.data.items.map(x => x && x.media).filter(Boolean).filter(m => keepForTarget(m, pk)) : [];
+    lastLogItems(medias.length);
+    return {row: row(!ok ? "error" : medias.length ? "ok" : "partial", !ok ? "http_error" : medias.length ? null : "empty",
+                     {http: r.status, calls: 1, items: medias.length, fields: probeFields({medias})})};
+  } catch (e) {
+    if (!(e instanceof IgStop)) throw e;
+    if (e.code === "budget") return {row: row("skipped", "budget")};
+    if (e.code === "signed_out") {
+      await put({ig: {signed_in: false, checked_at: Date.now()}});
+      return {row: row("blocked", "signed_out", {http: e.http_status || 0, calls: 1})};
+    }
+    const soft = ["http_error", "parse_error", "not_found", "private"].includes(e.code);
+    // A real Instagram stop (slow down, checkpoint) is reported like in any job, after the row is posted.
+    return {row: row(soft ? "error" : "blocked", e.code, {http: e.http_status || 0, calls: 1}), stop: soft ? null : e};
+  }
+}
+
+async function runProbe(job) {
+  const p = job.payload, st = curJob.state;
+  const P = (st.probe ??= {i: 0, calls: 0, ctx: {}, loEnded: false, counted: false, over: false});
+  if (!P.counted) {                                // 3 probes per day per device
+    try { await budget.take("probe"); }
+    catch (e) { if (!(e instanceof BudgetStop)) throw e; P.over = true; }
+    P.counted = true;
+    await saveState();
+  }
+  const rows = probeRows(p);
+  while (P.i < rows.length) {
+    const [s, h] = rows[P.i];
+    const out = s.startsWith("lo_") ? {row: await probeLo(s, h, P)} : await probeLi(s, h, P);
+    await post(`/jobs/${job.id}/probe`, {rows: [out.row]});
+    P.i += 1;
+    await saveState();
+    await progress(P.i, rows.length, `Tested ${P.i} of ${rows.length} ways to read`);
+    if (out.stop) throw out.stop;
+  }
+  return {stop_reason: "no_more", result: {rows: rows.length}};
+}
+
 // ---------------------------------------------------------------------------------------------- page_read (5.4)
 
 const grants = new Map();   // job id -> resolve(granted)
@@ -675,18 +1168,23 @@ async function runJob(raw, resumed) {
   }
   const job = v.job;
   curJob = {job, state: (resumed && resumed.state) || {}};
+  // The way this job starts reading: logged out when the plan says so (or a stored job is in that stage).
+  const plan = job.payload && job.payload.plan;
+  curLayer = !IG_KINDS.includes(job.kind) ? null : job.kind === "ig_probe" || (plan && plan.lo && curJob.state.stage !== "li") ? "lo" : "li";
   lastBeat = 0;
   keepAlive = setInterval(() => session.set({hb: Date.now()}), 10_000);   // keep the SW alive for the whole job
   badge("…");
   await saveState();
   let keepLocal = false;
   try {
-    const total = job.kind === "ig_pull" ? job.payload.target : (job.payload.items || job.payload.candidates || [1]).length;
-    if (IG_KINDS.includes(job.kind)) {
-      let igs = await get("ig");
-      if (!igs || !igs.signed_in || Date.now() - (igs.checked_at || 0) > SIX_H) igs = await signInCheck();
-      if (!igs.signed_in) throw new IgStop("signed_out");
-    }
+    const total = job.kind === "ig_pull" ? job.payload.target
+      : job.kind === "ig_probe" ? probeRows(job.payload).length
+      : (job.payload.items || job.payload.candidates || [1]).length;
+    // The sign-in check: only for a job that starts with a logged-in call. A logged-out stage and the probe run
+    // without it (DESIGN-FETCH.md 2.1, 3.4); runPull and runProfile check when they reach the login.
+    const loFirst = !!(job.payload.plan && job.payload.plan.lo) && ["ig_pull", "ig_profile", "ig_videos"].includes(job.kind);
+    if (IG_KINDS.includes(job.kind) && job.kind !== "ig_probe" && !loFirst
+        && !(job.kind === "ig_pull" && curJob.state.stage === "lo")) await ensureSignedIn();
     await progress(0, total, resumed ? "Going on where it stopped" : "Starting");
     let out;
     switch (job.kind) {
@@ -695,9 +1193,10 @@ async function runJob(raw, resumed) {
       case "ig_videos": out = await runVideos(job); break;
       case "ig_discover": out = await runDiscover(job); break;
       case "ig_check": out = await runCheck(job); break;
+      case "ig_probe": out = await runProbe(job); break;
       case "page_read": out = await runPageRead(job); break;
     }
-    await apiOk(`/jobs/${job.id}/done`, out);
+    await post(`/jobs/${job.id}/done`, out);
     badge("");
   } catch (e) {
     if (e instanceof Dropped || e instanceof Canceled) {
@@ -712,15 +1211,22 @@ async function runJob(raw, resumed) {
       if (job.kind === "ig_videos" && curJob && curJob.state) {   // the server counts these Instagram calls too
         body.media_info = curJob.state.media_info || 0;
       }
+      const loBlocked = e.code === "lo_blocked";   // a logged-out block: never a logged-in cooldown
+      if (loBlocked && e.lo) body.lo = {class: String(e.lo.class), strategy: String(e.lo.strategy), http: e.lo.http || 0};
+      const log = pendingLog();
+      if (log) body.fetch_log = log;
       let until = null;
       try {
         const r = await api(`/jobs/${job.id}/fail`, body);
         if (r.status >= 500) throw new ServerDown("server " + r.status);
-        until = r.data && r.data.cooldown_until ? Date.parse(r.data.cooldown_until) : null;
+        if (r.data && r.data.lo) await mergeServerLo(r.data.lo);
+        until = !loBlocked && r.data && r.data.cooldown_until ? Date.parse(r.data.cooldown_until) : null;
       } catch (e2) {
         // ReelVault is away: still stop reading Instagram for the 5.7 time. The lease runs out on the server and
         // the job comes back later, so the local copy is dropped.
-        if (!(e2 instanceof ServerDown) || !LOCAL_COOLDOWN_S[e.code]) throw e2;
+        if (loBlocked && e2 instanceof ServerDown) e2 = null;      // the local logged-out cooldown is already set
+        else if (!(e2 instanceof ServerDown) || !LOCAL_COOLDOWN_S[e.code]) throw e2;
+        if (!e2) { badge(""); return; }
         until = Date.now() + LOCAL_COOLDOWN_S[e.code] * 1000;
         await put({cooldown: {until, reason: e.code, local_only: true}});
         until = null;
@@ -747,6 +1253,7 @@ async function runJob(raw, resumed) {
     clearInterval(keepAlive);
     keepAlive = null;
     curJob = null;
+    curLayer = null;
     if (!keepLocal) await local.remove("job");
     await local.remove("ui_job");
     chrome.alarms.create("closetab", {delayInMinutes: 2});   // close the reading tab 2 min after the last job
@@ -765,6 +1272,7 @@ async function hello() {
   const upd = {server_pacing: r.data.pacing || null, hello: {...r.data, at: Date.now()}};
   if (r.data.cooldown_until) upd.cooldown = {until: Date.parse(r.data.cooldown_until), reason: r.data.cooldown_reason || ""};
   await put(upd);
+  if (r.data.lo) await mergeServerLo(r.data.lo);
   if (!r.data.cooldown_until) {                   // the server's word wins, except a stop it never heard of
     const cd = await get("cooldown");
     if (!cd || !cd.local_only || cd.until <= Date.now()) await local.remove("cooldown");
@@ -781,7 +1289,13 @@ async function tick(why = "alarm") {
     if (!pair) { badge(""); return; }
     if (await get("revoked")) { badge("!"); return; }
     await loadPacing();
-    if (tickN++ % 5 === 0 || why === "now") await hello();
+    if (tickN++ % 5 === 0 || why === "now") {
+      const was = await get("cooldown");
+      const h = await hello();
+      // "Try again" in ReelVault cleared a signed-out stop: check the sign-in now (one call), so the server knows
+      // the member is back before it hands out work that needs the login.
+      if (h && !h.cooldown_until && was && was.reason === "signed_out" && was.until > Date.now()) await recheckSignIn();
+    }
     const stored = await get("job");
     if (stored && stored.job) {
       if (stored.resume_after && stored.resume_after > Date.now()) return;   // waiting after a server failure
@@ -790,8 +1304,14 @@ async function tick(why = "alarm") {
     for (let i = 0; i < 25; i++) {               // keep going while the server has work
       const cd = await get("cooldown");
       const inCooldown = cd && cd.until > Date.now();
-      const r = await api("/jobs/lease", {kinds: inCooldown ? ["page_read"] : KINDS, budget: await budget.report()});
+      loMem = await loState();
+      // During an Instagram stop only page reads. Signed out: logged-out pulls and the probe may still run (the
+      // server only hands out jobs that need no login). After a logged-out block the login waits too.
+      const kinds = (inCooldown && cd.reason !== "signed_out") || loMem.li_not_before > Date.now() ? ["page_read"]
+        : inCooldown ? ["ig_pull", "ig_probe", "page_read"] : KINDS;
+      const r = await api("/jobs/lease", {kinds, budget: await budget.report(), lo: loReport()});
       if (r.status !== 200 || !r.data) break;
+      if (r.data.lo) await mergeServerLo(r.data.lo);
       await put({lease: {reason: r.data.reason || null, at: Date.now()}});
       if (!r.data.job) {
         badge(["confirm_account", "update"].includes(r.data.reason) ? "!" : "");
@@ -813,6 +1333,13 @@ async function recheckAccount() {
   if (!h || !h.has_work) return;
   if (cd && cd.until > Date.now()) return;                  // no Instagram call during a stop (fix round 2)
   if (igs && Date.now() - (igs.checked_at || 0) < 30 * 60_000) return;
+  try { await signInCheck(); await hello(); }
+  catch (e) { if (!(e instanceof IgStop)) throw e; await stopWithoutJob(e); }
+}
+
+async function recheckSignIn() {
+  const igs = await get("ig"), cd = await get("cooldown");
+  if ((igs && igs.signed_in) || (cd && cd.until > Date.now())) return;
   try { await signInCheck(); await hello(); }
   catch (e) { if (!(e instanceof IgStop)) throw e; await stopWithoutJob(e); }
 }
@@ -842,7 +1369,7 @@ async function claim(link) {
   }
   // An Instagram stop (cooldown) and the budget survive a new pairing (5.7): Disconnect + Connect must not
   // clear "ReelVault waits until tomorrow".
-  const keep = await local.get(["budget", "debug_sent", "cooldown", "ig"]);
+  const keep = await local.get(["budget", "debug_sent", "cooldown", "ig", "lo"]);
   await local.clear();
   if (data.cooldown_until) keep.cooldown = {until: Date.parse(data.cooldown_until), reason: data.cooldown_reason || ""};
   if (!(keep.cooldown && keep.cooldown.until > Date.now())) delete keep.ig;   // the last check, only during a stop
@@ -867,9 +1394,12 @@ async function claim(link) {
 async function statusForPopup() {
   const s = await local.get(["pair", "ig", "cooldown", "lease", "hello", "ui_job", "revoked"]);
   const L = effPacing;
+  const lo = await loState(), now = Date.now();
   return {paired: !!s.pair && !s.revoked, revoked: !!s.revoked, host: s.pair && s.pair.host, server: s.pair && s.pair.server,
           name: s.pair && s.pair.user_name, ig: s.ig || null, budget: await budget.report(),
-          limits: {hour_max: L.hour_max, day_max: L.day_max, cdn_day_max: L.cdn_day_max},
+          limits: {hour_max: L.hour_max, day_max: L.day_max, cdn_day_max: L.cdn_day_max, lo_day_max: L.lo_day_max},
+          lo: {cooldown: lo.cooldown_until > now ? {until: lo.cooldown_until, reason: lo.cooldown_reason} : null,
+               login_waits_until: lo.li_not_before > now ? lo.li_not_before : null},
           cooldown: s.cooldown && s.cooldown.until > Date.now() ? s.cooldown : null,
           reason: s.lease && s.lease.reason, job: s.ui_job || null, hello: s.hello || null, version: VERSION};
 }
@@ -881,7 +1411,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       case "status": return statusForPopup();
       case "claim": return claim(msg.link);
       case "disconnect": {                        // deletes local storage and calls nothing else (5.2)
-        const keep = await local.get(["budget", "cooldown", "ig", "debug_sent"]);   // a stop outlives Disconnect (5.7)
+        const keep = await local.get(["budget", "cooldown", "ig", "debug_sent", "lo"]);   // a stop outlives Disconnect (5.7)
         if (!(keep.cooldown && keep.cooldown.until > Date.now())) { delete keep.cooldown; delete keep.ig; }
         await local.clear(); await put(keep); await closeReadingTab(); badge("");
         return {ok: true};
@@ -913,4 +1443,5 @@ setTimeout(() => tick("start"), 1000);   // a restarted SW resumes a stored job 
 
 // For the automated tests and debugging in chrome://extensions (service worker console only).
 self.rv = {tick, hello, statusForPopup, budget, validateJob, effPacing: () => effPacing,
-           busy: () => running || ticking, lastLease: () => get("lease"), closeReadingTab};
+           busy: () => running || ticking, lastLease: () => get("lease"), closeReadingTab, loState,
+           docIds: () => docIds};

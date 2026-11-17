@@ -24,6 +24,30 @@ export async function igFetch({method, path, form, appId, asbdId, referrer}) {
   }
 }
 
+// One LOGGED-OUT read from the same reading tab (DESIGN-FETCH.md 3.1). credentials "omit": the browser sends no
+// cookie and ignores Set-Cookie, so the member's Instagram session is never sent and never changed. This function
+// never reads document.cookie and never sends a CSRF token or X-IG-WWW-Claim. cache "no-store" keeps a cached
+// logged-in copy out. It is same-origin from a real instagram.com page, with Chrome's own headers and address.
+export async function igAnonFetch({method, path, form, headers, referrer}) {
+  const h = {};
+  for (const [k, v] of Object.entries(headers || {})) {
+    if (!/^(cookie|x-csrftoken|x-ig-www-claim|authorization)$/i.test(k)) h[k] = v;
+  }
+  if (method === "POST") h["Content-Type"] = "application/x-www-form-urlencoded";
+  try {
+    const ref = typeof referrer === "string" && referrer.startsWith(location.origin + "/") ? referrer : location.origin + "/";
+    const r = await fetch(new URL(path, location.origin), {method, credentials: "omit", cache: "no-store", headers: h,
+      redirect: "follow", referrer: ref, referrerPolicy: "strict-origin-when-cross-origin",
+      body: method === "POST" ? new URLSearchParams(form).toString() : undefined});
+    const text = r.type === "opaqueredirect" ? "" : await r.text();
+    return {status: r.status, type: r.type, url: r.url, redirected: !!r.redirected,
+            ct: r.headers.get("content-type") || "", text: text.slice(0, 3e6), page: location.href, anon: true};
+  } catch (e) {
+    return {status: 0, type: "error", url: path, ct: "", text: "", error: String(e && e.message || e),
+            page: location.href, anon: true};
+  }
+}
+
 // ds_user_id is readable from document.cookie unless Instagram made it HttpOnly (then the SW asks current_user).
 export function readIds() {
   const m = document.cookie.match(/(?:^|; )ds_user_id=(\d{1,20})(?:;|$)/);

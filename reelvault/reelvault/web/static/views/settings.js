@@ -5,6 +5,7 @@ import {h, clear, msg, say, busy, get, post, del, S, field, toast, day, localSto
 import {profilePage, topicsPage, settingsTabs} from "./profile.js";
 import {aiSetup} from "./ai.js";
 import {extensionSetup} from "./extension.js";
+import {readCard} from "./fetch.js";
 
 export async function settings(main, ctx) {
   const which = ctx.parts[0] || "ai";
@@ -12,8 +13,10 @@ export async function settings(main, ctx) {
   if (which === "topics") return topicsPage(main, ctx);
   if (which === "extension") {
     const box = h("div", {class: "stack"});
-    clear(main, h("div", {class: "view"}, settingsTabs("extension"), h("h1", "Chrome extension"), box));
-    await extensionSetup(box, {});
+    const fetchBox = h("div", {class: "stack", id: "fetch-box"});
+    clear(main, h("div", {class: "view"}, settingsTabs("extension"), h("h1", "Chrome extension"), box, fetchBox));
+    // DESIGN-FETCH.md 5.1: "How ReelVault reads Instagram" sits under the extension status.
+    await Promise.all([extensionSetup(box, {}), readCard(fetchBox)]);
     return;
   }
   if (which === "account") return account(main, ctx);

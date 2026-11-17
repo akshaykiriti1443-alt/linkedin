@@ -353,7 +353,7 @@ def test_migration_matches_the_table_definitions(rv_env):
         names = set(db.get_engine().dialect.get_table_names(conn)) - {"alembic_version"}
         checks = {c["name"] for c in db.get_engine().dialect.get_check_constraints(conn, "jobs")}
     assert diff == [], diff
-    assert names == set(db.metadata.tables) and len(names) == 34
+    assert names == set(db.metadata.tables) and len(names) == 36    # 34 + fetch_health, fetch_probes (0002_fetch)
     assert {"ck_jobs_kind", "ck_jobs_state", "ck_jobs_executor", "ck_jobs_job_class"} <= checks
 
 

@@ -133,4 +133,5 @@ Write-Host "All done. ReelVault Members opens at http://localhost:8800" -Foregro
 Write-Host "Your login is saved in: $RVM\login.txt"
 Get-Content (Join-Path $RVM "login.txt") | ForEach-Object { Write-Host "    $_" }
 Write-Host "Chrome extension folder (Load unpacked): $RVM\chrome-extension"
+Write-Host "Already loaded it before? Open chrome://extensions and click the reload arrow on ReelVault Members."
 if (-not $NoLaunch) { Start-Process $VPyw -ArgumentList "-m reelvault.members_local" -WorkingDirectory $RVM }

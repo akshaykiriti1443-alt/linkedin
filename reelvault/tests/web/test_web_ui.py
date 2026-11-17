@@ -54,3 +54,15 @@ def test_web_ui():
                        capture_output=True, text=True, timeout=900)
     if p.returncode != 0:
         pytest.fail(f"web UI tests failed:\n{p.stdout[-15000:]}\n{p.stderr[-4000:]}")
+
+
+@pytest.mark.skipif(os.environ.get("RV_SKIP_WEB_UI") == "1", reason="RV_SKIP_WEB_UI=1")
+def test_fetch_web_ui_mocked():
+    """The fetch engine screens (DESIGN-FETCH.md 5) with a mocked API: about 25 seconds, no server, a free port."""
+    env = _env()
+    if not _has_playwright(env):
+        pytest.skip("node or Playwright for Node (with Chromium) is not installed")
+    p = subprocess.run([NODE, "--test", "--test-reporter=spec", str(HERE / "fetch.test.mjs")], cwd=ROOT, env=env,
+                       capture_output=True, text=True, timeout=600)
+    if p.returncode != 0:
+        pytest.fail(f"fetch web UI tests failed:\n{p.stdout[-15000:]}\n{p.stderr[-4000:]}")

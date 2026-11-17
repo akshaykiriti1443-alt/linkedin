@@ -123,7 +123,7 @@ test.after(async () => {
 const MEMBER_ROUTES = ["#home", "#competitors", "#reels", "#reels?band=breakout,big,outlier&sort=newest", "#working",
   "#working?dimension=hook_type&window=recent", "#banks/hooks", "#banks/formats", "#banks/ctas", "#banks/sounds", "#banks/music",
   "#create", "#create/reel_script", "#create/meta_ads", "#create/content_plan", "#create/competitor_report", "#outputs",
-  "#settings/ai", "#settings/extension", "#settings/profile", "#settings/topics", "#settings/account",
+  "#settings/ai", "#settings/extension", "#settings/profile", "#settings/topics", "#settings/account", "#test-connection",
   "#onboarding/1", "#onboarding/2", "#onboarding/3", "#onboarding/4", "#onboarding/5", "#privacy", "#help", "#help/extension-zip",
   "#help/second-account", "#help/desktop-app", "#nothing-here"];
 const ADMIN_ROUTES = ["#admin/members", "#admin/members?status=pending", "#admin/invites", "#admin/settings", "#admin/copy",
@@ -454,4 +454,40 @@ test("embed: signed out inside OneX asks OneX to sign in again and never shows t
   assert.equal(seen[1], "dark");
   assert.notEqual(seen[2], "https://typo.example");
   await page.context().close();
+});
+
+test("fetch engine on the real server: read mode saves, the test page opens, the admin sees Fetch health", async () => {
+  // DESIGN-FETCH.md 5. The mocked states (verdicts, running test, switches) are in tests/web/fetch.test.mjs.
+  const page = await newPage(1280, "light");
+  await login(page, info.member_email, info.member_password);
+  await view(page, "#settings/extension");
+  await page.waitForSelector("#fetch-card");
+  assert.equal(await page.locator('#fetch-card input[name="read-mode"]').count(), 3);
+  assert.equal(await page.locator("#fetch-layers [data-layer]").count(), 2);
+  await page.click('label[for="read-logged_in_only"]');
+  await page.click("#fetch-save");
+  await page.waitForSelector("#fetch-card .msg.good");
+  let s = await page.evaluate(async () => (await fetch("/api/fetch/settings")).json());
+  assert.equal(s.read_mode, "logged_in_only");
+  assert.match(await page.textContent('#fetch-layers [data-layer="logged_out"]'), /You turned this off in your settings\./);
+  await page.click('label[for="read-auto"]');
+  await page.click("#fetch-save");
+  await page.waitForFunction(async () => (await (await fetch("/api/fetch/settings")).json()).read_mode === "auto");
+  // the test page with no test yet
+  await page.click("#test-connection-link");
+  await ready(page, /^#test-connection$/);
+  assert.match(await page.textContent("main"), /You have not run the test yet\./);
+  assert.match(await page.textContent("#test-line"), /about 11 slow requests/);
+  // the competitors list shows how the seeded pulls were read
+  await view(page, "#competitors");
+  assert.ok(await page.locator("[data-account] .readline").count() >= 1, "a read line under a competitor");
+  assert.deepEqual(page.errors, []);
+  await page.context().close();
+  const admin = await newPage(1280, "dark");
+  await login(admin, info.admin_email, info.admin_password);
+  await view(admin, "#admin/health");
+  await admin.waitForSelector("#fetch-health #fetch-strategies");
+  assert.ok(await admin.locator('#fetch-strategies tr[data-strategy="lo_profile_page"]').count() === 1);
+  assert.deepEqual(admin.errors, []);
+  await admin.context().close();
 });

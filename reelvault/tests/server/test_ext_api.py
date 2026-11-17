@@ -126,7 +126,8 @@ def test_pair_claim_status_and_revoke(member_client, anon):
     code = body["code"]
     assert body["pair_link"] == f"http://localhost/pair#{code}" and len(code) == 9 and code[4] == "-"
     st = member_client.get("/api/ext/status").json()
-    assert st["paired"] is False and st["latest_version"] == "2.0.0"
+    manifest = json.loads((Path(__file__).resolve().parents[2] / "extension-members" / "manifest.json").read_text())
+    assert st["paired"] is False and st["latest_version"] == manifest["version"]   # 2.1.0 since the fetch engine
 
     c = anon.post("/api/ext/v2/pair/claim", json={"code": code.lower(), "name": "Chrome on Windows",
                                                   "version": "2.0.0", "kind": "extension"})

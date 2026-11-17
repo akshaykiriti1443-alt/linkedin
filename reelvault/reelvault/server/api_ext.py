@@ -4,9 +4,13 @@ Session endpoints (web UI, cookie + CSRF):
     POST /api/ext/pair · GET /api/ext/status · POST /api/ext/confirm-account · DELETE /api/ext/device
     POST /api/ext/try-again (new: the "Try again" button after signed_out, 5.7) · GET /pair (tiny help page)
     GET /api/admin/instagram-health (new, admin only: the 5.9 "Instagram health" data)
+Fetch engine (DESIGN-FETCH.md 6; session unless noted):
+    GET, PUT /api/fetch/settings · GET /api/fetch/status · GET /api/fetch/pulls
+    POST /api/fetch/probe · GET /api/fetch/probe/latest · GET /api/fetch/probe/<id>
+    GET /api/admin/fetch-health · POST /api/admin/fetch-health/strategy · PUT /api/admin/fetch-health/settings (admin)
 Device endpoints (Authorization: Bearer rvd_..., CORS for chrome-extension://, no cookies):
     POST /api/ext/v2/pair/claim (no auth) · hello · jobs/lease · jobs/<id>/{progress,items,video,page,done,fail}
-    ig-user · debug-sample
+    jobs/<id>/probe (new: rows of "Test my connection") · ig-user · debug-sample
 
 Other packages use:
     new_pairing_code(user_id, kind, *, conn=None) -> (code, expires_at)   # WP5's POST /api/ai/desktop/pair
@@ -26,10 +30,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
-from . import db, jobs_ig, ratelimit, security
+from . import db, fetch, jobs_ig, ratelimit, security
 from .errors import ApiError, bad_input, not_found, read_body
 from .settings import EXTENSION_MIN, get_settings
 
@@ -264,6 +269,71 @@ def instagram_health(admin=Depends(security.current_admin)):
     return jobs_ig.ig_health()
 
 
+# ============================================================================================== fetch engine (DESIGN-FETCH.md 5, 6)
+
+@router.get("/api/fetch/settings")
+def fetch_settings(user=Depends(security.current_user)):
+    """Settings card "How ReelVault reads Instagram": the member's read mode and the three choices."""
+    return fetch.member_settings(user)
+
+
+@router.put("/api/fetch/settings")
+async def fetch_settings_save(request: Request, user=Depends(security.current_user)):
+    body = await _json(request, 4096)
+    return await run_in_threadpool(fetch.save_member_settings, user, body)
+
+
+@router.get("/api/fetch/status")
+def fetch_status(user=Depends(security.current_user)):
+    """Which layer works for this member right now, one plain line per layer."""
+    return fetch.status(user)
+
+
+@router.get("/api/fetch/pulls")
+def fetch_pulls(account_id: str | None = None, limit: int = 20, cursor: str | None = None,
+                user=Depends(security.current_user)):
+    """How each pull was read (without the login, with it, or both), with one plain line."""
+    if account_id is not None and not jobs_ig.RVID_RE.match(account_id):
+        raise not_found()
+    return fetch.pulls(user, account_id, limit, cursor)
+
+
+@router.post("/api/fetch/probe")
+async def fetch_probe_start(request: Request, user=Depends(security.current_user)):
+    """"Test my connection": queue one ig_probe job for the member's Chrome. 201, or 200 for the running one."""
+    await _json(request, 4096)
+    out, created = await run_in_threadpool(fetch.start_probe, user)
+    return JSONResponse(out, status_code=201 if created else 200)
+
+
+@router.get("/api/fetch/probe/latest")
+def fetch_probe_latest(user=Depends(security.current_user)):
+    return fetch.latest_probe(user)
+
+
+@router.get("/api/fetch/probe/{probe_id}")
+def fetch_probe_get(probe_id: str, user=Depends(security.current_user)):
+    return fetch.get_probe(user, probe_id)
+
+
+@router.get("/api/admin/fetch-health")
+def fetch_health(admin=Depends(security.current_admin)):
+    """Admin > Fetch health: success per strategy, pulls per layer, devices, the last 20 blocks. No member content."""
+    return fetch.admin_health()
+
+
+@router.post("/api/admin/fetch-health/strategy")
+async def fetch_health_strategy(request: Request, admin=Depends(security.current_admin)):
+    body = await _json(request, 4096)
+    return await run_in_threadpool(fetch.admin_set_strategy, admin, body)
+
+
+@router.put("/api/admin/fetch-health/settings")
+async def fetch_health_settings(request: Request, admin=Depends(security.current_admin)):
+    body = await _json(request, 16 * 1024)
+    return await run_in_threadpool(fetch.admin_save_settings, admin, body)
+
+
 @router.get("/pair", include_in_schema=False)
 def pair_page():
     """The page a pair link opens when the extension isn't there yet. Styled with the hashed <style> block of
@@ -347,13 +417,16 @@ async def pair_claim(request: Request):
 
 # ============================================================================================== device: loop
 
-def _pacing_reply(dev) -> dict:
+def _pacing_reply(dev, conn=None) -> dict:
     st = jobs_ig.device_state(dev)
+    fs = fetch.fetch_state(st)
     out = {"ok": True, "min_version": EXTENSION_MIN, "latest_version": latest_version(),
            "update_url": os.environ.get("EXTENSION_STORE_URL", "").strip()
            or f"{get_settings().public_origin}/download/reelvault-members-extension.zip",
            "pacing": jobs_ig.pacing(), "ig_confirmed": jobs_ig.is_confirmed(dev),
-           "ig_username": dev.ig_username}
+           "ig_username": dev.ig_username,
+           # fetch engine (DESIGN-FETCH.md 4.1): strategies, doc_ids and this device's logged-out state
+           "fetch": fetch.hello_fetch(conn, fs), "lo": fetch.lo_view(fs)}
     if jobs_ig.cooldown_active(st):
         out["cooldown_until"] = st.get("cooldown_until")
         out["cooldown_reason"] = st.get("cooldown_reason")
@@ -376,7 +449,7 @@ async def hello(request: Request, dev=Depends(security.extension_device)):
             d = conn.execute(select(db.devices).where(db.devices.c.id == dev.id)).first()
             if jobs_ig.apply_stop_report(conn, d, body.get("stop")):
                 d = conn.execute(select(db.devices).where(db.devices.c.id == dev.id)).first()
-        out = _pacing_reply(d)
+            out = _pacing_reply(d, conn)
         out["has_work"] = jobs_ig.has_work(dev.user_id)
         return out
 
@@ -386,7 +459,7 @@ async def hello(request: Request, dev=Depends(security.extension_device)):
 @router.post("/api/ext/v2/jobs/lease")
 async def lease(request: Request, dev=Depends(security.extension_device)):
     body = await _json(request, 16 * 1024)
-    return await run_in_threadpool(jobs_ig.lease, dev, body.get("kinds"), body.get("budget"))
+    return await run_in_threadpool(jobs_ig.lease, dev, body.get("kinds"), body.get("budget"), body.get("lo"))
 
 
 @router.post("/api/ext/v2/jobs/{job_id}/progress")
@@ -399,6 +472,12 @@ async def progress(job_id: str, request: Request, dev=Depends(security.extension
 async def items(job_id: str, request: Request, dev=Depends(security.extension_device)):
     body = await _json(request, ITEMS_MAX)
     return await run_in_threadpool(jobs_ig.ingest_items, dev, job_id, body)
+
+
+@router.post("/api/ext/v2/jobs/{job_id}/probe")
+async def probe_rows(job_id: str, request: Request, dev=Depends(security.extension_device)):
+    body = await _json(request, 64 * 1024)
+    return await run_in_threadpool(jobs_ig.save_probe_rows, dev, job_id, body)
 
 
 @router.post("/api/ext/v2/jobs/{job_id}/page")

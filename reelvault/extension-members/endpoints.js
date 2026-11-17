@@ -29,3 +29,35 @@ export function isCdnUrl(u) {
 // Signals of 5.7 that mean "Instagram wants us to slow down".
 export const WARNING_RE = /please wait a few minutes|rate limit|spam|feedback_required/i;
 export const CHALLENGE_RE = /checkpoint_required|challenge_required/i;
+
+// ---------------------------------------------------------------------------------------------- logged-out reads
+// DESIGN-FETCH.md 3.2. Every path a LOGGED-OUT read may call. These run with credentials "omit" (reader.js
+// igAnonFetch): no cookie, no CSRF token. kind: page (HTML) | api (JSON) | gql (GraphQL form post).
+export const LO_IDS = ["lo_profile_page", "lo_reels_page", "lo_reels_gql", "lo_web_profile", "lo_posts_gql",
+                       "lo_post_gql", "lo_media_gql", "lo_embed"];            // ladder order
+export const LI_IDS = ["li_session", "li_clips", "li_feed", "li_profile", "li_media"];   // today's logged-in calls
+export const LO_LIST_IDS = ["lo_reels_page", "lo_reels_gql", "lo_web_profile", "lo_posts_gql"];
+export const LO_DETAIL_IDS = ["lo_post_gql", "lo_media_gql", "lo_embed"];
+export const LO = {
+  pageAccept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  lo_profile_page: {method: "GET", kind: "page", path: h => `/${encodeURIComponent(h)}/`},
+  lo_reels_page:   {method: "GET", kind: "page", path: h => `/${encodeURIComponent(h)}/reels/`},
+  lo_reels_gql:    {method: "POST", kind: "gql", path: () => `/graphql/query`,
+                    friendly: "PolarisProfileReelsTabContentQuery_connection"},
+  lo_web_profile:  {method: "GET", kind: "api", path: h => `/api/v1/users/web_profile_info/?username=${encodeURIComponent(h)}`},
+  lo_posts_gql:    {method: "POST", kind: "gql", path: () => `/api/graphql`,
+                    friendly: "PolarisLoggedOutDesktopWWWProfilePostsTabContentQuery_connection"},
+  lo_post_gql:     {method: "POST", kind: "gql", path: () => `/api/graphql`, friendly: null},
+  lo_media_gql:    {method: "POST", kind: "gql", path: () => `/api/graphql`,
+                    friendly: "PolarisLoggedOutDesktopWWWPostRootContentQuery"},
+  lo_embed:        {method: "GET", kind: "page", path: c => `/reel/${encodeURIComponent(c)}/embed/captioned/`},
+};
+// Default GraphQL doc ids (they rotate). The server replaces them in hello.fetch.doc_ids without a new release.
+export const LO_DOC_IDS = {
+  lo_posts_gql: ["28904005159232689"], lo_reels_gql: ["29285972954340351", "7845543455542541"],
+  lo_post_gql: ["27128499623469141"], lo_media_gql: ["27130156389949648"],
+};
+// The logged-in endpoint names of the IG table above -> the li_* id that Fetch health counts them under.
+export const LI_OF = {clipsUser: "li_clips", feedUser: "li_feed", mediaInfo: "li_media", profileInfo: "li_profile",
+                      topsearch: "li_profile", profilePage: "li_profile", userInfo: "li_profile",
+                      currentUser: "li_session"};

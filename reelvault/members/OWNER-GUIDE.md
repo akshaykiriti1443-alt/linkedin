@@ -176,6 +176,50 @@ account. ReelVault reads slowly, like a person scrolling, makes zero Instagram c
 - Every member must confirm "ReelVault will read Instagram as @username" before anything is read.
 - Private accounts are never read.
 
+**Reading without a login ("Safest first").** ReelVault now reads in two layers. First it reads public Instagram
+pages from the member's own Chrome with no Instagram cookie. Instagram sees a visitor on a home internet line. It
+does not see the member's account. Then it uses the member's login only for what is missing. Most often that is
+view counts. The member picks this in **Settings > Chrome extension** (**Safest first**, **Logged-in only** or
+**Logged-out only**). New members start on the choice you set in **Admin > Health > Fetch health**.
+- It lowers the risk to the member's account. It does not remove it. Without a login Instagram shows less: often
+  no view counts. So **Safest first** still uses the login on many first pulls.
+- Automated reading can go against Instagram's terms with or without a login. The home internet line can get a
+  short block. ReelVault then waits and falls back by itself.
+- Saves stay private. Neither layer can see who saved a reel.
+- No fake accounts. No hidden tricks. Chrome sends what a normal visitor sends.
+- Logged-out reads have their own stricter limits: a 5-11 second gap and at most 60 an hour and 200 a day.
+  They also count in the normal limits. When Instagram pushes back ReelVault stops that way for hours. It then
+  falls back to the login.
+- **Nothing here ran against real Instagram yet.** It is built and tested against a fake Instagram only. Your test
+  below settles which ways work.
+
+**Test my connection: run it once on your PC.** First update ReelVault Members on your PC. Open PowerShell and paste
+the install line again:
+`irm https://raw.githubusercontent.com/akshaykiriti1443-alt/linkedin/claude/kind-dijkstra-0o03in/reelvault/install-members.ps1 | iex`.
+Your data stays. Then open `chrome://extensions` in Chrome and click the reload arrow on **ReelVault Members**. It
+shows version 2.1.0. Sign in to Instagram in that Chrome. Open **Settings > Chrome extension > Test my connection**
+and click **Run the test**. Keep Chrome open for 2 minutes. The result tells you:
+- **The safest way works.** Reels and view counts come in without a login. This is the best case.
+- **The safest way works in part.** Lists or videos come in without a login. The login fills in view counts.
+  Expect this one.
+- **Instagram asks ReelVault to wait.** Instagram slowed reads down. ReelVault goes on by itself. Test again in a
+  few hours.
+- **Instagram asks for a login here.** Logged-out reads don't work on this connection. ReelVault reads with the
+  login as before.
+- **Instagram asks for a login here. You chose to read without it.** This shows only with **Logged-out only**.
+  Try again later, or pick **Safest first**.
+- **You're signed out of Instagram in Chrome.** Sign in at instagram.com in that Chrome. Then test again.
+- **Instagram blocks reads right now.** Both ways are blocked. ReelVault waits by itself. Test again in a few hours.
+
+The table shows each way: **Works**, **Works in part**, **Blocked**, **Error** or **Skipped**. Send a screenshot of
+it to your developer. It tells them which parts of the engine work live.
+
+**Admin > Health > Fetch health.** This card shows each way of reading across all members' Chrome: how often it
+works, the last success and the last block. It also shows how many pulls each layer read, each member's Chrome and
+the last 20 blocks. Untick a way to switch it off for everyone. ReelVault also switches a way off by itself for 24
+hours when most members get blocked on it. Instagram changes its query numbers (doc_ids) every few weeks. Your
+developer can paste new ones under **Settings and doc_ids**. No extension update is needed.
+
 **Sampling.** ReelVault does not watch every reel. It ranks all reels on views, likes and comments, then watches
 and tags the outliers and the top reels, plus about 25 normal reels per competitor picked across time. "What works"
 compares the two groups. That is fast and fair, but on small accounts the numbers are rougher. Each new pull of
@@ -210,7 +254,9 @@ Do these in this order. Each takes 10 to 30 minutes, plus waiting. Write down wh
 1. **Week 1: Chrome Web Store.** Build the store ZIP and submit it as Unlisted (section 2). Note any questions they ask.
 2. **Hosting.** Set up the server with DEPLOY.md. Run the bench step ("Measure your server"). Restore one backup.
 3. **Instagram, on a second account.** Make a separate Chrome profile with a second Instagram account. Sign up as a
-   test member, pair the extension, confirm the account, and pull 100 reels from 2 competitors. Check:
+   test member, pair the extension and confirm the account. Run **Test my connection** first and save a screenshot
+   (section 6). Then pull 100 reels from 2 competitors. Check:
+   - each competitor shows how it was read ("Read 24 reels without your login...");
    - the views, likes and comments match the Instagram app;
    - Admin > Health > Instagram reading looks right;
    - leaving Chrome open for an hour makes no Instagram calls (the counter there stays still);

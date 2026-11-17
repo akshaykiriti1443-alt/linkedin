@@ -381,6 +381,39 @@ html[data-embed="1"] .embedbar{display:flex;justify-content:flex-end}
 .embedjobs{display:inline-flex;align-items:center;gap:8px;margin-bottom:12px;padding:4px 12px;border-radius:999px;background:var(--accent-soft);
   color:var(--accent-text);font:600 13px/1.4 var(--font);text-decoration:none;box-shadow:0 0 0 1px var(--ring-card)}
 
+/* ---------- fetch engine (DESIGN-FETCH.md 5): read mode, layers, Test my connection, Fetch health ---------- */
+fieldset.radios{border:0;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;min-width:0}
+.radio-row{display:flex;gap:12px;align-items:flex-start;border:1.5px solid var(--line);border-radius:10px;padding:12px 14px;cursor:pointer;background:var(--panel);min-width:0}
+.radio-row:hover{border-color:var(--accent)}
+.radio-row:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
+.radio-row input{margin:4px 0 0;accent-color:var(--accent);flex:none;width:18px;height:18px}
+.radio-row .hint{font-size:13.5px}
+.layer{display:flex;gap:10px;align-items:flex-start;min-width:0}
+.layer .t{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}
+.lamp{width:10px;height:10px;border-radius:50%;background:var(--muted);flex:none;margin-top:7px}
+.lamp.ok{background:var(--ok)}.lamp.warn{background:var(--warn)}.lamp.bad{background:var(--bad)}.lamp.off{background:var(--line)}
+.readline{margin-top:-2px}
+.verdict{border:2px solid var(--warn);background:var(--warn-soft);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:6px;min-width:0}
+.verdict.ok{border-color:var(--ok);background:var(--ok-soft)}
+.verdict.bad{border-color:var(--bad);background:var(--bad-soft)}
+.verdict h2{font-size:19px}
+tr.group th{background:var(--panel);color:var(--ink);font-size:13.5px;padding-top:12px}
+td .pill{align-self:flex-start}
+.switch{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;cursor:pointer;color:var(--ink);white-space:nowrap}
+.switch input{width:auto;margin:0;accent-color:var(--accent)}
+.docids{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:760px){.docids{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:620px){
+  table.probe thead{display:none}
+  table.probe,table.probe tbody,table.probe tr,table.probe td,table.probe th{display:block;width:100%}
+  table.probe tr{border-bottom:1px solid var(--line);padding:8px 10px}
+  table.probe tr:last-child{border-bottom:0}
+  table.probe tr.group{padding:0}
+  table.probe td{border:0;padding:2px 0;display:grid;grid-template-columns:72px minmax(0,1fr);gap:8px;text-align:left}
+  table.probe td::before{content:attr(data-label);color:var(--muted);font-size:12.5px;font-weight:600}
+  table.probe td.num{text-align:left}
+}
+
 /* ---------- print (output print view uses the server's print page; this only hides chrome) ---------- */
 @media print{.nav,.noprint,.embedbar{display:none!important}.app{display:block}.main{padding:0}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}

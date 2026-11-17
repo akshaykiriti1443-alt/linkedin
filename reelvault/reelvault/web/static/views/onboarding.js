@@ -86,7 +86,7 @@ async function step1(body, next, skip, token) {
 async function step2(body, next, skip, token) {
   const box = h("div", {class: "stack"});
   const after = h("div", {class: "stack"});
-  body.append(h("h1", "Connect Chrome"), h("p", {class: "muted"}, "ReelVault reads Instagram through your own browser, with your own login."), box, after);
+  body.append(h("h1", "Connect Chrome"), h("p", {class: "muted"}, "ReelVault reads Instagram in your own browser. It reads public reels without your login first."), box, after);
   const ready = async () => {
     const [st, pr, ar] = await Promise.all([get("/api/ext/status"), get("/api/profile"), get("/api/accounts")]);
     if (S.view !== token) return;

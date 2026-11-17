@@ -253,6 +253,9 @@ async function health(view, {token}) {
     d.last_backup && d.last_backup.copy_ok === false ? h("p", {class: "msg err"}, "The off-site copy failed. Check BACKUP_COPY_CMD in deploy/.env, or copy the backups from the server (deploy/DEPLOY.md, Backups).") : null));
   } else view.append(empty(s.error));
   if (hz.ok) view.append(h("p", {class: "small muted"}, `Version ${hz.data.version} · database ${hz.data.db}.`));
+  const fetchBox = h("div", {class: "stack", id: "fetch-health-box"});
+  view.append(fetchBox);
+  await fetchHealth(fetchBox, token);
   if (ig.ok) {
     const d = ig.data;
     view.append(h("section", {class: "panel"}, h("h2", "Instagram reading"),
@@ -264,6 +267,111 @@ async function health(view, {token}) {
     cf.ok && cf.data.enabled === false ? h("p", {class: "muted"}, cf.data.message) :
     cf.ok ? (arr(cf.data.formats).length ? h("ul", arr(cf.data.formats).map(f => h("li", `${f.label}: ${f.members_using} members, ${x(f.lift_median)} typical lift`))) : h("p", {class: "muted"}, "Not enough members yet (each row needs 5 or more).")) :
       h("p", {class: "muted"}, cf.error)));
+}
+
+// ------------------------------------------------------------------------------------------------ fetch health (DESIGN-FETCH.md 5.4)
+const LAYER_NAME = {logged_out: "Without login", logged_in: "With login", mixed: "Both"};
+const VERIFIED = {source: "Seen in open-source tools", guess: "Our guess", built: "Built and tested"};
+const LO_STATE = {ok: ["Works", "ok"], cooling: ["Waiting", "warn"], off: ["Old extension", ""]};
+const VERDICT_SHORT = {best: "Safest way works", partial: "Works in part", login_needed: "Needs the login", nothing: "Nothing works"};
+const DOC_ID_KEYS = [["lo_posts_gql", "Posts list"], ["lo_reels_gql", "Reels list"], ["lo_post_gql", "Reel detail"], ["lo_media_gql", "Reel detail, second way"]];
+const pct = v => (v === null || v === undefined ? "—" : Math.round(v * 100) + "%");
+/** "14:05" today, else "18 Nov 14:05". */
+function when(iso) {
+  const t = new Date(iso);
+  if (isNaN(t)) return "—";
+  const time = t.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+  return t.toDateString() === new Date().toDateString() ? time : `${t.toLocaleDateString("en-GB", {day: "numeric", month: "short"})} ${time}`;
+}
+
+async function fetchHealth(box, token) {
+  const r = await get("/api/admin/fetch-health", {quiet: true});
+  if (S.view !== token) return;
+  if (r.status === 404) { clear(box); return; }
+  const redraw = () => fetchHealth(box, token);
+  if (!r.ok) { clear(box, h("section", {class: "panel", id: "fetch-health"}, h("h2", "Fetch health"), h("p", {class: "msg err"}, r.error))); return; }
+  const d = r.data;
+  const strategies = arr(d.strategies);
+  const layers = Object.fromEntries(arr(d.layers).map(l => [l.id, l]));
+  const toggle = s => {
+    if (!s.can_switch && s.layer !== "logged_out") return h("span", {class: "muted"}, "—");
+    const i = h("input", {type: "checkbox", checked: !!s.enabled, "aria-label": `${s.label}: on or off`, dataset: {strategy: s.id}, onchange: async e => {
+      const el = e.currentTarget;
+      el.disabled = true;
+      const a = await post("/api/admin/fetch-health/strategy", {strategy: s.id, enabled: el.checked});
+      toast(a.ok ? (el.checked ? `${s.label} is on.` : `${s.label} is off for everyone.`) : a.error);
+      redraw();
+    }});
+    return h("label", {class: "switch"}, i, s.enabled ? "On" : "Off");
+  };
+  const offText = s => !s.off ? null : s.off.until ? `Off until ${when(s.off.until)} (${s.off.reason === "admin" ? "by you" : "by itself"})` : `Off (${s.off.reason === "admin" ? "by you" : "by itself"})`;
+  const stratRows = strategies.map(s => {
+    const total = (s.ok || 0) + (s.partial || 0) + (s.blocked || 0) + (s.error || 0);
+    return h("tr", {dataset: {strategy: s.id}},
+      h("td", h("div", {class: "stack tight"}, h("b", s.label || s.id), h("span", {class: "small muted"}, s.id),
+        h("span", {class: "small muted"}, VERIFIED[s.verified] || s.verified || ""))),
+      h("td", LAYER_NAME[s.layer] || s.layer),
+      h("td", {class: "num"}, total ? h("div", {class: "stack tight"}, pct(s.rate), h("span", {class: "small muted"}, `${num(s.ok)} of ${num(total)}`)) : "—"),
+      h("td", {class: "num"}, num(s.devices || 0)),
+      h("td", s.last_ok_at ? ago(s.last_ok_at) : "never"),
+      h("td", s.last_blocked_at ? h("div", {class: "stack tight"}, ago(s.last_blocked_at), s.last_code ? h("span", {class: "small muted"}, nice(s.last_code)) : null) : "never"),
+      h("td", h("div", {class: "stack tight"}, toggle(s), offText(s) ? h("span", {class: "small muted"}, offText(s)) : null)));
+  });
+  // settings: default read mode, the test account, doc_ids
+  const st = d.settings || {};
+  const modeSel = select([["auto", "Safest first"], ["logged_in_only", "Logged-in only"], ["logged_out_only", "Logged-out only"]], st.default_read_mode || "auto", {id: "fetch-default-mode"});
+  const handleIn = h("input", {id: "fetch-probe-handle", value: st.probe_handle || "instagram"});
+  const docIns = DOC_ID_KEYS.map(([k, label]) => {
+    const i = h("input", {id: "docid-" + k, value: arr((st.doc_ids || {})[k]).join(", "), inputmode: "numeric", placeholder: "Built-in number", dataset: {key: k}});
+    return [k, i, field(`${label} (${k})`, i)];
+  });
+  const sOut = msg();
+  const devices = arr(d.devices);
+  const blocks = arr(d.recent_blocks);
+  clear(box, h("section", {class: "panel", id: "fetch-health"},
+    h("div", {class: "panel-head"}, h("h2", "Fetch health"), h("span", {class: "small muted"}, `Last ${d.window_h || 24} hours`)),
+    h("p", {class: "hint"}, "How each way of reading Instagram works in members' Chrome. Turn a way off when Instagram blocks it for everyone."),
+    h("div", {class: "nums", id: "fetch-layers"}, ["logged_out", "logged_in", "mixed"].map(id => {
+      const l = layers[id] || {pulls: 0, reels: 0};
+      return h("div", {dataset: {layer: id}}, h("b", `${num(l.pulls)} ${l.pulls === 1 ? "pull" : "pulls"}`),
+               `${LAYER_NAME[id]} · ${num(l.reels)} ${l.reels === 1 ? "reel" : "reels"}`);
+    })),
+    h("div", {class: "tablewrap"}, h("table", {id: "fetch-strategies"},
+      h("thead", null, h("tr", null, h("th", "Way"), h("th", "Layer"), h("th", {class: "num"}, "Works"), h("th", {class: "num"}, "Devices"),
+        h("th", "Last ok"), h("th", "Last block"), h("th", "On"))),
+      h("tbody", null, stratRows))),
+    h("h3", "Members' Chrome"),
+    devices.length ? h("div", {class: "tablewrap"}, h("table", {id: "fetch-devices"},
+      h("thead", null, h("tr", null, h("th", "Member"), h("th", "Version"), h("th", "Without login"), h("th", "Last test"), h("th", "Last seen"))),
+      h("tbody", null, devices.map(v => {
+        const [label, kind] = LO_STATE[v.lo_state] || [v.lo_state || "—", ""];
+        return h("tr", null, h("td", v.user_email || v.device_id), h("td", v.version || "—"),
+          h("td", h("div", {class: "stack tight"}, pill(label, kind), v.lo_cooldown_until ? h("span", {class: "small muted"}, "until " + when(v.lo_cooldown_until)) : null)),
+          h("td", VERDICT_SHORT[v.last_probe_verdict] || (v.last_probe_verdict ? nice(v.last_probe_verdict) : "No test yet")),
+          h("td", ago(v.last_seen_at)));
+      })))) : h("p", {class: "muted"}, "No member has connected Chrome yet."),
+    h("h3", "Last blocks"),
+    blocks.length ? h("ul", {class: "stack tight", id: "fetch-blocks"}, blocks.slice(0, 20).map(b => h("li", {class: "small"},
+      `${ago(b.at)} · ${b.strategy || "?"} · ${nice(b.code || "?")}${b.http ? " (HTTP " + b.http + ")" : ""}${b.device_id ? " · " + b.device_id : ""}`)))
+      : h("p", {class: "muted"}, "No blocks. Good."),
+    h("details", {class: "fold", id: "fetch-settings"}, h("summary", "Settings and doc_ids"),
+      h("div", {class: "stack"},
+        h("div", {class: "grid2"}, field("How new members read", modeSel, "Members can change this for themselves in Settings."),
+          field("Account for the test", handleIn, "A big public account. The test reads it first.")),
+        h("p", {class: "hint"}, "Instagram changes these query numbers every few weeks. Paste new ones here, separated by commas. Leave a box empty to use the built-in number."),
+        h("div", {class: "docids"}, docIns.map(x => x[2])),
+        sOut,
+        h("div", {class: "row"}, h("button", {type: "button", id: "fetch-settings-save", onclick: async e => {
+          const doc = {};
+          for (const [k, i] of docIns) {
+            const ids = i.value.split(/[\s,]+/).map(v => v.trim()).filter(Boolean);
+            if (ids.some(v => !/^\d{10,24}$/.test(v))) { say(sOut, {error: "A doc_id has 10 to 24 digits."}); i.focus(); return; }
+            doc[k] = ids;
+          }
+          const a = await busy(e.currentTarget, () => put("/api/admin/fetch-health/settings",
+            {default_read_mode: modeSel.value, probe_handle: handleIn.value.trim().replace(/^@/, ""), doc_ids: doc}));
+          say(sOut, a, "Saved. Chrome picks it up on its next check.");
+        }}, "Save"))))));
 }
 
 // ------------------------------------------------------------------------------------------------ support

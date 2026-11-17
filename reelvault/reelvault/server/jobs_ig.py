@@ -9,6 +9,8 @@ Public API (other packages call these):
     request_page_read(user_id, source_id, kind, url) -> job_id                             # page_read (WP7)
     schedule_need_extension(user_id) -> job_id | None       # reels with media_state=need_extension -> ig_videos
     ig_health() -> dict                                     # admin "Instagram health" (5.9)
+    ingest_lo(user_id, job, body, device=None) -> dict      # logged-out items of a pull (DESIGN-FETCH.md 4.2); the
+                                                            # one entry point for the extension AND a later fetcher
 
 Everything the extension uploads is handled here (api_ext.py only does HTTP): ingest_items, save_video, save_page,
 save_member_bio, finish, fail, progress, lease. Ids are digit strings; igparse is the only interpreter of fields.
@@ -26,7 +28,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 
 from .. import igparse
-from . import db, jobs, ratelimit
+from . import db, fetch, jobs, ratelimit
 from .errors import ApiError, bad_input, not_found
 from .settings import EXTENSION_MIN, get_settings
 
@@ -34,8 +36,10 @@ log = logging.getLogger("reelvault.jobs_ig")
 
 # ============================================================================================== contract constants
 
-EXT_KINDS = ("ig_pull", "ig_profile", "ig_videos", "ig_discover", "ig_check", "page_read")
-IG_KINDS = ("ig_pull", "ig_profile", "ig_videos", "ig_discover", "ig_check")  # touch Instagram
+EXT_KINDS = ("ig_pull", "ig_profile", "ig_videos", "ig_discover", "ig_check", "ig_probe", "page_read")
+IG_KINDS = ("ig_pull", "ig_profile", "ig_videos", "ig_discover", "ig_check", "ig_probe")  # touch Instagram
+PLAN_KINDS = ("ig_pull", "ig_videos", "ig_profile")    # jobs that get a `plan` at lease time (DESIGN-FETCH.md 4.1)
+LOGIN_ONLY_KINDS = ("ig_discover", "ig_check")         # no logged-out way exists for these
 PULL_TARGET = 100
 PAGE_CAP = 12
 LEASE_S = 300
@@ -43,10 +47,11 @@ IG_MAX_ATTEMPTS = 8
 
 PACING = {"gap_ms": [4000, 9000], "page_gap_ms": [6000, 12000], "cdn_gap_ms": [2000, 5000],
           "retry_ms": [30000, 120000], "hour_max": 120, "day_max": 400, "media_info_max": 30, "cdn_day_max": 150,
-          "discover_day_max": 60, "page_read_day_max": 5}
+          "discover_day_max": 60, "page_read_day_max": 5, **fetch.LO_PACING}
 # RV_TEST_PACING=1 (tests only): short gaps. Only an extension built with BUILD="test" accepts them; store and ZIP
 # builds always keep the stricter of their own numbers and the server's (5.6).
-TEST_PACING = dict(PACING, gap_ms=[50, 100], page_gap_ms=[50, 100], cdn_gap_ms=[50, 100], retry_ms=[200, 400])
+TEST_PACING = dict(PACING, gap_ms=[50, 100], page_gap_ms=[50, 100], cdn_gap_ms=[50, 100], retry_ms=[200, 400],
+                   **{k: v for k, v in fetch.LO_TEST_PACING.items() if v != fetch.LO_PACING[k]})
 
 HANDLE_RE = re.compile(r"^[a-z0-9._]{1,30}$")
 PK_RE = re.compile(r"^\d{1,20}$")
@@ -62,7 +67,10 @@ PULL_STOP_REASONS = ("target_reached", "no_more", "known_reel", "page_cap", "rat
                      "challenge", "error", "canceled")
 RECOVERIES = ("feed_oldest_pk", "top_skip_known", "page_size_12")
 FAIL_CODES = ("rate_limited", "signed_out", "challenge", "warning", "not_found", "private", "http_error",
-              "parse_error", "permission_denied", "bad_job", "budget")
+              "parse_error", "permission_denied", "bad_job", "budget", "lo_blocked")
+LO_BLOCK_CLASSES = ("rate", "challenge", "login_wall", "changed", "empty", "no_views")
+LO_SKIPPED_WAIT_MIN = 30     # a "block" report with no real call behind it: wait this long, no cooldown
+LO_UPLOAD_CAP = 80          # logged-out uploads per lease (the extension's own budget is far lower)
 FORBIDDEN_KEYS = {"cookie", "cookies", "sessionid", "csrftoken"}
 VIDEO_MAX = 50 * 1024 * 1024
 COVER_MAX = 2 * 1024 * 1024
@@ -161,11 +169,15 @@ def _server_count(conn, scope: str, what: str, window: str) -> int:
     return int(row[0]) if row else 0
 
 
-def _bump_calls(dev, *, ig: int = 0, cdn: int = 0, conn=None) -> None:
-    """Server-side count of Instagram calls it can infer (pages, profile lookups, videos), 5.6. Per member."""
+def _bump_calls(dev, *, ig: int = 0, cdn: int = 0, lo: int = 0, conn=None) -> None:
+    """Server-side count of Instagram calls it can infer (pages, profile lookups, videos), 5.6. Per member.
+    lo = logged-out calls: they count in their own budget AND in the hour and day budgets (DESIGN-FETCH.md 2.4)."""
     scope = ig_scope(dev)
+    ig += lo
     for window in ("hour", "day"):
         wk = ratelimit.window_key(window)
+        if lo:
+            db.bump(db.usage_counters, {"scope": scope, "key": "lo_calls", "window": wk}, conn=conn, count=lo)
         if ig:
             db.bump(db.usage_counters, {"scope": scope, "key": "ig_calls", "window": wk}, conn=conn, count=ig)
         if cdn and window == "day":
@@ -193,6 +205,9 @@ def carried_state(conn, user_id: str) -> dict:
         st["cooldown_until"], st["cooldown_reason"] = db.iso(best[0]), best[1]
     if rows:
         st["budget"] = dict(db.DEVICE_STATE_DEFAULT["budget"], **(device_state(rows[0]).get("budget") or {}))
+        fs = fetch.device_fetch_state(rows[0])   # logged-out cooldowns and switch-offs survive a re-pair too
+        if fetch.lo_cooling(fs, now) or fetch.device_off(fs, now) or fs.get("lo_blocks"):
+            st["fetch"] = fs
     return st
 
 
@@ -354,6 +369,8 @@ def start_pull(user_id: str, account_id: str, mode: str, *, run_after=None, prio
         if active:
             return active[0]
         payload = _pull_payload(acc, mode)
+        read = fetch.read_mode_for(conn, user_id)      # the member's choice when the pull starts (4.1)
+        payload["read"] = read
         pull_id = db.new_id("pul")
         paired = conn.execute(select(db.devices.c.id).where(
             db.devices.c.user_id == user_id, db.devices.c.kind == "extension",
@@ -366,7 +383,8 @@ def start_pull(user_id: str, account_id: str, mode: str, *, run_after=None, prio
                               max_attempts=IG_MAX_ATTEMPTS, conn=conn,
                               progress={"done": 0, "total": PULL_TARGET, "message": msg})
         conn.execute(db.pulls.insert().values(id=pull_id, user_id=user_id, account_id=account_id, job_id=job_id,
-                                              mode=mode, from_max_id=payload.get("max_id"), run_after=run_after))
+                                              mode=mode, from_max_id=payload.get("max_id"), run_after=run_after,
+                                              read_mode=read, layers={}))
         if run_after is not None and run_after > _now() and acc.status == "new":
             conn.execute(db.accounts.update().where(db.accounts.c.id == account_id).values(status="scheduled"))
     return job_id
@@ -421,9 +439,21 @@ def request_videos(user_id: str, reel_ids: list[str]) -> str | None:
             if not (PK_RE.match(row.ig_pk or "") and CODE_RE.match(row.code or "")):
                 continue
             todo.append(row)
+        # The reel's account handle lets the extension read one logged-out profile page for a fresh lsd token.
+        acc_ids = list({x.account_id for x in todo if x.account_id})
+        handles = dict(conn.execute(select(db.accounts.c.id, db.accounts.c.handle).where(
+            db.accounts.c.user_id == user_id, db.accounts.c.id.in_(acc_ids))).all()) if acc_ids else {}
+
+        def item(x):
+            it = {"reel_id": x.id, "ig_pk": x.ig_pk, "code": x.code}
+            hd = handles.get(x.account_id)
+            if isinstance(hd, str) and HANDLE_RE.match(hd):
+                it["handle"] = hd
+            return it
+
         for i in range(0, len(todo), 30):
             chunk = todo[i:i + 30]
-            payload = {"items": [{"reel_id": x.id, "ig_pk": x.ig_pk, "code": x.code} for x in chunk],
+            payload = {"items": [item(x) for x in chunk],
                        "refresh_urls": True, "want_cover": any(not x.cover_path for x in chunk)}
             jid = jobs.enqueue(user_id, "ig_videos", payload, executor="extension", priority=40,
                                max_attempts=IG_MAX_ATTEMPTS, conn=conn)
@@ -539,6 +569,22 @@ def payload_problem(kind: str, p: Any) -> str | None:
     def pk_ok(v, opt=True):
         return (opt and v is None) or (isinstance(v, str) and PK_RE.match(v))
 
+    if kind in PLAN_KINDS:      # DESIGN-FETCH.md 3.3 / 4.1: `read` and `plan` are optional (old jobs have none)
+        if p.get("read", "auto") not in fetch.READ_MODES:
+            return "read"
+        if p.get("plan") is not None and fetch.plan_problem(p["plan"]):
+            return "plan"
+    if kind == "ig_probe":
+        if not (isinstance(p.get("probe_id"), str) and RVID_RE.match(p["probe_id"])):
+            return "probe_id"
+        hs = p.get("handles")
+        if not (isinstance(hs, list) and 1 <= len(hs) <= 2
+                and all(isinstance(h, str) and HANDLE_RE.match(h) for h in hs)):
+            return "handles"
+        want = p.get("want")
+        if not (isinstance(want, list) and want and all(w in fetch.ALL_STRATEGIES for w in want)):
+            return "want"
+        return None
     if kind == "ig_pull":
         if not (isinstance(p.get("account_id"), str) and RVID_RE.match(p["account_id"])):
             return "account_id"
@@ -568,6 +614,8 @@ def payload_problem(kind: str, p: Any) -> str | None:
             if not (isinstance(it, dict) and isinstance(it.get("reel_id"), str) and RVID_RE.match(it["reel_id"])
                     and pk_ok(it.get("ig_pk"), False) and isinstance(it.get("code"), str)
                     and CODE_RE.match(it["code"])):
+                return "items"
+            if "handle" in it and not (isinstance(it["handle"], str) and HANDLE_RE.match(it["handle"])):
                 return "items"
     elif kind == "ig_discover":
         if p.get("mode") not in ("search", "similar"):
@@ -613,12 +661,47 @@ def ext_job(row) -> dict:
             "attempt": row.attempts}
 
 
-def _prepare_lease(conn, job) -> bool:
+def _hold(conn, job, message: str, until: datetime) -> None:
+    """Undo a lease without spending an attempt: the job waits (with a plain message) until `until`."""
+    conn.execute(db.jobs.update().where(db.jobs.c.id == job.id).values(
+        state="waiting", lease_owner=None, lease_until=None, run_after=until, error_message=message,
+        attempts=func.max(db.jobs.c.attempts - 1, 0) if db.is_sqlite() else func.greatest(db.jobs.c.attempts - 1, 0),
+        progress=dict(job.progress or {}, message=message)))
+
+
+def _prepare_lease(conn, job, ctx: dict | None = None) -> bool:
     """Runs inside lease_external's BEGIN IMMEDIATE: refresh an ig_pull's payload from its account (the cursor may
-    have moved since the job was queued) and reset this lease's ingest scratch."""
+    have moved since the job was queued), write the `plan` (which layers this job may use on this device right
+    now, DESIGN-FETCH.md 4.1) and reset this lease's ingest scratch. A pull that no layer can read goes back to
+    waiting (the caller sees state != running and asks for the next job)."""
+    if job.kind == "ig_probe":
+        conn.execute(db.fetch_probes.update().where(db.fetch_probes.c.job_id == job.id,
+                                                    db.fetch_probes.c.state == "waiting").values(state="running"))
+        return True
+    plan = None
+    if ctx is not None and job.kind in LOGIN_ONLY_KINDS and ctx["read"] == "logged_out_only":
+        _hold(conn, job, fetch.MSG_NEEDS_LOGIN, ctx["hold_until"])   # "never uses your login" holds for every job
+        return True
+    if ctx is not None and job.kind in PLAN_KINDS:
+        p0 = dict(job.payload or {})
+        read = ctx["read"]          # the member's choice right now (a queued job follows a later change too)
+        if job.kind == "ig_pull" and p0.get("read") != read:
+            conn.execute(db.pulls.update().where(db.pulls.c.job_id == job.id).values(read_mode=read))
+        plan = fetch.make_plan(job.kind, p0, read, ctx)
+        if not plan["lo"] and not plan["li"]:
+            _hold(conn, job, fetch.hold_message(read, ctx, confirmed=ctx.get("confirmed", True),
+                                                li_msg=ctx.get("li_msg")), ctx["hold_until"])
+            return True
+        p0["read"], p0["plan"] = read, plan
+        if job.kind != "ig_pull":
+            conn.execute(db.jobs.update().where(db.jobs.c.id == job.id).values(payload=p0))
+            return True
+        job_payload = p0
+    else:
+        job_payload = dict(job.payload or {})
     if job.kind != "ig_pull":
         return True
-    p = dict(job.payload or {})
+    p = job_payload
     acc = conn.execute(select(db.accounts).where(db.accounts.c.id == p.get("account_id"),
                                                  db.accounts.c.user_id == job.user_id)).first()
     if acc is None:
@@ -638,7 +721,8 @@ def _prepare_lease(conn, job) -> bool:
     start = {"source": p.get("cursor_source", "clips") if p.get("mode") == "next" else "clips",
              "max_id": p.get("max_id") if p.get("mode") == "next" else None}
     scratch = dict((job.result or {}).get("ingest") or {})
-    scratch.update({"lease_pages": 0, "req": start})
+    scratch.update({"lease_pages": 0, "req": start, "lo_uploads": 0,
+                    "stage": "lo" if (plan or {}).get("lo") else "li"})
     keep = {k: v for k, v in (job.result or {}).items() if k == "http_error_rounds"}   # rounds survive a lease
     conn.execute(db.jobs.update().where(db.jobs.c.id == job.id).values(payload=p, result={"ingest": scratch, **keep}))
     conn.execute(db.pulls.update().where(db.pulls.c.job_id == job.id, db.pulls.c.started_at.is_(None))
@@ -646,8 +730,9 @@ def _prepare_lease(conn, job) -> bool:
     return True
 
 
-def lease(dev, kinds: Any, budget: Any) -> dict:
-    """POST /api/ext/v2/jobs/lease. Applies the confirm gate, cooldown, budget and daily caps (5.2, 5.6, 5.7)."""
+def lease(dev, kinds: Any, budget: Any, lo: Any = None) -> dict:
+    """POST /api/ext/v2/jobs/lease. Applies the confirm gate, cooldown, budget and daily caps (5.2, 5.6, 5.7),
+    and decides which read layers each job may use on this device (`plan`, DESIGN-FETCH.md 4.1)."""
     user_id = dev.user_id
     req = [k for k in (kinds if isinstance(kinds, list) else []) if k in EXT_KINDS]
     try:
@@ -659,27 +744,76 @@ def lease(dev, kinds: Any, budget: Any) -> dict:
         dev = conn.execute(select(db.devices).where(db.devices.c.id == dev.id)).first()
         st = device_state(dev)
         rep = _clean_budget(budget)
+        fs = fetch.fetch_state(st)
+        lo_rep = fetch.clean_lo_budget(budget)
+        dirty = bool(rep)
         if rep:
             st["budget"] = dict(st["budget"], **rep)
+        if lo_rep:
+            fs["budget"] = dict(fs["budget"], **lo_rep)
+            dirty = True
+        if fetch.merge_ext_lo(fs, lo, now):     # the extension's own cooldowns: the later time wins (3.3)
+            dirty = True
+        if dirty:
+            st["fetch"] = fs
             conn.execute(db.devices.update().where(db.devices.c.id == dev.id).values(state=st))
         bv = budget_view(conn, dev, st)
         page_reads_today = _server_count(conn, user_id, "page_read_lease", "day")
-    reason = None
-    ig_ok = True
+        lo_used = (_server_count(conn, ig_scope(dev), "lo_calls", "hour"),
+                   _server_count(conn, ig_scope(dev), "lo_calls", "day"))
+        reason = None
+        ig_ok = True
+        li_cd = cooldown_active(st, now)
+        budget_left = not (bv["hour_used"] >= bv["hour_max"] or bv["day_used"] >= bv["day_max"])
+        if li_cd:
+            ig_ok, reason = False, "cooldown"
+        elif not is_confirmed(dev):
+            ig_ok, reason = False, "confirm_account"
+        elif not budget_left:
+            ig_ok, reason = False, "budget"
+        # Logged-in work for a job with a plan: today's rule (confirmed, no cooldown, budget left). A stale
+        # "signed out" report does not hold it: the sign-in check at the start of stage 2 settles that, as today.
+        li_ok = ig_ok
+        ctx = fetch.lease_ctx(conn, dev, st, bv, now, li_ok=li_ok, li_cooling=li_cd, lo_used=lo_used)
+        ctx["read"] = fetch.read_mode_for(conn, user_id)
+    lo_only = ctx["read"] == "logged_out_only"
     if needs_update(dev):
         return {"job": None, "poll_after_s": 300, "reason": "update"}
-    if cooldown_active(st, now):
-        ig_ok, reason = False, "cooldown"
-    elif not is_confirmed(dev):
-        ig_ok, reason = False, "confirm_account"
-    elif bv["hour_used"] >= bv["hour_max"] or bv["day_used"] >= bv["day_max"]:
-        ig_ok, reason = False, "budget"
+    ctx["confirmed"] = is_confirmed(dev)
+    if li_cd:
+        ctx["li_msg"] = MSG.get(st.get("cooldown_reason") or "", MSG["http_error"])
+    elif not ctx["confirmed"]:
+        ctx["li_msg"] = MSG["confirm_account"]
+    elif not budget_left:
+        ctx["li_msg"] = MSG["budget"]
+    elif not li_ok:
+        ctx["li_msg"] = MSG["signed_out"]
+    else:
+        ctx["li_msg"] = None
+    ends = [x for x in (_parse_dt(st.get("cooldown_until")) if li_cd else None,
+                        _parse_dt(ctx["fs"].get("lo_cooldown_until")) if fetch.lo_cooling(ctx["fs"], now) else None)
+            if x is not None]
+    # A held pull is looked at again when the cooldown ends, else in a minute (no attempt is spent).
+    ctx["hold_until"] = max(now + timedelta(seconds=60), min(min(ends) if ends else now + timedelta(seconds=60),
+                                                             now + timedelta(hours=6)))
     allowed = []
     for k in req:
         if k == "page_read":
             if page_reads_today < PACING["page_read_day_max"]:
                 allowed.append(k)
-        elif ig_ok:
+        elif k == "ig_pull":
+            # A pull runs when the login may be used, or when this device can read without it (4.1). The plan
+            # of each job (its read mode, its pull mode) is checked in _prepare_lease.
+            # A member who reads with the login only never gets a pull that only the logged-out layer could run.
+            if ig_ok or lo_only or (ctx["lo_ok"] and ctx["read"] != "logged_in_only"):
+                allowed.append(k)
+        elif k == "ig_probe":
+            # "Test my connection" also runs signed out and unconfirmed. Only a logged-in block holds it (4.4).
+            if fetch.supports_lo(dev) and not ctx["li_block"] and budget_left:
+                allowed.append(k)
+        elif ig_ok or lo_only:
+            # logged_out_only: the job is planned without the login in _prepare_lease, or it waits there with a
+            # plain message. The member's login is never used in that mode.
             if k == "ig_videos" and bv["cdn_day_used"] >= bv["cdn_day_max"]:
                 continue
             allowed.append(k)
@@ -688,10 +822,13 @@ def lease(dev, kinds: Any, budget: Any) -> dict:
             schedule_need_extension(user_id)
         except Exception:  # noqa: BLE001
             log.exception("schedule_need_extension failed")
-    for _ in range(6):
-        row = jobs.lease_external(user_id, "extension", allowed, dev.id, LEASE_S, prepare=_prepare_lease)
+    for _ in range(8):
+        row = jobs.lease_external(user_id, "extension", allowed, dev.id, LEASE_S,
+                                  prepare=lambda c, j: _prepare_lease(c, j, ctx))
         if row is None:
             break
+        if row.state != "running":      # _prepare_lease put it back to waiting: no layer can read it right now
+            continue
         problem = payload_problem(row.kind, row.payload)
         if row.kind == "ig_pull" and problem is None:
             with db.tx(immediate=False) as conn:
@@ -710,8 +847,12 @@ def lease(dev, kinds: Any, budget: Any) -> dict:
                                         "window": ratelimit.window_key("day")}, count=1)
         if row.kind == "ig_pull":
             jobs.set_progress(row.id, 0, PULL_TARGET, "Reading reels", owner=dev.id)
-        return {"job": ext_job(row)}
-    out: dict = {"job": None, "poll_after_s": 30}
+        job = ext_job(row)
+        if not fetch.supports_lo(dev):      # an extension before 2.1.0 gets exactly the payload it always got
+            job["payload"].pop("read", None)
+            job["payload"].pop("plan", None)
+        return {"job": job, "lo": fetch.lo_view(ctx["fs"], now)}
+    out: dict = {"job": None, "poll_after_s": 30, "lo": fetch.lo_view(ctx["fs"], now)}
     if reason:
         out["reason"] = reason
     return out
@@ -764,12 +905,21 @@ def progress(dev, job_id: str, body: dict) -> dict:
         d = conn.execute(select(db.devices).where(db.devices.c.id == dev.id)).first()
         vals = apply_ig_report(conn, d, body.get("ig"))
         rep = _clean_budget(body.get("budget"))
-        if rep:
+        lo_rep = fetch.clean_lo_budget(body.get("budget"))
+        if rep or lo_rep:
             st = dict(vals.get("state") or device_state(d))
             st["budget"] = dict(st["budget"], **rep)
+            if lo_rep:
+                fs = fetch.fetch_state(st)
+                fs["budget"] = dict(fs["budget"], **lo_rep)
+                st["fetch"] = fs
             conn.execute(db.devices.update().where(db.devices.c.id == dev.id).values(state=st))
         d = conn.execute(select(db.devices).where(db.devices.c.id == dev.id)).first()
-        if row.kind in IG_KINDS and not is_confirmed(d):
+        # The confirm gate guards the member's LOGIN. A job that reads logged-out only (plan.li false) and
+        # "Test my connection" run without it (DESIGN-FETCH.md 4.1, 4.4).
+        plan = (row.payload or {}).get("plan")
+        uses_login = row.kind != "ig_probe" and not (isinstance(plan, dict) and plan.get("li") is False)
+        if row.kind in IG_KINDS and uses_login and not is_confirmed(d):
             conn.execute(db.jobs.update().where(db.jobs.c.id == job_id).values(
                 state="waiting", lease_owner=None, lease_until=None,
                 attempts=func.max(db.jobs.c.attempts - 1, 0) if db.is_sqlite() else func.greatest(db.jobs.c.attempts - 1, 0),
@@ -848,13 +998,54 @@ def _reel_values(ri: igparse.ReelIn, acc, now: datetime) -> dict:
                 video_url_expires_at=ri.video_url_expires_at, last_seen_at=now)
 
 
+def _lo_update(row, ri: igparse.ReelIn, vals: dict, acc, layer: str, strategy: str | None) -> dict:
+    """What a LOGGED-OUT item may change on a stored reel (DESIGN-FETCH.md 4.2). It never replaces a play count
+    with the smaller logged-out `view_count`, and it never clears a stored value with a missing one."""
+    upd: dict = {"last_seen_at": vals["last_seen_at"]}
+    for k in ("comments", "shares", "reposts", "duration", "has_audio", "video_url", "cover_url",
+              "video_url_expires_at", "followers_at_pull"):
+        if vals[k] is not None:
+            upd[k] = vals[k]
+    if ri.counts_hidden:
+        upd.update(counts_hidden=True, views=None, likes=None, views_field=None, partial=False)
+    else:
+        if ri.likes is not None:
+            upd["likes"] = ri.likes
+        downgrade = (ri.views_field == "view_count" and row.views is not None
+                     and row.views_field in ("play_count", "ig_play_count"))
+        if ri.views is not None and not downgrade:
+            upd.update(views=ri.views, views_field=ri.views_field, counts_hidden=False, partial=ri.partial,
+                       read_layer=layer, read_strategy=strategy)
+    if ri.caption:
+        upd["caption"] = ri.caption
+    if ri.taken_at is not None and (not ri.taken_at_derived or row.taken_at is None):
+        upd["taken_at"] = ri.taken_at
+    if (ri.audio or {}).get("type") not in (None, "unknown"):
+        upd["audio"] = ri.audio
+    if ri.is_collab:
+        upd.update(is_collab=True, coauthors=ri.coauthors)
+    if ri.is_paid_partnership:
+        upd["is_paid_partnership"] = True
+    if ri.role == "owner":
+        upd["account_id"] = acc.id
+        if ri.is_pinned:
+            upd["is_pinned"] = True
+    return upd
+
+
 def upsert_reels(conn, user_id: str, acc, reels_in: list[igparse.ReelIn], *, seen_at: datetime,
-                 remaining: int | None = None, refresh: bool = False) -> dict:
+                 remaining: int | None = None, refresh: bool = False, layer: str = "logged_in",
+                 strategy: str | None = None, since: datetime | None = None) -> dict:
     """Upsert normalized reels of one page for account `acc` (5.8). Returns counters + cut index.
 
     remaining: how many NEW reels this pull may still take (None = no limit); when a page has more new reels than
-    that, the rest of the page is left for the next pull (`cut`)."""
+    that, the rest of the page is left for the next pull (`cut`).
+    layer / strategy: how these reels were read (DESIGN-FETCH.md 4.2). A logged-in page always wins and clears
+    `partial`; a logged-out item only fills in (see _lo_update).
+    since: the pull's start. Reels first stored at or after it are this pull's own and never count as a
+    "known reel" for the refresh rule."""
     r, ra = db.reels, db.reel_accounts
+    logged_in = layer == "logged_in"
     now = _now()
     pks = list(dict.fromkeys(x.ig_pk for x in reels_in))
     existing = {row.ig_pk: row for row in conn.execute(
@@ -865,7 +1056,7 @@ def upsert_reels(conn, user_id: str, acc, reels_in: list[igparse.ReelIn], *, see
         for row in conn.execute(db.scoped(conn, db.accounts, user_id).where(db.accounts.c.ig_pk.in_(owner_pks))).all():
             owner_accs[row.ig_pk] = row
     out = {"new": 0, "updated": 0, "collabs": 0, "known_hit": False, "cut": False, "pk_conflicts": 0,
-           "known": 0, "seen": 0, "older_than_oldest": 0}
+           "known": 0, "seen": 0, "older_than_oldest": 0, "by_strategy": {}}
     done_pks = set()
     for ri in reels_in:
         if ri.ig_pk in done_pks:
@@ -877,22 +1068,31 @@ def upsert_reels(conn, user_id: str, acc, reels_in: list[igparse.ReelIn], *, see
         if ri.role == "coauthor":
             out["collabs"] += 1
         vals = _reel_values(ri, acc, now)
+        rl = ri.layer or layer
+        rs = ri.strategy or strategy
         row = existing.get(ri.ig_pk)
         if row is not None:
             out["known"] += 1
             out["updated"] += 1
-            if refresh and ri.role == "owner" and not ri.is_pinned:
+            own = since is not None and row.first_seen_at is not None and row.first_seen_at >= since
+            # refresh rule: a logged-out item may not know about pins, so it trusts the stored flag (2.2)
+            pinned = ri.is_pinned if logged_in else bool(row.is_pinned)
+            if refresh and ri.role == "owner" and not pinned and not own:
                 out["known_hit"] = True
-            upd = dict(vals)
-            for k in ("views", "likes", "comments", "shares", "reposts"):  # keep a known number over a missing one
-                if upd[k] is None and not ri.counts_hidden:
-                    upd.pop(k)
-            for k in ("video_url", "cover_url", "video_url_expires_at", "followers_at_pull"):
-                if upd[k] is None:
-                    upd.pop(k)
-            if ri.role == "owner":
-                upd["is_pinned"] = ri.is_pinned
-                upd["account_id"] = acc.id  # the owner's account always wins (a collab never flips it back)
+            if logged_in:
+                upd = dict(vals)
+                for k in ("views", "likes", "comments", "shares", "reposts"):  # keep a known number over a missing one
+                    if upd[k] is None and not ri.counts_hidden:
+                        upd.pop(k)
+                for k in ("video_url", "cover_url", "video_url_expires_at", "followers_at_pull"):
+                    if upd[k] is None:
+                        upd.pop(k)
+                if ri.role == "owner":
+                    upd["is_pinned"] = ri.is_pinned
+                    upd["account_id"] = acc.id  # the owner's account always wins (a collab never flips it back)
+                upd.update(partial=False, read_layer=rl, read_strategy=rs)   # the logged-in layer always wins
+            else:
+                upd = _lo_update(row, ri, vals, acc, rl, rs)
             conn.execute(r.update().where(r.c.id == row.id).values(**upd))
             reel_id = row.id
         else:
@@ -905,11 +1105,14 @@ def upsert_reels(conn, user_id: str, acc, reels_in: list[igparse.ReelIn], *, see
                 account_id = owner_accs[ri.owner_pk].id
             ins = dict(vals, id=reel_id, user_id=user_id, account_id=account_id, ig_pk=ri.ig_pk,
                        is_pinned=ri.is_pinned if ri.role == "owner" else False, first_seen_at=now,
-                       media_state="none")
+                       media_state="none", read_layer=rl, read_strategy=rs,
+                       partial=False if logged_in else bool(ri.partial))
             try:
                 with conn.begin_nested():
                     conn.execute(r.insert().values(**ins))
                 out["new"] += 1
+                if rs:
+                    out["by_strategy"][rs] = out["by_strategy"].get(rs, 0) + 1
                 if remaining is not None:
                     remaining -= 1
             except IntegrityError:  # another upload stored it a moment ago (Postgres only; SQLite is serialized)
@@ -924,6 +1127,8 @@ def upsert_reels(conn, user_id: str, acc, reels_in: list[igparse.ReelIn], *, see
         if ri.role == "coauthor" and ri.owner_pk in owner_accs:
             db.upsert(conn, ra, {"reel_id": reel_id, "account_id": owner_accs[ri.owner_pk].id, "user_id": user_id,
                                  "role": "owner", "first_seen_at": now}, do_nothing=True)
+        if not logged_in and ri.partial:
+            continue    # no snapshot without real views: the logged-in top-up of this pull writes it (same seen_at)
         db.upsert(conn, db.reel_snapshots, {"reel_id": reel_id, "seen_at": seen_at, "user_id": user_id,
                                             "views": ri.views, "likes": ri.likes, "comments": ri.comments,
                                             "shares": ri.shares}, do_nothing=True)
@@ -968,11 +1173,195 @@ def _looks_stale(acc, reels_in: list[igparse.ReelIn], known_pks: set[str]) -> bo
 def ingest_items(dev, job_id: str, body: dict) -> dict:
     """POST /jobs/<id>/items for ig_pull, ig_profile (competitor) and ig_check."""
     job = leased_job(dev, job_id, ("ig_pull", "ig_profile", "ig_check"))
-    if job.kind == "ig_check":
-        return _ingest_check(dev, job, body)
-    if job.kind == "ig_profile":
-        return _ingest_profile(dev, job, body)
-    return _ingest_pull(dev, job, body)
+    if job.kind == "ig_pull":
+        paging = body.get("paging") if isinstance(body.get("paging"), dict) else {}
+        if paging.get("source") == "lo":
+            return ingest_lo(dev.user_id, job, body, device=dev)
+        out = _ingest_pull(dev, job, body)
+    elif job.kind == "ig_check":
+        out = _ingest_check(dev, job, body)
+    else:
+        out = _ingest_profile(dev, job, body)
+    lo = _take_fetch_log(dev, job, body)
+    if lo is not None:
+        out["lo"] = lo
+    return out
+
+
+def _take_fetch_log(dev, job, body: dict, *, count_lo: bool = True) -> dict | None:
+    """`fetch_log` of an upload, done or fail (DESIGN-FETCH.md 3.3): count every call in fetch_health and apply
+    the cooldown table. Logged-out calls also count in the member's budgets. Returns the `lo` state for the
+    reply, or None when the body has no log."""
+    log_ = fetch.clean_log(body.get("fetch_log"))
+    if not log_:
+        return None
+    with db.tx() as conn:
+        fs = fetch.apply_log(conn, dev, dev.user_id, log_, job_id=job.id)
+    n = fetch.lo_calls(log_)
+    if count_lo and n:
+        _bump_calls(dev, lo=n)
+    return fetch.lo_view(fs)
+
+
+def _layers_add(layers: Any, layer: str, **adds) -> dict:
+    """pulls.layers with counters added for one layer (DESIGN-FETCH.md 4.3)."""
+    out = {k: dict(v) for k, v in (layers if isinstance(layers, dict) else {}).items() if isinstance(v, dict)}
+    cur = out.setdefault(layer, {})
+    for k, v in adds.items():
+        if isinstance(v, dict):
+            d = dict(cur.get(k) or {})
+            for kk, n in v.items():
+                d[kk] = int(d.get(kk) or 0) + int(n)
+            cur[k] = d
+        elif isinstance(v, int) and not isinstance(v, bool):
+            cur[k] = int(cur.get(k) or 0) + v
+        else:
+            cur[k] = v
+    return out
+
+
+def _partial_left(conn, user_id: str, acc_id: str, since: datetime) -> int:
+    """Reels of this account that this pull touched and that still have no real view count (2.2)."""
+    r = db.reels
+    return int(conn.execute(select(func.count()).select_from(r).where(
+        r.c.user_id == user_id, r.c.account_id == acc_id, r.c.partial.is_(True),
+        r.c.last_seen_at >= since)).scalar() or 0)
+
+
+def _normalize_lo_items(items: Any, account_pk: str | None, layer: str) -> tuple[list[igparse.ReelIn], int]:
+    if not isinstance(items, list):
+        raise bad_input("items must be a list.")
+    if len(items) > 100:
+        raise bad_input("Too many items in one page.")
+    if items and not account_pk:
+        raise bad_input("Send the account (with its pk) in the first upload.")
+    out, dropped = [], 0
+    for it in items:
+        try:
+            ri = igparse.normalize_lo(it, account_pk, layer=layer)
+        except igparse.IgParseError as e:
+            raise bad_input(f"An item is not in the expected shape: {e}.") from None
+        if ri is None:
+            dropped += 1
+        else:
+            out.append(ri)
+    return out, dropped
+
+
+TOP_UP = {"source": "clips", "max_id": None, "skip_known": True, "layer": "logged_in"}
+TOP_UP_PAGES = 4        # a top-up reads at most this many pages past the target to finish partial reels
+
+
+def ingest_lo(user_id: str, job, body: dict, device=None) -> dict:
+    """Logged-out items of an ig_pull: POST /jobs/<id>/items with paging.source "lo" (DESIGN-FETCH.md 4.2).
+
+    The ONE entry point for logged-out data: the extension route calls it with its device, a server-side fetcher
+    (layer 3, not built) will call it with device=None and layer "rented". No cursor bookkeeping happens here:
+    logged-out paging lives in the extension. At `stage_done` the server decides (2.2): stop, or `resume` with a
+    logged-in top-up from the top."""
+    p = job.payload or {}
+    paging = body.get("paging") if isinstance(body.get("paging"), dict) else {}
+    if paging.get("source") != "lo":
+        raise bad_input("paging.source must be lo.")
+    if paging.get("max_id") is not None or paging.get("request_max_id") is not None:
+        raise bad_input("Logged-out uploads carry no cursor.")
+    layer = body.get("layer", "logged_out")
+    if layer != ("logged_out" if device is not None else layer) or layer not in ("logged_out", "rented"):
+        raise bad_input("layer must be logged_out.")
+    strategy = paging.get("strategy")
+    if strategy is not None and strategy not in fetch.LO_STRATEGIES:
+        raise bad_input("Unknown strategy.")
+    lo_stop = paging.get("lo_stop")
+    if lo_stop is not None and lo_stop not in fetch.LO_STOPS:
+        raise bad_input("Unknown lo_stop.")
+    stage_done = paging.get("stage_done") is True
+    a = None
+    if body.get("account") is not None:
+        try:
+            a = igparse.parse_user(body["account"])
+        except igparse.IgParseError as e:
+            raise bad_input(f"The profile is not in the expected shape: {e}.") from None
+    log_ = fetch.clean_log(body.get("fetch_log"))
+    calls = fetch.lo_calls(log_)
+    by_call: dict[str, int] = {}
+    for e in log_:
+        if e["strategy"] in fetch.LO_STRATEGIES and e["status"] != "skipped":
+            by_call[e["strategy"]] = by_call.get(e["strategy"], 0) + 1
+    if not log_ and strategy and (body.get("items") or a is not None):
+        calls, by_call = 1, {strategy: 1}       # an extension that sends no log still made this call
+
+    with db.tx() as conn:
+        acc = _account(conn, user_id, p["account_id"])
+        if a is not None:
+            _check_account_upload(acc, a)
+            _apply_account(conn, user_id, acc, a)
+            acc = _account(conn, user_id, p["account_id"])
+        pull = conn.execute(select(db.pulls).where(db.pulls.c.job_id == job.id,
+                                                   db.pulls.c.user_id == user_id)).first()
+        if pull is None:
+            raise not_found()
+        cur_job = conn.execute(select(db.jobs.c.result).where(db.jobs.c.id == job.id)).first()
+        scratch = dict(((cur_job[0] if cur_job else None) or {}).get("ingest") or {})
+        reels_in, _dropped = _normalize_lo_items(body.get("items") or [], acc.ig_pk, layer)
+        mode = p.get("mode")
+        read = p.get("read") if p.get("read") in fetch.READ_MODES else "auto"
+        plan = p.get("plan") if isinstance(p.get("plan"), dict) else {}
+        target = int(p.get("_pull_target") or p.get("target") or PULL_TARGET)
+        remaining = max(0, target - int(pull.reels_new or 0))
+        seen_at = pull.started_at or _now()
+        res = upsert_reels(conn, user_id, acc, reels_in, seen_at=seen_at, remaining=remaining,
+                           refresh=(mode == "refresh"), layer=layer, strategy=strategy, since=seen_at)
+        new_total = int(pull.reels_new or 0) + res["new"]
+        uploads = int(scratch.get("lo_uploads") or 0) + 1
+        scratch["lo_uploads"] = uploads
+        if res["known_hit"]:
+            scratch["lo_known_hit"] = True
+        if lo_stop:
+            scratch["lo_stop"] = lo_stop
+        adds: dict = {"reels": res["new"], "updated": res["updated"], "calls": calls, "strategies": by_call}
+        if lo_stop:
+            adds["stop"] = lo_stop
+        layers = _layers_add(pull.layers, layer, **adds)
+
+        target_hit = bool(res["cut"] or new_total >= target)
+        refresh_hit = mode == "refresh" and bool(scratch.get("lo_known_hit"))
+        ended = stage_done or target_hit or refresh_hit or uploads >= LO_UPLOAD_CAP
+        partial_n = _partial_left(conn, user_id, acc.id, seen_at) if ended else 0
+        resume = None
+        stop = False
+        if ended:
+            # 2.2: the logged-in top-up fills in what the logged-out stage could not read. It starts from the top;
+            # known reels get their numbers and do not count as new.
+            complete = refresh_hit if mode == "refresh" else (target_hit or (lo_stop == "no_more" and stage_done))
+            want_top_up = read == "auto" and bool(plan.get("li")) and (partial_n > 0 or not complete)
+            if want_top_up:
+                resume = dict(TOP_UP)
+                scratch.update(stage="li", skip_known=True, top_up=True,
+                               req={"source": "clips", "max_id": None})
+            else:
+                stop = True
+                if not layers[layer].get("stop"):
+                    layers[layer]["stop"] = "target" if target_hit else ("refresh_page" if refresh_hit else "budget")
+        conn.execute(db.pulls.update().where(db.pulls.c.id == pull.id).values(
+            reels_new=new_total, reels_updated=int(pull.reels_updated or 0) + res["updated"],
+            collabs_seen=int(pull.collabs_seen or 0) + res["collabs"], layers=layers))
+        conn.execute(db.jobs.update().where(db.jobs.c.id == job.id).values(
+            result={"ingest": scratch},
+            progress={"done": min(new_total, target), "total": target,
+                      "message": f"Read {new_total} of {target} reels"}))
+        _refresh_account_stats(conn, user_id, acc.id)
+        if res["pk_conflicts"]:
+            db.audit("ig_pk_conflict", user_id=user_id, detail={"job": job.id, "count": res["pk_conflicts"]},
+                     conn=conn)
+        fs = fetch.apply_log(conn, device, user_id, log_, job_id=job.id)
+    if device is not None and calls:
+        _bump_calls(device, lo=calls)
+    out = {"ok": True, "accepted": res["new"], "known_hit": res["known_hit"], "stop": stop}
+    if resume is not None:
+        out["resume"] = resume
+    if device is not None:
+        out["lo"] = fetch.lo_view(fs)
+    return out
 
 
 def _ingest_profile(dev, job, body: dict) -> dict:
@@ -1093,9 +1482,12 @@ def _ingest_pull(dev, job, body: dict) -> dict:
         remaining = max(0, target - int(pull.reels_new or 0))
         seen_at = pull.started_at or _now()
         res = upsert_reels(conn, user_id, acc, reels_in, seen_at=seen_at, remaining=remaining,
-                           refresh=(mode == "refresh"))
+                           refresh=(mode == "refresh"), layer="logged_in", strategy=f"li_{source}", since=seen_at)
         new_total = int(pull.reels_new or 0) + res["new"]
         pages = int(pull.pages or 0) + 1
+        layers = _layers_add(pull.layers, "logged_in", reels=res["new"], updated=res["updated"], pages=1)
+        # A top-up after the logged-out stage (2.2) also goes on while reels of this pull still lack view counts.
+        partial_left = _partial_left(conn, user_id, acc.id, seen_at) if scratch.get("top_up") else 0
         to_max = pull.to_max_id
         if res["cut"]:
             scratch["cut"] = {"source": source, "max_id": req_max}
@@ -1111,9 +1503,10 @@ def _ingest_pull(dev, job, body: dict) -> dict:
         else:
             scratch["req"] = {"source": source, "max_id": next_max}
         scratch["lease_pages"] = lease_pages + 1
+        scratch["stage"] = "li"
         conn.execute(db.pulls.update().where(db.pulls.c.id == pull.id).values(
             pages=pages, reels_new=new_total, reels_updated=int(pull.reels_updated or 0) + res["updated"],
-            collabs_seen=int(pull.collabs_seen or 0) + res["collabs"], to_max_id=to_max))
+            collabs_seen=int(pull.collabs_seen or 0) + res["collabs"], to_max_id=to_max, layers=layers))
         conn.execute(db.jobs.update().where(db.jobs.c.id == job.id).values(
             result={"ingest": scratch},
             progress={"done": min(new_total, target), "total": target,
@@ -1123,7 +1516,9 @@ def _ingest_pull(dev, job, body: dict) -> dict:
             db.audit("ig_pk_conflict", user_id=user_id, detail={"job": job.id, "count": res["pk_conflicts"]},
                      conn=conn)
     _bump_calls(dev, ig=1)
-    stop = bool(res["cut"] or new_total >= target or (mode == "refresh" and res["known_hit"]) or pages >= PAGE_CAP)
+    keep_going = bool(partial_left) and lease_pages + 1 < TOP_UP_PAGES
+    stop = bool(res["cut"] or (new_total >= target and not keep_going)
+                or (mode == "refresh" and res["known_hit"]) or pages >= PAGE_CAP)
     out = {"ok": True, "accepted": res["new"], "known_hit": res["known_hit"], "stop": stop and resume is None}
     if resume is not None:
         out["resume"] = resume
@@ -1333,6 +1728,19 @@ def save_debug_sample(dev, body: dict) -> dict:
     return {"ok": True}
 
 
+def save_probe_rows(dev, job_id: str, body: dict) -> dict:
+    """POST /jobs/<id>/probe {rows: [ProbeRow]}: one row per tested strategy of "Test my connection" (3.4, 4.4)."""
+    job = leased_job(dev, job_id, ("ig_probe",))
+    rows = fetch.clean_probe_rows(body.get("rows"))
+    with db.tx() as conn:
+        out = fetch.save_probe_rows(conn, dev, job, rows)
+    n = fetch.lo_calls(rows)
+    li = sum(1 for r in rows if r["strategy"] in fetch.LI_STRATEGIES and r["status"] != "skipped")
+    if n or li:
+        _bump_calls(dev, ig=li, lo=n)
+    return out
+
+
 # ============================================================================================== done / fail
 
 def _close_pull(conn, job, stop_reason: str, recovery: str | None = None, *, final: bool = True) -> dict:
@@ -1348,6 +1756,9 @@ def _close_pull(conn, job, stop_reason: str, recovery: str | None = None, *, fin
     scratch = dict(((cur[0] if cur else None) or {}).get("ingest") or {})
     now = _now()
     pv: dict = {"stop_reason": stop_reason}
+    layer = fetch.layer_of(pull.layers)
+    if layer:
+        pv["layer"] = layer
     if final:
         pv["finished_at"] = now
     if recovery in RECOVERIES and not pull.recovery:
@@ -1403,15 +1814,34 @@ def finish(dev, job_id: str, body: dict) -> dict:
     stop_reason = body.get("stop_reason")
     result = body.get("result") if isinstance(body.get("result"), dict) else {}
     user_id = dev.user_id
+    lo = _take_fetch_log(dev, job, body)
+    ok: dict = {"ok": True}
+    if lo is not None:
+        ok["lo"] = lo
+    if job.kind == "ig_probe":
+        with db.tx() as conn:
+            fetch.finish_probe(conn, job, "done")
+            row = conn.execute(select(db.fetch_probes.c.verdict, db.fetch_probes.c.rows).where(
+                db.fetch_probes.c.id == (job.payload or {}).get("probe_id"))).first()
+            verdict = (row[0] or {}).get("code") if row else None
+            jobs.complete(job.id, {"verdict": verdict, "rows": len(row[1] or []) if row else 0}, owner=dev.id,
+                          conn=conn)
+        return ok
     if job.kind == "ig_pull":
         if stop_reason not in PULL_STOP_REASONS:
-            stop_reason = "error"
+            # a pull that ended in the logged-out stage: the server knows why (no new stop_reason values, 4.3)
+            scratch = (job.result or {}).get("ingest") or {}
+            stop_reason = {"target": "target_reached", "no_more": "no_more",
+                           "refresh_page": "known_reel" if scratch.get("lo_known_hit") else "page_cap",
+                           "budget": "page_cap", "blocked": "page_cap", "no_views": "page_cap",
+                           "no_strategy": "page_cap"}.get(scratch.get("lo_stop") if scratch.get("stage") == "lo"
+                                                          else None, "error")
         rec = result.get("recovery")
         with db.tx() as conn:
             out = _close_pull(conn, job, stop_reason, rec if isinstance(rec, str) else None)
             jobs.complete(job.id, out, owner=dev.id, conn=conn)
             _queue_score(user_id, job.payload["account_id"], conn=conn)
-        return {"ok": True}
+        return ok
     if job.kind == "ig_profile":
         p = job.payload or {}
         found = False
@@ -1428,7 +1858,7 @@ def finish(dev, job_id: str, body: dict) -> dict:
             _bump_calls(dev, ig=1)
             found = True
         jobs.complete(job.id, {"found": found or bool(result.get("found", True))}, owner=dev.id)
-        return {"ok": True}
+        return ok
     if job.kind == "ig_videos":
         items = (job.payload or {}).get("items", [])
         ids = {it["reel_id"] for it in items}
@@ -1450,13 +1880,13 @@ def finish(dev, job_id: str, body: dict) -> dict:
             jobs.complete(job.id, {"uploaded": len(up), "failed": [
                 {"reel_id": f["reel_id"], "reason": str(f.get("reason") or "")[:60]} for f in failed]},
                 owner=dev.id, conn=conn)
-        return {"ok": True}
+        return ok
     if job.kind == "ig_discover":
         users = result.get("users") if isinstance(result.get("users"), list) else []
         n = ingest_discovered(user_id, job.payload["run_id"], users)
         jobs.complete(job.id, {"candidates": n}, owner=dev.id)
         _chain_check(user_id, job.payload["run_id"])
-        return {"ok": True}
+        return ok
     if job.kind == "ig_check":
         n = len((job.payload or {}).get("candidates", []))
         with db.tx() as conn:
@@ -1473,7 +1903,7 @@ def finish(dev, job_id: str, body: dict) -> dict:
             pass
         except Exception:  # noqa: BLE001
             log.exception("jobs_score.after_check failed")
-        return {"ok": True}
+        return ok
     if job.kind == "page_read":
         with db.tx() as conn:
             src = db.get_owned(conn, db.profile_sources, user_id, (job.payload or {}).get("source_id"))
@@ -1481,7 +1911,7 @@ def finish(dev, job_id: str, body: dict) -> dict:
                 conn.execute(db.profile_sources.update().where(db.profile_sources.c.id == src.id).values(
                     status="needs_paste", error="We couldn't read that page. Paste the text instead."))
             jobs.complete(job.id, {"status": src.status if src else "missing"}, owner=dev.id, conn=conn)
-        return {"ok": True}
+        return ok
     raise bad_input("Unknown job kind.")
 
 
@@ -1577,6 +2007,16 @@ def fail(dev, job_id: str, body: dict) -> dict:
                                                  "raw_keys": raw_keys, "suspended": suspended})
     out: dict = {"ok": True}
     p = job.payload or {}
+    lo_state = _take_fetch_log(dev, job, body)
+    if lo_state is not None:
+        out["lo"] = lo_state
+    if code == "lo_blocked":
+        return _fail_lo_blocked(dev, job, body, out)
+    if job.kind == "ig_probe" and code not in COOLDOWN_S:
+        with db.tx() as conn:
+            fetch.finish_probe(conn, job, "failed")
+            jobs.fail(job.id, code, "The test did not finish. Run it again.", owner=dev.id, conn=conn)
+        return out
 
     # page_read never touches Instagram: no device cooldown.
     if job.kind == "page_read":
@@ -1626,15 +2066,18 @@ def fail(dev, job_id: str, body: dict) -> dict:
                 stop = {"rate_limited": "rate_limited", "warning": "rate_limited", "signed_out": "signed_out",
                         "challenge": "challenge"}.get(code, "error")
                 _close_pull(conn, job, stop, final=False)
+            if job.kind == "ig_probe":      # a test never waits a day: it ends here and shows what it found
+                fetch.finish_probe(conn, job, "failed")
+                jobs.fail(job.id, code, MSG.get(cooldown_code, MSG["http_error"]), owner=dev.id, conn=conn)
             if suspended:
                 _pause_all_ig(conn, user_id, MSG["suspended"])
-            elif not give_up:
+            elif not give_up and job.kind != "ig_probe":
                 _wait_again(conn, job, until, MSG.get(cooldown_code, MSG["http_error"]),
                             refund=code != "http_error", result_extra={"http_error_rounds": rounds} if rounds else None)
         if suspended:
             db.audit("ig_suspended", user_id=user_id, detail={"device": dev.id})
         out["cooldown_until"] = db.iso(until)
-        if not give_up:
+        if not give_up or job.kind == "ig_probe":
             return out
 
     # Final failures for this job (no cooldown).
@@ -1672,8 +2115,74 @@ def fail(dev, job_id: str, body: dict) -> dict:
     return out
 
 
+def _fail_lo_blocked(dev, job, body: dict, out: dict) -> dict:
+    """fail {code: "lo_blocked", lo: {class, strategy, http}} (DESIGN-FETCH.md 4.2): a logged-out read hit a
+    block that ends the logged-out stage. Set the cooldown of table 2.3. A pull in auto mode goes on with the
+    login after the wait (15 minutes, 60 after a challenge) and skips the logged-out stage then. Any other pull
+    closes with what it has."""
+    user_id = dev.user_id
+    now = _now()
+    p = job.payload or {}
+    info = body.get("lo") if isinstance(body.get("lo"), dict) else {}
+    cls = info.get("class") if info.get("class") in LO_BLOCK_CLASSES else "rate"
+    strategy = info.get("strategy") if info.get("strategy") in fetch.LO_STRATEGIES else None
+    http = info.get("http") if isinstance(info.get("http"), int) and not isinstance(info.get("http"), bool) else None
+    wait = timedelta(minutes=fetch.LI_WAIT_MIN.get(cls, 0))
+    if _lo_block_unsent(body, strategy):
+        return _fail_lo_skipped(dev, job, out)
+    with db.tx() as conn:
+        fs = fetch.block_device(conn, dev, user_id, cls, strategy, http, job.id)
+        db.audit("fetch_block", user_id=user_id, conn=conn,
+                 detail={"strategy": strategy, "code": cls, "http": http, "device": dev.id, "job": job.id,
+                         "ended_stage": True})
+        if job.kind == "ig_pull":
+            pull = conn.execute(select(db.pulls).where(db.pulls.c.job_id == job.id)).first()
+            if pull is not None:
+                layers = _layers_add(pull.layers, "logged_out", stop="blocked")
+                conn.execute(db.pulls.update().where(db.pulls.c.id == pull.id).values(layers=layers))
+            read = p.get("read") if p.get("read") in fetch.READ_MODES else "auto"
+            plan = p.get("plan") if isinstance(p.get("plan"), dict) else {}
+            if read == "auto" and plan.get("li"):
+                _wait_again(conn, job, now + wait, fetch.MSG_COOLING,
+                            payload_extra={"_skip_lo": True})
+            else:
+                stop = {"rate": "rate_limited", "challenge": "challenge"}.get(cls, "page_cap")
+                res = _close_pull(conn, job, stop)
+                jobs.complete(job.id, res, owner=dev.id, conn=conn)
+                _queue_score(user_id, p["account_id"], conn=conn)
+        elif job.kind == "ig_probe":
+            fetch.finish_probe(conn, job, "failed")
+            jobs.fail(job.id, "lo_blocked", fetch.MSG_COOLING, owner=dev.id, conn=conn)
+        else:
+            _wait_again(conn, job, now + wait, fetch.MSG_COOLING, payload_extra={"_skip_lo": True})
+    out["lo"] = fetch.lo_view(fs)
+    return out
+
+
+def _lo_block_unsent(body: dict, strategy: str | None) -> bool:
+    """Defense in depth (review fix): a lo_blocked report whose own fetch_log shows only SKIPPED rows for that
+    strategy sent nothing to Instagram, so it is no block. A log with no row for the strategy proves nothing (a
+    pull uploads its log with the items it had before the fail) and the report stands."""
+    log_ = fetch.clean_log(body.get("fetch_log"))
+    mine = [e for e in log_ if e["strategy"] == strategy] if strategy else []
+    return bool(mine) and all(e["status"] == "skipped" for e in mine)
+
+
+def _fail_lo_skipped(dev, job, out: dict) -> dict:
+    """A lo_blocked report with no real Instagram call behind it: no strategy switch-off, no audit, no strike.
+    The job waits a while (no attempt spent) and tries again; a test ends without a verdict."""
+    with db.tx() as conn:
+        if job.kind == "ig_probe":
+            fetch.finish_probe(conn, job, "failed")
+            jobs.fail(job.id, "lo_blocked", "The test did not finish. Run it again.", owner=dev.id, conn=conn)
+        else:
+            _wait_again(conn, job, _now() + timedelta(minutes=LO_SKIPPED_WAIT_MIN), fetch.MSG_LO_SKIPPED)
+    log.warning("job %s: lo_blocked with only skipped calls; no block applied", job.id)
+    return out
+
+
 def _wait_again(conn, job, run_after: datetime, message: str, *, refund: bool = True,
-                result_extra: dict | None = None) -> None:
+                result_extra: dict | None = None, payload_extra: dict | None = None) -> None:
     """Put an Instagram job back to waiting until run_after, without spending one of its attempts (refund=False:
     the attempt stays spent, used for http_error)."""
     vals = dict(state="waiting", lease_owner=None, lease_until=None, run_after=run_after, error_message=message)
@@ -1685,10 +2194,16 @@ def _wait_again(conn, job, run_after: datetime, message: str, *, refund: bool = 
         vals["result"] = dict((cur[0] if cur else None) or {}, **result_extra)
     if job.kind == "ig_pull":
         vals["payload"] = _resume_payload(conn, job)
+        cur = conn.execute(select(db.jobs.c.result).where(db.jobs.c.id == job.id)).first()
+        scratch = ((cur[0] if cur else None) or {}).get("ingest") or {}
+        if scratch.get("stage") == "li" and scratch.get("lo_uploads"):
+            vals["payload"]["_skip_lo"] = True   # the logged-out stage already ran: go on with the login only
+    if payload_extra:
+        vals["payload"] = dict(vals.get("payload") or job.payload or {}, **payload_extra)
     if job.kind == "ig_videos":  # after the wait, only the reels not uploaded yet (no repeat mediaInfo calls)
         cur = conn.execute(select(db.jobs.c.result).where(db.jobs.c.id == job.id)).first()
         up = set(((cur[0] if cur else None) or {}).get("uploaded_ids") or [])
-        p = dict(job.payload or {})
+        p = dict(vals.get("payload") or job.payload or {})
         left = [it for it in p.get("items", []) if it.get("reel_id") not in up]
         if up and left:
             p["items"] = left
@@ -1746,6 +2261,8 @@ def _on_last_lease_expired(conn, job) -> None:
     elif job.kind in ("ig_discover", "ig_check"):
         conn.execute(db.discover_runs.update().where(db.discover_runs.c.id == p.get("run_id"),
                                                      db.discover_runs.c.user_id == uid).values(state="failed"))
+    elif job.kind == "ig_probe":
+        fetch.finish_probe(conn, job, "failed")
     if p.get("source_id") and job.kind in ("page_read", "ig_profile"):
         conn.execute(db.profile_sources.update().where(db.profile_sources.c.id == p["source_id"],
                                                        db.profile_sources.c.user_id == uid,

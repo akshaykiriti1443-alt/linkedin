@@ -28,6 +28,7 @@ PARAM_MAP = [
     (r"^/api/ai/connections/", None, "conn"),
     (r"^/api/ai/desktop/", None, "desktop"),
     (r"^/api/insights/", None, "snapshot"),
+    (r"^/api/fetch/probe/", None, "probe"),
 ]
 
 
@@ -35,7 +36,7 @@ def seed_member_a(uid: str) -> dict:
     now = db.utcnow()
     ids = {k: db.new_id(p) for k, p in [("account", "acc"), ("reel", "reel"), ("output", "out"), ("topic", "top"),
                                         ("format", "fmt"), ("source", "src"), ("conn", "aic"), ("desktop", "dev"),
-                                        ("run", "drun"), ("snapshot", "snap")]}
+                                        ("run", "drun"), ("snapshot", "snap"), ("probe", "prb")]}
     with db.tx() as conn:
         conn.execute(db.accounts.insert().values(id=ids["account"], user_id=uid, handle="alexhormozi"))
         conn.execute(db.reels.insert().values(id=ids["reel"], user_id=uid, account_id=ids["account"], ig_pk="123",
@@ -48,6 +49,8 @@ def seed_member_a(uid: str) -> dict:
         conn.execute(db.devices.insert().values(id=ids["desktop"], user_id=uid, kind="desktop", token_hash="th_a"))
         conn.execute(db.discover_runs.insert().values(id=ids["run"], user_id=uid, mode="niche"))
         conn.execute(db.insight_snapshots.insert().values(id=ids["snapshot"], user_id=uid, computed_at=now))
+        conn.execute(db.fetch_probes.insert().values(id=ids["probe"], user_id=uid, state="done", handles=["instagram"],
+                                                     rows=[], created_at=now))
     ids["job"] = jobs.enqueue(uid, "score_account", {"account_id": ids["account"]})
     return ids
 

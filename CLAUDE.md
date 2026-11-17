@@ -46,7 +46,7 @@ Read this first. It replaces the chat history of the cloud session that built th
   `reelvault/deploy/`), shown at app.scaleitads.com/reelvault with single sign-on from OneX.
 
 ## Status and open items
-- Done: everything above, 645+ tests (`cd reelvault && python -m pytest -q tests`), GitHub Actions:
+- Done: everything above, 750+ tests (`cd reelvault && python -m pytest -q tests`), GitHub Actions:
   `ReelVault on Windows` (desktop + members localhost installer) and `ReelVault Members server`
   (tests, Docker build + boot + backup/restore).
 - Not yet tested live: Instagram with a real login (members extension), real hosting, Chrome Web Store
@@ -62,6 +62,13 @@ Read this first. It replaces the chat history of the cloud session that built th
   `ONEX_SSO_SECRET` (local: `ReelVault-Members\onex-sso-secret.txt`). Findings API for OneX's Ad studio:
   `GET /api/onex/v1/findings` (`reelvault/docs/onex-findings-api.md`). Both sides: `reelvault/INTEGRATE-ONEX.md`;
   the OneX code lives in the OneX project folder (named like "0to1x" on his PC).
+- Own fetch engine (built; spec + decisions log: `reelvault/DESIGN-FETCH.md`): the members
+  extension (2.1.0) reads public Instagram pages WITHOUT the member's cookies first, from his own Chrome and home internet, then tops up
+  with the paced logged-in pull. Read modes per member: Safest first (default) / Logged-in only / Logged-out only. Settings card,
+  "Test my connection" page (`#test-connection`), pull "how it was read" lines and an Admin > Health "Fetch health" card. Layer 3
+  (rented addresses on a server) is a seam only. Proven end to end against the fake Instagram only: the owner must run Test my
+  connection once on his PC (steps in `reelvault/members/OWNER-GUIDE.md` section 6). Localhost updates now run Alembic migrations
+  (`members_local --setup` copies `migrations/`).
 - Next likely asks: let the owner log in with his own email; host ReelVault at a subdomain and wire OneX to it.
 
 ## How to work here

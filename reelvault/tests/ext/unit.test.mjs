@@ -114,7 +114,7 @@ test("budget: day, cdn and discovery caps", async () => {
   await b.take("cdn");
   await assert.rejects(b.take("cdn"), e => e.what === "cdn_day");
   const r = await b.report();
-  assert.deepEqual(r, {hour_used: 3, day_used: 3, cdn_day_used: 1});
+  assert.deepEqual(r, {hour_used: 3, day_used: 3, cdn_day_used: 1, lo_hour_used: 0, lo_day_used: 0});
   assert.match(localDay(Date.now()), /^\d{4}-\d{2}-\d{2}$/);
 });
 

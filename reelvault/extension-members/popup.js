@@ -31,8 +31,20 @@ async function render() {
   $("s-host").textContent = s.host;
   $("s-ig").textContent = igText(s.ig);
   const b = s.budget, L = s.limits;
-  $("s-budget").textContent = `Instagram reads today: ${n(b.day_used)} of ${n(L.day_max)} · this hour: ${n(b.hour_used)} of ${n(L.hour_max)} · videos: ${n(b.cdn_day_used)} of ${n(L.cdn_day_max)}`;
+  $("s-budget").textContent = `Instagram reads today: ${n(b.day_used)} of ${n(L.day_max)} · without login: ${n(b.lo_day_used)} of ${n(L.lo_day_max)} · this hour: ${n(b.hour_used)} of ${n(L.hour_max)} · videos: ${n(b.cdn_day_used)} of ${n(L.cdn_day_max)}`;
   $("s-job").textContent = s.job ? `Now: ${s.job.message}` : "Nothing to read right now.";
+  // Which way ReelVault reads right now (DESIGN-FETCH.md 3.3).
+  const layer = s.job && s.job.layer;
+  show("s-read", layer === "lo" || layer === "li");
+  if (layer) $("s-read").textContent = layer === "lo" ? "Reading without your login." : "Reading with your Instagram login.";
+  const lo = s.lo && s.lo.cooldown;
+  show("s-lo", !!lo);
+  if (lo) {
+    const t = new Date(lo.until).toLocaleString([], {weekday: "short", hour: "2-digit", minute: "2-digit"});
+    $("s-lo").textContent = ["rate", "challenge"].includes(lo.reason)
+      ? `Instagram asks ReelVault to wait. ReelVault reads without your login again after ${t}.`
+      : `Instagram asks for a login right now. ReelVault reads without your login again after ${t}.`;
+  }
   show("s-cooldown", !!s.cooldown);
   if (s.cooldown) {
     const until = new Date(s.cooldown.until).toLocaleString([], {weekday: "short", hour: "2-digit", minute: "2-digit"});

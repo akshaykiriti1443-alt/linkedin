@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 EXTENSION_MIN = "2.0.0"
 
 

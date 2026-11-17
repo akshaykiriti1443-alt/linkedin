@@ -7,12 +7,14 @@ module is the only place that interprets them:
     parse_user(ig_user) -> AccountIn                    # IgUser (or a raw web_profile_info / users/<id>/info user)
     shortcode_to_pk("C9x...") -> "3456789012345678901" ; pk_to_shortcode(pk) -> code
     cdn_expiry(signed_cdn_url) -> datetime | None        # from the hex `oe=` parameter
+    normalize_lo(lo_item, account_pk) -> ReelIn | None   # logged-out items, shapes "v1" and "gql" (DESIGN-FETCH.md 4.2)
+    pk_time(pk) -> datetime | None                       # the post time inside a media pk
 
 Ids are digit STRINGS everywhere. A JSON number where an id belongs means a broken extension (JavaScript would have
 rounded it), so normalize() raises IgParseError and the API answers 400 bad_input.
 
-For tests and the fixtures, `parse_ig_json(text)` and `trim_media(raw)` / `trim_user(raw)` mirror the extension's
-`bigint.js` and `trim.js`, so Python sees exactly what the extension would upload.
+For tests and the fixtures, `parse_ig_json(text)` and `trim_media(raw)` / `trim_user(raw)` / `trim_gql(raw)` mirror
+the extension's `bigint.js` and `trim.js`, so Python sees exactly what the extension would upload.
 """
 from __future__ import annotations
 
@@ -30,6 +32,11 @@ CODE_RE = re.compile(r"^[A-Za-z0-9_-]{5,20}$")
 HANDLE_RE = re.compile(r"^[a-z0-9._]{1,30}$")
 CAPTION_MAX = 5000
 BIGINT_RE = re.compile(r'("[A-Za-z0-9_]+"\s*:\s*)(-?\d{16,})(?=\s*[,}\]])')
+IG_EPOCH_MS = 1314220021721                    # media pk = (ms since this moment) << 23 | sequence
+# Read layers and the strategies that upload items (DESIGN-FETCH.md 2, 3.2). `rented` / `rx_*` come with layer 3.
+LO_STRATEGIES = ("lo_profile_page", "lo_reels_page", "lo_reels_gql", "lo_web_profile", "lo_posts_gql", "lo_post_gql",
+                 "lo_media_gql", "lo_embed")
+LO_SHAPES = ("v1", "gql")
 
 
 class IgParseError(ValueError):
@@ -170,6 +177,12 @@ class ReelIn:
     video_url_expires_at: datetime | None
     pk_conflict: bool = False
     product_type: str | None = None
+    # fetch engine (DESIGN-FETCH.md 4.2). normalize() leaves them at these defaults; normalize_lo() fills them.
+    layer: str | None = None                   # logged_out | logged_in (| rented later)
+    strategy: str | None = None                # lo_post_gql, li_clips, ...
+    partial: bool = False                      # no views (and counts are not hidden), or only `view_count`
+    missing: list[str] = field(default_factory=list)   # of: views, caption, duration, video_url
+    taken_at_derived: bool = False             # taken_at was missing and comes from the pk
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -343,9 +356,108 @@ def parse_user(u: dict) -> AccountIn:
         is_verified=bool(u.get("is_verified")),
         followers=count("followers", "follower_count", "edge_followed_by"),
         following=count("following", "following_count", "edge_follow"),
-        media_count=count("media_count", "edge_owner_to_timeline_media"),
+        media_count=count("media_count", "all_media_count", "edge_owner_to_timeline_media"),
         profile_pic_url=_https(u.get("profile_pic_url")),
     )
+
+
+# ============================================================================================== logged-out items
+
+def pk_time(pk: str | int | None) -> datetime | None:
+    """The post time that sits inside a media pk: (pk >> 23) + IG_EPOCH_MS milliseconds (DESIGN-FETCH.md 2.2).
+    None when the pk does not look like a media pk of 2011 or later."""
+    try:
+        n = int(pk)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    ms = (n >> 23) + IG_EPOCH_MS
+    if n < (1 << 40) or ms > 4102444800000:      # tiny test pks, or a date after 2100
+        return None
+    return datetime.fromtimestamp(ms // 1000, tz=timezone.utc)
+
+
+def is_partial(views: int | None, views_field: str | None, counts_hidden: bool) -> bool:
+    """A reel is partial when it has no view count although counts are public, or only the logged-out
+    `view_count` (the logged-in layer reads `play_count`). DESIGN-FETCH.md 2.2."""
+    if counts_hidden:
+        return False
+    return views is None or views_field == "view_count"
+
+
+def _gql_to_v1(it: dict) -> dict:
+    """LoItem shape "gql" (DESIGN-FETCH.md 4.2) -> the IgMedia fields normalize() reads. Ids stay digit strings."""
+    owner = it.get("owner") if isinstance(it.get("owner"), dict) else {}
+    dims = it.get("dimensions") if isinstance(it.get("dimensions"), dict) else {}
+    pk = it.get("id")
+    owner_id = owner.get("id")
+    co = []
+    for c in it.get("coauthors") or []:
+        if isinstance(c, dict):
+            co.append({"pk": c.get("id", c.get("pk")), "username": c.get("username")})
+    plays, views = _int(it.get("video_play_count")), _int(it.get("video_view_count"))
+    vurl = it.get("video_url")
+    cover = it.get("display_url")
+    return {
+        "pk": pk, "id": None, "code": it.get("shortcode"), "taken_at": it.get("taken_at_timestamp"),
+        "product_type": it.get("product_type") or "clips", "media_type": 2 if it.get("is_video") else 1,
+        "caption": it.get("caption"),
+        "play_count": plays if plays is not None and plays >= 0 else None,
+        "view_count": views if views is not None and views >= 0 else None,
+        "like_count": it.get("like_count"), "comment_count": it.get("comment_count"),
+        "like_and_view_counts_disabled": bool(it.get("like_and_view_counts_disabled")),
+        "comments_disabled": bool(it.get("comments_disabled")), "video_duration": it.get("video_duration"),
+        "has_audio": it.get("has_audio"),
+        "timeline_pinned_user_ids": [owner_id] if it.get("pinned") and isinstance(owner_id, str) else [],
+        "coauthor_producers": co,
+        "video": {"url": vurl, "width": dims.get("width"), "height": dims.get("height")} if vurl else None,
+        "cover": {"url": cover, "width": dims.get("width"), "height": dims.get("height")} if cover else None,
+        "owner": {"pk": owner_id, "username": owner.get("username")},
+    }
+
+
+def normalize_lo(item: dict, account_pk: str, *, layer: str = "logged_out") -> ReelIn | None:
+    """One logged-out item (LoItem, DESIGN-FETCH.md 4.2) -> ReelIn, or None for someone else's reel or a photo.
+
+    shape "v1":  the IgMedia fields of 5.5 (reels tab nodes, post and media detail), through normalize().
+    shape "gql": a trimmed legacy node (web_profile_info timeline, embed page): pk = id, code = shortcode,
+                 views = video_play_count ?? video_view_count.
+    Missing numbers stay None (never 0). A missing taken_at comes from the pk. Raises IgParseError for an unknown
+    shape or strategy and for ids that are not digit strings."""
+    if not isinstance(item, dict):
+        raise IgParseError("item must be an object")
+    shape, strategy = item.get("shape"), item.get("strategy")
+    if shape not in LO_SHAPES:
+        raise IgParseError("unknown item shape")
+    if strategy not in LO_STRATEGIES:
+        raise IgParseError("unknown strategy")
+    if shape == "gql":
+        if not item.get("is_video"):
+            _pk_str(item.get("id"), "id")           # still refuse a JSON number here
+            return None
+        if item.get("shortcode") is None:
+            raise IgParseError("shortcode is missing")
+        m = _gql_to_v1(item)
+    else:
+        m = item
+    ri = normalize(m, account_pk)
+    if ri is None:
+        return None
+    ri.layer, ri.strategy = layer, strategy
+    if ri.taken_at is None:
+        ri.taken_at = pk_time(ri.ig_pk)
+        ri.taken_at_derived = ri.taken_at is not None
+    ri.partial = is_partial(ri.views, ri.views_field, ri.counts_hidden)
+    missing = []
+    if ri.views is None and not ri.counts_hidden:
+        missing.append("views")
+    if not ri.caption and m.get("caption") is None:
+        missing.append("caption")
+    if ri.duration is None:
+        missing.append("duration")
+    if ri.video_url is None:
+        missing.append("video_url")
+    ri.missing = missing
+    return ri
 
 
 # ============================================================================================== mirrors of the extension
@@ -449,7 +561,49 @@ def trim_user(u: dict) -> dict:
         "external_url": u.get("external_url"), "category": u.get("category_name") or u.get("category"),
         "is_private": bool(u.get("is_private")), "is_verified": bool(u.get("is_verified")),
         "followers": count("follower_count", "edge_followed_by"), "following": count("following_count", "edge_follow"),
-        "media_count": count("media_count", "edge_owner_to_timeline_media"), "profile_pic_url": u.get("profile_pic_url"),
+        "media_count": count("media_count", "all_media_count", "edge_owner_to_timeline_media"),
+        "profile_pic_url": u.get("profile_pic_url"),
+    }
+
+
+def trim_gql(n: dict, strategy: str = "lo_web_profile") -> dict:
+    """Python twin of trim.js trimGql: a raw legacy GraphQL node (web_profile_info timeline edge, embed page
+    `shortcode_media`, after parse_ig_json) -> LoItem shape "gql" (DESIGN-FETCH.md 4.2)."""
+    def count(*keys):
+        for k in keys:
+            v = n.get(k)
+            if isinstance(v, dict) and v.get("count") is not None:
+                return v.get("count")
+        return None
+
+    cap = None
+    for e in ((n.get("edge_media_to_caption") or {}).get("edges") or []):
+        t = ((e or {}).get("node") or {}).get("text")
+        if isinstance(t, str):
+            cap = t[:CAPTION_MAX]
+            break
+    owner = n.get("owner") or {}
+    dims = n.get("dimensions") or {}
+
+    def g(k):
+        return n.get(k) if k in n else None
+
+    return {
+        "shape": "gql", "strategy": strategy, "id": _sid(n.get("id")), "shortcode": n.get("shortcode"),
+        "is_video": bool(n.get("is_video")), "product_type": g("product_type"),
+        "taken_at_timestamp": g("taken_at_timestamp"), "caption": cap,
+        "video_view_count": g("video_view_count"), "video_play_count": g("video_play_count"),
+        "like_count": count("edge_liked_by", "edge_media_preview_like"),
+        "comment_count": count("edge_media_to_comment", "edge_media_to_parent_comment"),
+        "like_and_view_counts_disabled": bool(g("like_and_view_counts_disabled")),
+        "comments_disabled": bool(g("comments_disabled")), "video_duration": g("video_duration"),
+        "has_audio": g("has_audio"), "video_url": g("video_url"), "display_url": g("display_url"),
+        "dimensions": {"height": dims.get("height"), "width": dims.get("width")},
+        "owner": {"id": _sid(owner.get("id")), "username": owner.get("username")},
+        "pinned": bool(n.get("pinned_for_users")),
+        "coauthors": [{"id": _sid(c.get("id") if c.get("id") is not None else c.get("pk")),
+                       "username": c.get("username")}
+                      for c in (n.get("coauthor_producers") or []) if isinstance(c, dict)],
     }
 
 

@@ -25,7 +25,7 @@ from typing import Any, Iterator
 
 from sqlalchemy import (
     JSON, BigInteger, Boolean, CheckConstraint, Column, Engine, Float, ForeignKey, Index, Integer, LargeBinary,
-    MetaData, PrimaryKeyConstraint, Select, Table, Text, UniqueConstraint, create_engine, event, select,
+    MetaData, PrimaryKeyConstraint, Select, Table, Text, UniqueConstraint, create_engine, event, false, select, text,
 )
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.engine import Connection
@@ -34,7 +34,7 @@ from sqlalchemy.types import DateTime, TypeDecorator
 # --------------------------------------------------------------------------------------------- types and ids
 
 ID_PREFIXES = ("usr", "inv", "ses", "aic", "dev", "acc", "pul", "reel", "job", "out", "src", "top", "snap", "aud",
-               "fmt", "cand", "drun", "ana", "dcr")
+               "fmt", "cand", "drun", "ana", "dcr", "prb")
 
 
 def new_id(prefix: str) -> str:
@@ -137,8 +137,10 @@ users = _t(
     Index("ix_users_status", "status"),
 )
 
+# read_mode (DESIGN-FETCH.md 4.1): auto | logged_out_only | logged_in_only. None = the member never chose, so the
+# admin's default (app setting, else "auto") applies. See docs/wp-notes/FETCH-SERVER.md.
 USER_SETTINGS_DEFAULT = {"timezone": "Europe/London", "language": "en", "email_codes": False, "process_all": False,
-                         "support_access_until": None}
+                         "support_access_until": None, "read_mode": None}
 
 # --------------------------------------------------------------------------------------------- 3.2 sessions
 
@@ -410,6 +412,10 @@ pulls = _t(
     Column("run_after", TS),
     Column("started_at", TS),
     Column("finished_at", TS),
+    # fetch engine (DESIGN-FETCH.md 4.3): how this pull was read
+    Column("read_mode", Text),
+    Column("layer", Text),                    # logged_out | logged_in | mixed (plain text: `rented` needs no migration)
+    Column("layers", JSONType, nullable=False, default=dict, server_default=text("'{}'")),
     Index("ix_pulls_user_id", "user_id", "account_id"),
 )
 
@@ -475,6 +481,10 @@ reels = _t(
     Column("needs_topic_retag", Boolean, nullable=False, default=False),
     _enum("deep_state", ("none", "queued", "waiting", "done", "failed"), default="none"),
     Column("starred", Boolean, nullable=False, default=False),
+    # fetch engine (DESIGN-FETCH.md 4.3): which layer and strategy wrote this reel's numbers; partial = no real views
+    Column("read_layer", Text),
+    Column("read_strategy", Text),
+    Column("partial", Boolean, nullable=False, default=False, server_default=false()),
     UniqueConstraint("user_id", "ig_pk"),
     Index("ix_reels_user_id_account", "user_id", "account_id"),
     Index("ix_reels_user_id_tag", "user_id", "tag_state"),
@@ -567,7 +577,7 @@ analyses = _t(
 
 # --------------------------------------------------------------------------------------------- 3.13 jobs
 
-JOB_KINDS = ("ig_pull", "ig_profile", "ig_videos", "ig_discover", "ig_check", "page_read", "fetch_video",
+JOB_KINDS = ("ig_pull", "ig_profile", "ig_videos", "ig_discover", "ig_check", "ig_probe", "page_read", "fetch_video",
              "process_reel", "score_account", "pick_sample", "refresh_insights", "tag_reels", "retag_topics",
              "analyze_reel", "name_formats", "make_output", "import_source", "draft_profile", "suggest_topics",
              "sweep_storage", "backup", "expire_members", "rotate_code")
@@ -768,6 +778,41 @@ admin_access = _t(
     PrimaryKeyConstraint("user_id", "granted_at"),
 )
 
+# --------------------------------------------------------------------------------------------- fetch engine (DESIGN-FETCH.md 4.3)
+
+fetch_health = _t(
+    "fetch_health",
+    Column("device_id", Text, nullable=False),      # a devices.id, or "server" for a server-side fetcher (layer 3)
+    _uid("fetch_health", nullable=True),
+    Column("strategy", Text, nullable=False),
+    Column("day", Text, nullable=False),            # UTC date, "2026-11-16"
+    Column("ok", Integer, nullable=False, default=0),
+    Column("partial", Integer, nullable=False, default=0),
+    Column("blocked", Integer, nullable=False, default=0),
+    Column("error", Integer, nullable=False, default=0),
+    Column("last_ok_at", TS),
+    Column("last_blocked_at", TS),
+    Column("last_code", Text),
+    PrimaryKeyConstraint("device_id", "strategy", "day"),
+    Index("ix_fetch_health_user_id", "user_id", "day"),
+    Index("ix_fetch_health_day", "day", "strategy"),
+)
+
+fetch_probes = _t(
+    "fetch_probes",
+    Column("id", Text, primary_key=True),
+    _uid("fetch_probes"),
+    Column("device_id", Text),
+    Column("job_id", Text),
+    Column("state", Text, nullable=False, default="waiting"),    # waiting | running | done | failed
+    Column("handles", JSONType, nullable=False, default=list),
+    Column("rows", JSONType, nullable=False, default=list),
+    Column("verdict", JSONType),
+    Column("created_at", TS, nullable=False, default=utcnow),
+    Column("finished_at", TS),
+    Index("ix_fetch_probes_user_id", "user_id", "created_at"),
+)
+
 TABLES: dict[str, Table] = dict(metadata.tables)
 
 # --------------------------------------------------------------------------------------------- engine
@@ -860,6 +905,25 @@ def migrations_dir() -> Path | None:
     return None
 
 
+# A database made by create_all (an install that had no migrations folder, e.g. the localhost app before 0.5) has
+# tables but no alembic_version. Stamp the newest revision whose marker column it already has, then upgrade from
+# there. Newest first; add a row when a migration adds a column.
+_SCHEMA_MARKERS = (("0002", "pulls", "read_mode"),)
+
+
+def _unversioned_revision(conn) -> str | None:
+    from sqlalchemy import inspect as sa_inspect
+
+    insp = sa_inspect(conn)
+    names = set(insp.get_table_names())
+    if "alembic_version" in names or "users" not in names:
+        return None
+    for rev, table, column in _SCHEMA_MARKERS:
+        if table in names and column in {c["name"] for c in insp.get_columns(table)}:
+            return rev
+    return "0001"
+
+
 def migrate(engine: Engine | None = None) -> None:
     """Bring the schema to head (Alembic). Falls back to create_all when the migrations folder is not shipped."""
     eng = engine or get_engine()
@@ -879,6 +943,9 @@ def migrate(engine: Engine | None = None) -> None:
     cfg.set_main_option("sqlalchemy.url", str(eng.url).replace("%", "%%"))
     with eng.connect() as conn:
         cfg.attributes["connection"] = conn
+        rev = _unversioned_revision(conn)
+        if rev is not None:
+            command.stamp(cfg, rev)
         command.upgrade(cfg, "head")
         if conn.in_transaction():
             conn.commit()

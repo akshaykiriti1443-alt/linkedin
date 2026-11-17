@@ -569,7 +569,7 @@ reel's states after each step and enqueues the next one.
 |---|---|---|---|---|---|
 | `ig_pull` | external | extension | `{"account_id", "handle", "ig_pk"?, "mode", "max_id"?, "cursor_source", "oldest_pk"?, "target": 100}` | `{"pull_id", "reels_new", "reels_updated", "stop_reason"}` | WP4 API → WP2 `start_pull` |
 | `ig_profile` | external | extension | `{"handle", "purpose": "competitor" \| "member_bio", "account_id"?, "source_id"?}` | `{"found": bool}` | WP2 `request_profile` (called by WP4 and WP7) |
-| `ig_videos` | external | extension | `{"items": [{"reel_id", "ig_pk", "code"}] (≤ 30), "refresh_urls": bool, "want_cover": bool}` | `{"uploaded": n, "failed": [...]}` | WP2 `request_videos` (called by WP3) |
+| `ig_videos` | external | extension | `{"items": [{"reel_id", "ig_pk", "code", "handle"?}] (≤ 30), "refresh_urls": bool, "want_cover": bool}` | `{"uploaded": n, "failed": [...]}` | WP2 `request_videos` (called by WP3) |
 | `ig_discover` | external | extension | `{"run_id", "mode": "search" \| "similar", "queries"?: [≤ 3], "seeds"?: [{"handle", "pk"?}] (≤ 2)}` | `{"candidates": n}` | WP2 `request_discover` (called by WP4) |
 | `ig_check` | external | extension | `{"run_id", "candidates": [{"cand_id", "handle", "pk"?}] (≤ 15)}` | `{"checked": n}` | WP2 (chained by WP4 after `ig_discover`) |
 | `page_read` | external | extension | `{"source_id", "kind": "skool_profile" \| "skool_group" \| "linkedin_self", "url"}` | `{"status"}` | WP2 `request_page_read` (called by WP7) |
@@ -1192,7 +1192,7 @@ user}`, then `done`.
    The extension reports which recovery it used in `done.result.recovery`.
 5. `done {stop_reason}`.
 
-**Job `ig_videos`** (payload `{items: [{reel_id, ig_pk, code}], refresh_urls, want_cover}`; max 30 items):
+**Job `ig_videos`** (payload `{items: [{reel_id, ig_pk, code, handle?}], refresh_urls, want_cover}`; max 30 items; `handle` is the account, for a logged-out lsd read, DESIGN-FETCH.md 12.27):
 - On job start the SW installs (idempotent) the Referer rule; a `fetch` from the SW cannot set Referer itself (the
   Fetch spec replaces a cross-origin `referrer` and extension pages send none):
   ```js

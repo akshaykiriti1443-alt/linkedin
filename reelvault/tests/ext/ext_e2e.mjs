@@ -7,6 +7,9 @@
 // maps www.instagram.com / scontent.cdninstagram.com / www.skool.com / www.linkedin.com to the fake server with
 // --host-resolver-rules, and drives the whole loop: pairing in the popup, the account confirm gate, pulls of
 // 100, the next 100 from the saved cursor, recoveries, videos, page reads, stops and cooldowns.
+// These are the LOGGED-IN paths (DESIGN-SAAS.md 5.4): run_server.py sets the member's read mode to
+// "logged_in_only". The fetch engine (logged-out first, DESIGN-FETCH.md) is tested branch by branch in
+// tests/ext/fetch_e2e.mjs; three "real server" cases here run it with the real app (auto pull, top-up, probe).
 //
 // Env: RV_PYTHON (python with the [server] deps; default python3), RV_E2E_PORT_BASE (default 9140: fake
 // Instagram = base+3, ReelVault = base+1), RV_E2E_TMP (scratch folder; default a new temp folder), RV_E2E_KEEP=1.
@@ -401,8 +404,9 @@ test("the popup shows the server, the Instagram account, today's budget and the 
   assert.equal(await popup.textContent("#s-ig"), "ReelVault reads Instagram as @member.reader.");
   const used = (await swEval(() => self.rv.budget.report()));
   assert.equal(await popup.textContent("#s-budget"),
-               `Instagram reads today: ${used.day_used} of 400 · this hour: ${used.hour_used} of 120 · videos: 0 of 150`);
+               `Instagram reads today: ${used.day_used} of 400 · without login: 0 of 200 · this hour: ${used.hour_used} of 120 · videos: 0 of 150`);
   assert.equal(await popup.textContent("#s-job"), "Nothing to read right now.");
+  assert.equal(await popup.isVisible("#s-read"), false, "the reading line shows only while a job reads");
   assert.match(await popup.textContent(".keep"), /^Keep Chrome open\. ReelVault reads in a pinned Instagram tab/);
   assert.equal(await popup.isVisible("#s-update"), false, "no update line when the server has the same version");
   await popup.close();
@@ -787,7 +791,8 @@ test("another Instagram account in Chrome: the job goes back to waiting until th
   for (let i = 0; i < 3; i++) { await tickNow(); await sleep(300); await idle(); }
   assert.equal(igApi(since(await igLog(), t1)).length, 0, "no re-check within 30 min of the last one");
   await swEval(async () => { const {ig} = await chrome.storage.local.get("ig"); await chrome.storage.local.set({ig: {...ig, checked_at: Date.now() - 31 * 60_000}}); return true; });
-  const j = await runUntil(jid);
+  // The server may hold a job it can't run right now for up to a minute (DESIGN-FETCH.md 4.1): allow two.
+  const j = await runUntil(jid, undefined, 120_000);
   assert.equal(j.state, "done", JSON.stringify(j));
   s = await state();
   assert.equal(s.device.ig_user_id, VIEWER);
@@ -991,6 +996,86 @@ test("page_read without permission: a full tab asks in plain words; Not now fail
 });
 
 // ============================================================================================== idle, cookies, disconnect
+
+// ============================================================================================== fetch engine + the real server
+
+// The fetch engine end to end WITH THE REAL APP (DESIGN-FETCH.md 4.1-4.2): plan at lease time, logged-out uploads,
+// stage_done -> resume, the merge. tests/ext/fetch_e2e.mjs covers every branch against a contract server.
+test("real server, read mode auto: the pull reads logged out first with no cookies and stops at 100", async () => {
+  await resetAll();
+  await rv("/__test/read_mode", {read_mode: "auto"});
+  try {
+    const acc = await newAccount();
+    const t0 = nowS();
+    const jid = await pull(acc);
+    const j = await runUntil(jid);
+    assert.equal(j.state, "done", JSON.stringify(j));
+    assert.equal(j.payload.read, "auto");
+    assert.equal(j.payload.plan.lo, true);
+    const ig = since(await igLog(), t0).filter(e => e.host === "www.instagram.com" && !["/robots.txt", "/favicon.ico"].includes(e.path));
+    const lo = ig.filter(e => e.lo);
+    assert.deepEqual(lo.map(e => e.lo), ["profile_page", "reels_page", ...Array(8).fill("gql")]);
+    for (const e of lo) { assert.deepEqual(e.cookies, {}, e.path); assert.equal(e.headers["x-csrftoken"], undefined); }
+    assert.equal(ig.length, lo.length, "no logged-in call: the logged-out layer reached the target");
+    const s = await state();
+    assert.equal(s.reels.length, 100);
+    const pl = s.pulls.find(x => x.job_id === jid);
+    assert.equal(pl.reels_new, 100);
+    assert.equal(pl.layer, "logged_out");
+    assert.equal(pl.read_mode, "auto");
+    const ups = (await rv("/__test/requests")).data.requests.filter(q => q.path.endsWith(`/jobs/${jid}/items`));
+    assert.ok(ups.every(q => !q.body.includes("AVqFixtureLsd01") && !/"(end_cursor|after|lsd)"\s*:/.test(q.body)),
+              "the lsd token and the GraphQL cursors never reach ReelVault");
+    assert.ok(ups.some(q => /"fetch_log"/.test(q.body)));
+  } finally { await rv("/__test/read_mode", {read_mode: "logged_in_only"}); }
+});
+
+test("real server, read mode auto: logged-out reads give part, the login tops the pull up to 100", async () => {
+  await resetAll();
+  await rv("/__test/read_mode", {read_mode: "auto"});
+  await scenario("lo_reels_blocked", "lo_no_views");
+  try {
+    const acc = await newAccount();
+    const t0 = nowS();
+    const jid = await pull(acc);
+    const j = await runUntil(jid, undefined, 120_000);
+    assert.equal(j.state, "done", JSON.stringify(j));
+    const ig = since(await igLog(), t0).filter(e => e.host === "www.instagram.com" && !["/robots.txt", "/favicon.ico"].includes(e.path));
+    const lo = ig.filter(e => e.lo), li = ig.filter(e => !e.lo);
+    assert.ok(lo.length >= 3, lo.map(e => e.lo).join(" "));
+    for (const e of lo) assert.deepEqual(e.cookies, {}, e.path);
+    assert.ok(li.length >= 1 && li.every(e => e.cookies.sessionid === SESSIONID), "the top-up uses the member's login");
+    assert.ok(ig.indexOf(li[0]) > ig.indexOf(lo.at(-1)), "every logged-out call comes first");
+    assert.ok(li.some(e => e.path === "/api/v1/clips/user/"));
+    const s = await state();
+    assert.equal(s.reels.length, 100);
+    const pl = s.pulls.find(x => x.job_id === jid);
+    assert.equal(pl.reels_new, 100);
+    assert.equal(pl.layer, "mixed");
+  } finally {
+    await scenario();
+    await rv("/__test/read_mode", {read_mode: "logged_in_only"});
+  }
+});
+
+test("real server, Test my connection: the web app starts it, Chrome posts 11 rows, the verdict says the safest way works", async () => {
+  await resetAll();
+  await runUntil(await pull(await newAccount()));    // a pulled competitor: the probe's second handle (4.4)
+  const t0 = nowS();
+  const r = await rv("/api/fetch/probe", {});
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  const j = await runUntil(r.data.job_id, undefined, 120_000);
+  assert.equal(j.state, "done", JSON.stringify(j));
+  const p = (await rv(`/api/fetch/probe/${r.data.probe_id}`)).data;
+  assert.equal(p.state, "done", JSON.stringify(p));
+  assert.deepEqual(p.handles, ["instagram", "scaleit.demo"]);
+  assert.equal(p.rows.length, 11);
+  assert.deepEqual(p.rows.map(x => x.status), Array(11).fill("ok"), JSON.stringify(p.rows.map(x => [x.strategy, x.status, x.note])));
+  assert.equal(p.verdict.code, "best");
+  const lo = since(await igLog(), t0).filter(e => e.lo);
+  assert.equal(lo.length, 9);
+  for (const e of lo) assert.deepEqual(e.cookies, {}, e.path);
+});
 
 test("idle Chrome makes zero Instagram requests (20 loop ticks plus a real 30 s alarm)", async () => {
   await resetAll();

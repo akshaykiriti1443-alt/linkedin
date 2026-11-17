@@ -3,6 +3,10 @@
 export const DEFAULTS = {
   gap_ms: [4000, 9000], page_gap_ms: [6000, 12000], cdn_gap_ms: [2000, 5000], retry_ms: [30000, 120000],
   hour_max: 120, day_max: 400, media_info_max: 30, cdn_day_max: 150, discover_day_max: 60, page_read_day_max: 5,
+  // Logged-out reads (DESIGN-FETCH.md 2.4): slower than the logged-in gaps, with their own hour and day budgets.
+  // Every logged-out call ALSO counts in hour_max and day_max.
+  lo_gap_ms: [5000, 11000], lo_page_gap_ms: [8000, 15000], layer_gap_ms: [20000, 40000],
+  lo_hour_max: 60, lo_day_max: 200, lo_detail_max: 36, probe_day_max: 3,
 };
 
 // The stricter of local and server values. A "test" build (made only for the automated tests) takes the server's
@@ -46,20 +50,26 @@ export class Budget {
     const t = this.now();
     const day = localDay(t);
     const st = {calls: [], day, day_used: 0, cdn_day_used: 0, disc_day_used: 0, page_read_day_used: 0,
-                last_call_at: 0, last_cdn_at: 0, ...s};
+                last_call_at: 0, last_cdn_at: 0, lo_calls: [], lo_day_used: 0, last_lo_at: 0, probe_day_used: 0, ...s};
     st.calls = (st.calls || []).filter(x => t - x < HOUR);
-    if (st.day !== day) Object.assign(st, {day, day_used: 0, cdn_day_used: 0, disc_day_used: 0, page_read_day_used: 0});
+    st.lo_calls = (st.lo_calls || []).filter(x => t - x < HOUR);
+    if (st.day !== day) {
+      Object.assign(st, {day, day_used: 0, cdn_day_used: 0, disc_day_used: 0, page_read_day_used: 0, lo_day_used: 0,
+                         probe_day_used: 0});
+    }
     return st;
   }
   async save(st) { await this.store.set(st); }
   async report() {
     const st = await this.load();
-    return {hour_used: st.calls.length, day_used: st.day_used, cdn_day_used: st.cdn_day_used};
+    return {hour_used: st.calls.length, day_used: st.day_used, cdn_day_used: st.cdn_day_used,
+            lo_hour_used: st.lo_calls.length, lo_day_used: st.lo_day_used};
   }
   msToNextDay(t = this.now()) {
     const d = new Date(t); d.setHours(24, 0, 5, 0); return d.getTime() - t;
   }
-  // Throws BudgetStop when the call would break a limit. kind: "ig" | "discover" | "cdn" | "page_read".
+  // Throws BudgetStop when the call would break a limit.
+  // kind: "ig" | "discover" | "cdn" | "page_read" | "lo" | "lo_page" (logged-out call / list page) | "probe".
   async check(kind) {
     const L = this.limits(), st = await this.load(), t = this.now();
     if (kind === "cdn") {
@@ -69,6 +79,14 @@ export class Budget {
     if (kind === "page_read") {
       if (st.page_read_day_used >= L.page_read_day_max) throw new BudgetStop("page_read_day", this.msToNextDay(t));
       return st;
+    }
+    if (kind === "probe") {
+      if (st.probe_day_used >= L.probe_day_max) throw new BudgetStop("probe_day", this.msToNextDay(t));
+      return st;
+    }
+    if (kind === "lo" || kind === "lo_page") {   // the logged-out limits first: they only end the logged-out stage
+      if (st.lo_calls.length >= L.lo_hour_max) throw new BudgetStop("lo_hour", Math.max(1000, HOUR - (t - st.lo_calls[0])));
+      if (st.lo_day_used >= L.lo_day_max) throw new BudgetStop("lo_day", this.msToNextDay(t));
     }
     if (st.calls.length >= L.hour_max) throw new BudgetStop("hour", Math.max(1000, HOUR - (t - st.calls[0])));
     if (st.day_used >= L.day_max) throw new BudgetStop("day", this.msToNextDay(t));
@@ -82,11 +100,23 @@ export class Budget {
     if (kind === "page_read") {
       st.page_read_day_used += 1; await this.save(st); return;
     }
+    if (kind === "probe") {
+      st.probe_day_used += 1; await this.save(st); return;
+    }
     const isCdn = kind === "cdn";
-    const last = isCdn ? st.last_cdn_at : st.last_call_at;
-    let gap = randBetween(isCdn ? L.cdn_gap_ms : L.gap_ms, this.rnd);
-    if (page) gap += randBetween(L.page_gap_ms, this.rnd);
-    const wait = last + gap - this.now();
+    const isLo = kind === "lo" || kind === "lo_page";
+    const last = isCdn ? st.last_cdn_at : st.last_call_at;   // last_call_at: the last Instagram call of EITHER layer
+    let gap;
+    if (isLo) {
+      gap = randBetween(L.lo_gap_ms, this.rnd);
+      if (kind === "lo_page") gap = Math.max(gap, randBetween(L.lo_page_gap_ms, this.rnd));
+    } else {
+      gap = randBetween(isCdn ? L.cdn_gap_ms : L.gap_ms, this.rnd);
+      if (page) gap += randBetween(L.page_gap_ms, this.rnd);
+    }
+    let wait = last + gap - this.now();
+    // Layer gap: the first logged-in call waits 20-40 s after the last logged-out call.
+    if (!isCdn && !isLo && st.last_lo_at) wait = Math.max(wait, st.last_lo_at + randBetween(L.layer_gap_ms, this.rnd) - this.now());
     if (wait > 0) await this.sleep(wait);
     st = await this.check(kind);  // re-read after the wait (another tab of the SW cannot run, but stay safe)
     const t = this.now();
@@ -94,6 +124,8 @@ export class Budget {
     else {
       st.calls.push(t); st.day_used += 1; st.last_call_at = t;
       if (kind === "discover") st.disc_day_used += 1;
+      if (isLo) { st.lo_calls.push(t); st.lo_day_used += 1; st.last_lo_at = t; }
+      else st.last_lo_at = 0;                     // the layer gap applies once, to the first logged-in call
     }
     await this.save(st);
   }

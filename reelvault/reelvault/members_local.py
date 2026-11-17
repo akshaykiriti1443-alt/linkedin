@@ -7,6 +7,7 @@ Everything lives in %USERPROFILE%\\ReelVault-Members (or $RVM_HOME):
     data\\            the database and files
     models\\          sound, face and speech models (downloaded once, checked by SHA-256)
     chrome-extension\\ the Chrome extension built for http://localhost:8800 (Load unpacked)
+    migrations\\      the database upgrade steps, copied from the source by --setup
     login.txt        your owner login
     secret-key.txt   the key that encrypts saved API keys (keep it; never share it)
     onex-sso-secret.txt  the shared secret OneX uses to sign members in (put the same value in OneX)
@@ -100,6 +101,10 @@ def configure() -> dict:
         "LOG_LEVEL": os.environ.get("LOG_LEVEL", "warning"),
         "HF_HUB_VERBOSITY": "error",
     })
+    # The installed package has no migrations folder. setup() copies it here, so an update adds new columns to the
+    # existing database (Alembic) instead of only creating missing tables.
+    if (HOME / "migrations" / "env.py").exists():
+        os.environ.setdefault("RV_MIGRATIONS_DIR", str(HOME / "migrations"))
     from .server import settings
 
     settings.reload()
@@ -291,7 +296,23 @@ def run(open_browser: bool = True) -> int:
     return 0
 
 
+def copy_migrations(source: Path) -> Path | None:
+    """Copy <source>/migrations to HOME/migrations, so the database upgrades with each new version."""
+    src = source / "migrations"
+    if not (src / "env.py").exists():
+        say("No migrations folder in the source. The database only gets new tables.")
+        return None
+    out = HOME / "migrations"
+    if out.exists():
+        shutil.rmtree(out)
+    shutil.copytree(src, out, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    os.environ["RV_MIGRATIONS_DIR"] = str(out)
+    return out
+
+
 def setup(source: Path | None, with_whisper: bool = True) -> int:
+    if source is not None:
+        copy_migrations(source)
     info = configure()
     fetch_models(with_whisper=with_whisper)
     if source is not None:

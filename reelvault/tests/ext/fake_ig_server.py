@@ -12,6 +12,21 @@ Scenarios: 429_on_page2, login_redirect, challenge_redirect, suspended_redirect,
 stale_cursor, cursor_error, suggested_reels, collab, bigint_pk, ds_user_httponly (cookie set by the test),
 page_trap (robots.txt is an HTML page whose script patches window.fetch), big_video (2nd video is 60 MB),
 clips_404 (clips/user answers 404: the reader must switch to feed/user), slow (0.8 s per API answer).
+
+LOGGED-OUT reads (DESIGN-FETCH.md 3.2, 3.5), built with tests/fixtures/ig/logged_out/make_lo_fixtures.py:
+GET /<handle>/ · GET /<handle>/reels/ · POST /graphql/query (reels tab) · POST /api/graphql (posts, post detail,
+media detail) · GET /api/v1/users/web_profile_info/ · GET /reel/<code>/embed/captioned/.
+Cookie detector: a logged-out request that carries a Cookie or X-CSRFToken header gets HTTP 400 "cookie_leak",
+is marked "leak" in the log and counted in GET /__ctl/log -> "leaks". On the two paths that the logged-in reader
+also uses (/<handle>/ and web_profile_info) a request is logged-out when it has no X-IG-WWW-Claim header (the
+logged-in reader always sends one).
+Logged-out scenarios: lo_login_wall (pages redirect to /accounts/login/, JSON answers 401 require_login),
+lo_rate_429 and lo_wait_401 (every logged-out answer but the profile page), lo_rate_after_<n> (429 from logged-out
+call n+1 on), lo_no_embedded (pages load without embedded data), lo_reels_blocked (the reels page has no data, the
+reels query answers 401), lo_no_views (post and media detail without view counts), lo_docid_rotated (the first doc
+id of every query is dead), lo_gated (the 2nd reel is gated), lo_web_refused (web_profile_info answers 400),
+lo_codes_only (timeline stubs carry only `code`), lo_private, lo_challenge (pages redirect to /challenge/),
+lo_slow (0.6 s per logged-out answer).
 """
 from __future__ import annotations
 
@@ -19,6 +34,7 @@ import argparse
 import datetime as dt
 import importlib.util
 import json
+import re
 import ssl
 import sys
 import threading
@@ -32,6 +48,11 @@ _spec = importlib.util.spec_from_file_location("rv_mkfx", ROOT / "tests" / "fixt
 mk = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(mk)
 
+_lspec = importlib.util.spec_from_file_location(
+    "rv_mklofx", ROOT / "tests" / "fixtures" / "ig" / "logged_out" / "make_lo_fixtures.py")
+lo = importlib.util.module_from_spec(_lspec)
+_lspec.loader.exec_module(lo)
+
 APP_ID = "936619743392459"
 NOW = int(time.time())
 TIMELINE = mk.account_timeline(250, now=NOW)
@@ -41,7 +62,48 @@ USERS = {u["username"]: u for u in (mk.TARGET, mk.PARTNER, mk.OTHER)}
 MP4 = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + b"\x00" * 4096
 JPG = b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"\x00" * 1024
 
-STATE = {"scenarios": set(), "log": [], "lock": threading.Lock()}
+STATE = {"scenarios": set(), "log": [], "lock": threading.Lock(), "leaks": 0, "lo_calls": 0}
+
+# ---------------------------------------------------------------------------------------------- logged-out data
+IG_BRAND = {"pk": 25025, "username": "instagram", "full_name": "Instagram"}   # the probe's well-known account
+
+
+def _mixed(reels: list[dict], owner: dict) -> list[dict]:
+    """The profile timeline: the reels plus a photo at every 4th place (photos must be skipped)."""
+    tl = []
+    for i, m in enumerate(reels):
+        if i % 4 == 3:
+            tl.append(lo.photo(owner, m["taken_at"] + 600, 500 + i))
+        tl.append(m)
+    return tl
+
+
+def _lo_account(u: dict, reels: list[dict]) -> dict:
+    return {"u": u, "reels": reels, "tl": _mixed(reels, u)}
+
+
+LO_ACCOUNTS = {
+    mk.TARGET["username"]: _lo_account(mk.TARGET, TIMELINE),
+    IG_BRAND["username"]: _lo_account(IG_BRAND, mk.account_timeline(30, seed=11, owner=IG_BRAND, now=NOW - 5000)),
+}
+assert sum(len(a["tl"]) for a in LO_ACCOUNTS.values()) == len({m["pk"] for a in LO_ACCOUNTS.values() for m in a["tl"]})
+LO_BY_CODE = {m["code"]: (a, m) for a in LO_ACCOUNTS.values() for m in a["tl"]}
+LO_BY_PK = {str(m["pk"]): (a, m) for a in LO_ACCOUNTS.values() for m in a["tl"]}
+LO_BY_USER_PK = {str(a["u"]["pk"]): a for a in LO_ACCOUNTS.values()}
+LO_BY_PAGE_ID = {lo.page_id(a["u"]): a for a in LO_ACCOUNTS.values()}
+LO_DOC = {doc: strategy for strategy, ids in lo.DOC_IDS.items() for doc in ids}
+LO_FIRST_DOC = {ids[0] for ids in lo.DOC_IDS.values()}
+RESERVED = {"accounts", "challenge", "api", "web", "reel", "reels", "p", "graphql", "explore", "robots.txt"}
+PROFILE_RE = re.compile(r"^/([a-z0-9._]{1,30})/$")
+REELS_PAGE_RE = re.compile(r"^/([a-z0-9._]{1,30})/reels/$")
+EMBED_RE = re.compile(r"^/reel/([A-Za-z0-9_-]{5,20})/embed/captioned/$")
+
+
+def lo_rate_after() -> int | None:
+    for sc in STATE["scenarios"]:
+        if sc.startswith("lo_rate_after_"):
+            return int(sc.rsplit("_", 1)[1])
+    return None
 
 
 def make_cert(cert_dir: Path) -> tuple[Path, Path]:
@@ -160,17 +222,24 @@ class H(BaseHTTPRequestHandler):
         if u.path == "/__ctl/scenario":
             req = json.loads(body or b"{}")
             STATE["scenarios"] = set(req.get("set") or [])
+            STATE["lo_calls"] = 0
             return self._send(200, {"ok": True, "set": sorted(STATE["scenarios"])})
         if u.path == "/__ctl/reset":
             with STATE["lock"]:
                 STATE["log"].clear()
             STATE["scenarios"] = set()
+            STATE["leaks"] = 0
+            STATE["lo_calls"] = 0
             return self._send(200, {"ok": True})
         if u.path == "/__ctl/log":
             with STATE["lock"]:
-                return self._send(200, {"log": STATE["log"]})
+                return self._send(200, {"log": STATE["log"], "leaks": STATE["leaks"]})
         if u.path == "/__ctl/timeline":
-            return self._send(200, {"pks": [str(m["pk"]) for m in TIMELINE]})
+            return self._send(200, {"pks": [str(m["pk"]) for m in TIMELINE],
+                                    "lo": {h: {"reels": [str(m["pk"]) for m in a["reels"]],
+                                               "codes": [m["code"] for m in a["reels"]],
+                                               "posts": [m["code"] for m in a["tl"]]}
+                                           for h, a in LO_ACCOUNTS.items()}})
         return self._send(404, {"error": "no"})
 
     # ------------------------------------------------------------------------------------------ Instagram
@@ -185,6 +254,13 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, "User-agent: *\nDisallow: /\n", "text/plain; charset=utf-8")
         if p == "/__trap":
             return self._send(204, b"", "text/plain")
+        kind = self._lo_kind(p, e)
+        if kind:
+            return self._lo(kind, p, q, e)
+        if p.startswith("/accounts/login"):
+            return self._send(200, lo.login_page_html(), "text/html; charset=utf-8")
+        if p.startswith("/challenge/"):
+            return self._send(200, "<!doctype html><title>Confirm it's you</title>", "text/html; charset=utf-8")
         if p == "/":
             return self._send(200, "<!doctype html><title>Instagram</title><p>fake</p>", "text/html")
         if p.startswith("/api/") or p.startswith("/web/"):
@@ -205,6 +281,9 @@ class H(BaseHTTPRequestHandler):
             if not u_:
                 return self._send(404, {"message": "User not found", "status": "fail"})
             return self._send(200, mk.web_profile_info(u_, followers=182_000 if u_ is mk.TARGET else 41_000))
+        if (p == "/api/v1/accounts/current_user/" or (p.startswith("/api/v1/users/") and p.endswith("/info/"))) \
+                and not e["cookies"].get("sessionid"):     # signed out (cookies cleared): what Instagram answers
+            return self._send(403, {"message": "login_required", "require_login": True, "status": "fail"})
         if p == "/api/v1/accounts/current_user/":
             return self._send(200, mk.current_user())
         if p.startswith("/api/v1/users/") and p.endswith("/info/"):
@@ -231,6 +310,123 @@ class H(BaseHTTPRequestHandler):
         if name in USERS:
             return self._send(200, mk.profile_page_html(USERS[name]), "text/html; charset=utf-8")
         return self._send(404, {"message": "not found", "status": "fail"})
+
+    # ------------------------------------------------------------------------------------------ logged out
+    @staticmethod
+    def _lo_kind(p: str, e: dict) -> str | None:
+        """Which logged-out strategy request this is, or None for a logged-in / other request."""
+        if p in ("/api/graphql", "/graphql/query"):
+            return "gql"
+        if REELS_PAGE_RE.match(p):
+            return "reels_page"
+        if EMBED_RE.match(p):
+            return "embed"
+        if "x-ig-www-claim" in e["headers"]:      # the logged-in reader (igFetch) always sends it
+            return None
+        if p == "/api/v1/users/web_profile_info/":
+            return "web_profile"
+        m = PROFILE_RE.match(p)
+        if m and m.group(1) not in RESERVED:
+            return "profile_page"
+        return None
+
+    def _lo(self, kind: str, p: str, q: dict, e: dict):
+        e["lo"] = kind
+        html = "text/html; charset=utf-8"
+        # The cookie detector: a logged-out request must carry no cookie and no CSRF token.
+        if e["headers"].get("cookie") or e["headers"].get("x-csrftoken") or e["cookies"]:
+            e["leak"] = True
+            with STATE["lock"]:
+                STATE["leaks"] += 1
+            return self._send(400, {"message": "cookie_leak", "status": "fail"})
+        with STATE["lock"]:
+            STATE["lo_calls"] += 1
+            n = STATE["lo_calls"]
+        page = kind in ("profile_page", "reels_page", "embed")
+        if on("lo_slow"):
+            time.sleep(0.6)
+        if not page and e["headers"].get("x-ig-app-id") != APP_ID:
+            return self._send(400, {"message": "useragent mismatch", "status": "fail"})
+        after = lo_rate_after()
+        if after is not None and n > after:
+            return self._send(429, {"message": "Please wait a few minutes before you try again.", "status": "fail"})
+        if on("lo_challenge") and page:
+            return self._send(302, b"", "text/html", {"Location": "https://www.instagram.com/challenge/123/abc/"})
+        if on("lo_login_wall"):
+            if page:
+                return self._send(302, b"", "text/html", {"Location": "https://www.instagram.com/accounts/login/"})
+            return self._send(401, lo.LOGIN_BODY)
+        if kind != "profile_page":
+            if on("lo_rate_429"):
+                return self._send(429, {"message": "Please wait a few minutes before you try again.",
+                                        "status": "fail"})
+            if on("lo_wait_401"):
+                return self._send(401, lo.WAIT_BODY)
+        if kind == "profile_page":
+            a = LO_ACCOUNTS.get(PROFILE_RE.match(p).group(1))
+            if a is None:
+                return self._send(404, "<!doctype html><title>Page not found</title>", html)
+            return self._send(200, lo.profile_page_html(a["u"], a["tl"], private=on("lo_private"),
+                                                        codes_only=on("lo_codes_only"),
+                                                        embedded=not on("lo_no_embedded")), html)
+        if kind == "reels_page":
+            a = LO_ACCOUNTS.get(REELS_PAGE_RE.match(p).group(1))
+            if a is None:
+                return self._send(404, "<!doctype html><title>Page not found</title>", html)
+            if on("lo_no_embedded") or on("lo_reels_blocked"):
+                return self._send(200, lo.profile_page_html(a["u"], a["tl"], embedded=False), html)
+            return self._send(200, lo.reels_page_html(a["u"], a["reels"]), html)
+        if kind == "embed":
+            hit = LO_BY_CODE.get(EMBED_RE.match(p).group(1))
+            if hit is None:
+                return self._send(404, "<!doctype html><title>Page not found</title>", html)
+            m = hit[1]
+            if on("lo_no_views"):
+                m = dict(m, play_count=None)
+            return self._send(200, lo.embed_html(m, with_data=not on("lo_no_embedded")), html)
+        if kind == "web_profile":
+            a = LO_ACCOUNTS.get(q.get("username", ""))
+            if a is None:
+                return self._send(404, {"message": "User not found", "status": "fail"})
+            if on("lo_web_refused"):
+                return self._send(400, {"message": "Bad request", "status": "fail"})
+            return self._send(200, lo.web_profile_info(a["u"], a["tl"]))
+        return self._lo_gql(p, e)
+
+    def _lo_gql(self, p: str, e: dict):
+        f = e["form"]
+        if f.get("lsd") != lo.LSD or e["headers"].get("x-fb-lsd") != lo.LSD:
+            return self._send(400, {"message": "bad lsd", "status": "fail"})
+        strategy = LO_DOC.get(f.get("doc_id", ""))
+        try:
+            v = json.loads(f.get("variables") or "{}")
+        except ValueError:
+            return self._send(400, {"message": "bad variables", "status": "fail"})
+        if strategy is None or (on("lo_docid_rotated") and f.get("doc_id") in LO_FIRST_DOC):
+            return self._send(200, lo.GQL_ERROR)
+        if (p == "/graphql/query") != (strategy == "lo_reels_gql"):
+            return self._send(404, {"message": "not found", "status": "fail"})
+        if strategy == "lo_reels_gql":
+            if on("lo_reels_blocked"):
+                return self._send(401, lo.LOGIN_BODY)
+            a = LO_BY_USER_PK.get(str((v.get("data") or {}).get("target_user_id")))
+            if a is None:
+                return self._send(200, lo.GQL_ERROR)
+            off = mk.offset_of(v["after"], "lor") if v.get("after") else 0
+            return self._send(200, lo.reels_gql(a["reels"], off or 0))
+        if strategy == "lo_posts_gql":
+            a = LO_BY_PAGE_ID.get(str(v.get("id")))
+            if a is None:
+                return self._send(200, {"data": {"node": None}, "extensions": {"is_final": True}})
+            off = mk.offset_of(v["after"], "lo") if v.get("after") else 0
+            return self._send(200, lo.posts_gql(a["u"], a["tl"], off or 0, codes_only=on("lo_codes_only")))
+        hit = LO_BY_CODE.get(v.get("shortcode", "")) if strategy == "lo_post_gql" else LO_BY_PK.get(str(v.get("media_id")))
+        if hit is not None and on("lo_gated") and hit[1]["pk"] == hit[0]["reels"][1]["pk"]:
+            hit = None
+        m = hit[1] if hit else None
+        if strategy == "lo_post_gql":
+            return self._send(200, lo.post_gql(m, views="none" if on("lo_no_views") else "both"))
+        return self._send(200, lo.media_gql(m, views="none" if on("lo_no_views") else "view_count"))
 
     def _clips(self, e):
         f = e["form"]

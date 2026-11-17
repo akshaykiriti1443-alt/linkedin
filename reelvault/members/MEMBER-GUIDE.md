@@ -6,7 +6,8 @@ that build on them. This guide walks you through it, step by step.
 **What you need**
 - A computer with **Chrome, Edge or Brave**. (Phones and Safari or Firefox work for everything except reading
   Instagram.)
-- An Instagram account to read with. A second account just for research is safest (see step 3).
+- An Instagram account to read with. ReelVault reads public reels without your login first. It uses the login for
+  what is missing. A second account just for research is safest (see step 3).
 - An AI you already have: your Claude plan, or an API key (Gemini has a free one in most countries), or the
   ReelVault desktop app on Windows. You pick in step 4.
 
@@ -94,6 +95,56 @@ and stops when Instagram asks. But if your main account matters to your business
 
 ReelVault reads in a pinned Instagram tab. You can keep using Chrome as normal. If Chrome is closed, reading waits
 and starts again when you open Chrome. Reading is slow on purpose: 100 reels take a few minutes.
+
+### How ReelVault reads Instagram
+
+Go to **Settings > Chrome extension**. The card **How ReelVault reads Instagram** gives you three choices:
+- **Safest first** (recommended). ReelVault reads public reels without your login first. It uses your Instagram
+  login only for what is missing. Most often that is the view counts.
+- **Logged-in only**. ReelVault always reads with your Instagram login. It stays slow and careful.
+- **Logged-out only**. ReelVault never uses your login. You may get fewer reels and no view counts.
+
+Click **Save**. The next pull reads that way.
+
+What "without your login" means: your Chrome opens the public Instagram pages. It sends no Instagram cookie. So
+Instagram sees a visitor on your home internet. It does not see your account.
+
+Honest limits:
+- Without a login Instagram shows less. View counts are often missing. Older reels may be missing too.
+  **Safest first** then fills the gaps with your login. **Logged-out only** leaves them empty. ReelVault then ranks
+  those reels on likes.
+- Your own saved reels stay private. ReelVault never reads them here.
+- Instagram changes its pages often. A way that works today can stop tomorrow. ReelVault then falls back to your
+  login by itself.
+
+Under the choices you see one line for each way: **Without your login** and **With your Instagram login**. Each
+line says if it works, is blocked or waits. On each competitor you also see how its last pull was read. For example:
+"Read 24 reels without your login. Your login filled in the other 76."
+
+### Test my connection
+
+Click **Test my connection** under the card. Then click **Run the test**. Keep Chrome open. The test makes about 11
+slow requests. It takes about 2 minutes. You can run it 3 times a day.
+
+On top you see one result:
+- **The safest way works.** ReelVault reads reels without your login. You don't need to do anything. If you're
+  signed out of Instagram, it asks you to sign in. Your login fills in what is missing.
+- **The safest way works in part.** ReelVault reads some reels without your login. With **Safest first** your login
+  fills in view counts. Stay signed in to Instagram in Chrome. With **Logged-out only** you get fewer reels.
+- **Instagram asks ReelVault to wait.** Instagram slows down reads for now. ReelVault goes on by itself. Run the
+  test again in a few hours.
+- **Instagram asks for a login here.** ReelVault reads with your login. It stays slow and careful.
+- **Instagram asks for a login here. You chose to read without it.** You picked **Logged-out only**. Try again
+  later, or pick **Safest first** in Settings.
+- **You're signed out of Instagram in Chrome.** Sign in at instagram.com in Chrome. Then run the test again.
+- **Instagram blocks reads right now.** ReelVault waits by itself. Run the test again in a few hours.
+
+Below it a table shows each way ReelVault tried, the account it tried, the result (**Works**, **Works in part**,
+**Blocked**, **Error** or **Skipped**), what that way gives and how long it took. A skipped way sent no request, so
+its time shows "—".
+
+No Chrome extension yet? The page says **Connect the Chrome extension first** and shows a **Connect Chrome**
+button.
 
 ### Find more accounts
 

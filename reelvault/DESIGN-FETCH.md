@@ -182,7 +182,7 @@ One call per row, logged-out pacing, max 12 calls. `handles[0]` = a well-known p
 1. `handles[0]`: `lo_profile_page`, `lo_reels_page`, `lo_reels_gql` (cursor null), `lo_web_profile`, `lo_posts_gql` (cursor from the page), then with
    the first reel found: `lo_post_gql`, `lo_media_gql`, `lo_embed`.
 2. `handles[1]`: `lo_profile_page`.
-3. `li_session` (the cached sign-in check; a call only when the cache is older than 6 h), then `li_clips` (`clipsUser`, `page_size: "12"`, on
+3. `li_session` (a fresh sign-in check: one call, never the 6-hour cache; see 12.26), then `li_clips` (`clipsUser`, `page_size: "12"`, on
    `handles[1]` or else `handles[0]`). Skipped when signed out or cooling.
 - Each row is posted when it finishes: `POST /jobs/<id>/probe {rows: [ProbeRow]}`. Then `done`. Example: `probe_upload.json`.
 - `ProbeRow` = `{strategy, layer: "logged_out"|"logged_in", handle|null, status: "ok"|"partial"|"blocked"|"error"|"skipped", code|null, http, ms,
@@ -308,11 +308,19 @@ ReelVault to wait. It goes on by itself."
              "next": "You don't need to do anything."}}   // state: waiting | running | done | failed; verdict is null until done
 ```
 - `status_label`: "Works", "Works in part", "Blocked", "Error", "Skipped". Layout: button **Run the test**; verdict box on top (green `best`, amber
-  `partial` and `login_needed`, red `nothing`); a table with the columns "What ReelVault tried", "Account", "Result", "What it gives", "Time" in two
-  groups, "Without your login" and "With your Instagram login". Under it: "This test makes about 11 slow requests. It takes 2 minutes."
-- Other verdicts (server-made): `partial` "The safest way works in part." / "ReelVault reads profiles and videos without your login. It uses your
-  login for view counts." · `login_needed` "Instagram asks for a login here." / "ReelVault reads with your Instagram login. It stays slow and
-  careful." · `nothing` "ReelVault can't read Instagram right now." / "Open instagram.com in Chrome and sign in. Then run the test again."
+  `partial`, `wait`, `login_needed` and `lo_only_blocked`, red `signed_out` and `nothing`); a table with the columns "What ReelVault tried",
+  "Account", "Result", "What it gives", "Time" in two groups, "Without your login" and "With your Instagram login". Under it: "This test makes
+  about 11 slow requests. It takes 2 minutes." A skipped row shows "—" as its time.
+- Other verdicts (server-made, `verdict_of(rows, mode)`, checked in this order; see 12.25):
+  `partial` "The safest way works in part." / "ReelVault reads profiles and videos without your login. It uses your login for view counts."
+  (logged-out only: "ReelVault reads some reels without your login. Instagram hides the rest right now.") · `wait` "Instagram asks ReelVault to
+  wait." / next "ReelVault goes on by itself. Run the test again in a few hours." · `lo_only_blocked` "Instagram asks for a login here. You chose
+  to read without it." / next "Try again later, or pick Safest first in Settings." · `login_needed` "Instagram asks for a login here." /
+  "ReelVault reads with your Instagram login. It stays slow and careful." · `signed_out` "You're signed out of Instagram in Chrome." / next
+  "Sign in at instagram.com in Chrome. Then run the test again." · `nothing` "Instagram blocks reads right now." / next "ReelVault waits by
+  itself. Run the test again in a few hours."
+- No extension (or one older than 2.1.0): the page shows a red box "Connect the Chrome extension first." with a **Connect Chrome** button (or
+  "Get the update") and **Run the test** stays off.
 
 ### 5.4 Admin card "Fetch health" (in `admin.js`), guides and tests
 ```jsonc
@@ -398,3 +406,85 @@ admin card keeps the same numbers per member device.
 **P1**: `igAnonFetch`, `lo_profile_page`, `lo_posts_gql`, `lo_post_gql`, `lo_reels_page`, `lo_reels_gql`, ladder 2.1, merge 2.2, cooldowns 2.3, pacing
 2.4, uploads 4.2, plan 4.1, migration 4.3, probe 3.4 + 4.4, section 5. **P2**: `lo_web_profile`, `lo_media_gql`, logged-out video URLs in
 `ig_videos`, logged-out `ig_profile`. **P3**: `lo_embed`, the doc_id editor, the global auto switch-off.
+
+## 12. Decisions log (build and integration, 2026-11-17)
+Folded from `docs/wp-notes/FETCH-EXT.md`, `FETCH-SERVER.md` and `FETCH-WEB.md` (they keep the details and evidence) plus the integration run.
+This section wins where it differs from sections 2-7. Still nothing ran against real Instagram.
+
+**Extension (2.1.0)**
+1. The random logged-out gap is taken after the reading tab is ready, so it sits right before each request.
+2. `ig_videos` has no handle page for the `lsd` token. The worker keeps the newest `lsd` in `chrome.storage.session` (memory only, max 6 h,
+   never uploaded). Without one, or after the first block, the login reads video URLs (`mediaInfo`). In `logged_out_only` such a reel is
+   reported `login_needed` (retried later). Nothing works at all -> `lo_blocked` / `login_wall`.
+3. After `changed`, a next doc id that works becomes the device's first choice (`lo.doc_ok`).
+4. Popup: the reading line shows from the job's plan at once. The wait line says "Instagram asks ReelVault to wait." after `rate` or
+   `challenge` and "Instagram asks for a login right now." after a login wall.
+5. The 4th probe of a day posts every row as `skipped` / `budget` and makes no call.
+6. The reading tab loads `/robots.txt` as a normal page, with the member's cookies, as in 2.0.0. No logged-out DATA request carries a cookie.
+   Zero cookie traffic in `logged_out_only` would need a separate tab type (not built).
+7. A logged-out page load that Instagram redirects (login wall, challenge) is followed by the same cookie-less fetch, as a browser does.
+8. After a logged-out `rate` / `challenge` block the extension also holds the login locally (`lo.li_not_before`, 15 / 60 min), on top of the
+   server's `run_after`.
+
+**Server (1.1.0)**
+9. One CHECK change after all: `jobs.kind` must allow `ig_probe`. The migration rebuilds only `jobs` (batch mode); `reels` and `pulls` get plain
+   `ADD COLUMN` (a batch copy of `reels` would cascade-delete its child rows on SQLite).
+10. App settings use the `internal.fetch.*` prefix, so they stay out of the general admin settings list. Only the Fetch health routes change them.
+11. `USER_SETTINGS_DEFAULT["read_mode"]` is `None`: the admin default applies until the member chooses.
+12. `fetch.py` registers `ig_probe` in `jobs.KINDS`. A queued pull follows the read mode at lease time.
+13. A pull is leased when the login may be used, or when the device reads logged out and the mode is not `logged_in_only`, or when the mode
+    is `logged_out_only`. A stale "signed out" report does not hold the login back: the sign-in check at the start of stage 2 settles it.
+    No layer usable -> back to waiting for 1 minute with a plain message, no attempt spent. A 2.0.0 extension keeps the old rules.
+14. Top-up past the target: when reels of this pull still lack views, the logged-in top-up reads up to 4 more pages (`TOP_UP_PAGES`) and
+    never stores more than the target. Partial reels write no `reel_snapshots` row until real views arrive.
+15. `stop_reason` keeps the old values: `target` -> `target_reached`, `no_more` -> `no_more`, `refresh_page` -> `known_reel` or `page_cap`,
+    the rest -> `page_cap`. The fine reason stays in `pulls.layers.logged_out.stop`.
+16. `no_views` is one device flag (`detail_off_until`, 24 h). Budgets: `next` gets 40, `logged_out_only` 80; the server counts logged-out
+    calls itself and takes the larger count; it ends a stage after 80 logged-out uploads in one lease.
+17. A probe in `logged_out_only` has no `li_*` rows. A probe that stopped after its logged-out rows still ends `done` with a verdict.
+18. Layer 3 seam: `jobs_ig.ingest_lo(user_id, job, body, device=None)` takes `layer: "rented"` with `device=None`; health rows then use
+    `device_id = "server"`. `fetch.layer_order()` reads `internal.fetch.layers`. No fetcher, executor or proxy code exists.
+
+**Web**
+19. The Settings card sits on **Settings > Chrome extension**. Pull lines show on the competitors list and per pull on the competitor page
+    (`working.js` shows no pull status). Fetch health is a card on **Admin > Health**; only logged-out ways get a switch. The read mode
+    applies on **Save**. An empty doc_id box sends `[]` (= built-in id). A server without `/api/fetch/*` hides the card and the lines.
+
+**Integration (found by the end-to-end journeys)**
+20. The localhost app (installed package, no migrations folder) used `create_all`, which never adds columns to an existing database. An
+    update would have broken the owner's PC. Now `members_local --setup` copies `migrations/` to `%USERPROFILE%\ReelVault-Members\migrations`
+    and sets `RV_MIGRATIONS_DIR`. `db.migrate()` stamps an unversioned database (0001, or 0002 when `pulls.read_mode` exists) before it
+    upgrades. Tests: `test_unversioned_*` in `tests/server/test_fetch_migration.py`.
+21. A `logged_out_only` pull that read nothing says so: "Instagram asks for a login right now. You chose to read without it, so ReelVault
+    read no reels. Try again later or pick Safest first in Settings." Its layer stays empty (it was shown as "logged in").
+22. The logged-out layer line after a login-wall cooldown says "Instagram asks for a login right now. ReelVault tries again later by itself."
+23. Versions: extension 2.1.0, server `settings.VERSION` 1.1.0. The desktop package stays 0.4.0 (its self-update compares that number).
+24. `install-members.ps1` needs no change for the new files (`build_extension.py` packs the whole folder). It now also prints the reload hint.
+
+**Integration evidence** (dev server `python -m reelvault.server.dev` + `tests/ext/fake_ig_server.py` + the real extension in Chromium):
+auto pull fully logged out (10 calls, 0 cookies, 100 reels scored); partial logged-out (39 reels) + logged-in top-up to exactly 100 unique;
+login wall -> fallback at once, cooldown and health rows; `rate` -> 15 min wait with no call, then the login; `logged_out_only` + block ->
+no logged-in call and the plain message; Test my connection from the web page -> 11 rows, verdict `best`; Pull next 100 after the mixed pull
+-> from the saved cursor, 100 older reels, 200 unique.
+
+**Review fixes (2026-11-17, after the safety and member-experience reviews)**
+25. Verdict order: `best` -> `wait` (a `rate` row and no list or video row worked) -> `partial` (a list row or a video row read something;
+    the profile page alone is not enough) -> `lo_only_blocked` (mode `logged_out_only`; `wait` when an earlier wait still runs) ->
+    `login_needed` -> `signed_out` (a logged-in row says `signed_out`) -> `wait` (cooling rows only) -> `nothing`. The probe payload carries
+    `read` (the member's mode at start) so the verdict never tells a logged-out-only member to sign in. With `best` or `partial` and a
+    signed-out login (not logged-out only) the next step is "Sign in to Instagram in Chrome. ReelVault uses your login to fill in what is
+    missing."
+26. The probe's sign-in row always checks fresh (one call, inside the 12-call cap); it no longer trusts the 6-hour cache.
+27. No made-up blocks: the extension reports `lo_blocked` only with the class and strategy of a REAL Instagram answer. A video or profile job
+    in `logged_out_only` whose logged-out calls were all skipped (no lsd, cooling, budget, switched off) fails with `budget` and
+    `cooldown_s` (15 min to 6 h): the job waits, no strike, no switch-off, no audit row. With no fresh lsd a video job first reads the
+    reel account's profile page (cookie-less) for a token; `ig_videos` items carry an optional `handle` for that. Server defense in depth:
+    a `lo_blocked` fail whose own `fetch_log` has only `skipped` rows for the named strategy applies no block and waits 30 minutes
+    (`jobs_ig._lo_block_unsent`). A log with no row for the strategy proves nothing (a pull uploads its log before it fails) and the block
+    stands.
+28. Settings layer line: a new state `partial` ("Works in part" pill, amber). The "signed out" line without a cooldown says "Sign in at
+    instagram.com. ReelVault checks again by itself." (there is no Try again button there).
+29. `GET /api/fetch/pulls` adds `read.stop_label`: for a logged-out-only pull that ended on a block, "Instagram asked for a login" (on the
+    budget, "Read the safe amount for now"). The Pulls table shows it instead of "Stopped at the page limit". `stop_reason` stays `page_cap`
+    (no new CHECK value, no migration).
+30. The fake Instagram answers `login_required` (403) on the logged-in user endpoints when the session cookie is missing, as Instagram does.

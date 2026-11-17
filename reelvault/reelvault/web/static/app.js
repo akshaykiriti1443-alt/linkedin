@@ -83,7 +83,8 @@ export function ago(iso) {
   if (s < 60) return "just now";
   if (s < 3600) return `${Math.round(s / 60)} min ago`;
   if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-  return `${Math.round(s / 86400)} days ago`;
+  const d = Math.round(s / 86400);
+  return d === 1 ? "1 day ago" : `${d} days ago`;
 }
 export function vfClass(id) {
   const n = parseInt(String(id || "").replace(/\D/g, ""), 10);
@@ -381,7 +382,7 @@ const ROUTES = {
   reels: ["reels", "list"], reel: ["reels", "detail"],
   working: ["working", "working"], format: ["working", "format"], banks: ["working", "banks"],
   create: ["outputs", "create"], outputs: ["outputs", "list"], output: ["outputs", "detail"],
-  settings: ["settings", "settings"], admin: ["admin", "admin"],
+  settings: ["settings", "settings"], admin: ["admin", "admin"], "test-connection": ["fetch", "testConnection"],
 };
 const PUBLIC = new Set(["join", "login", "reset", "verify", "privacy", "help"]);
 const AUTH = new Set(["join", "login", "reset", "verify"]);
@@ -482,7 +483,7 @@ const ICONS = {
 const NAV = [["home", "Home"], ["competitors", "Competitors"], ["reels", "Reels"], ["working", "What works"],
   ["create", "Create"], ["outputs", "Outputs"], ["settings", "Settings"]];
 const NAV_OF = {competitor: "competitors", discover: "competitors", reel: "reels", format: "working", banks: "working",
-  output: "outputs", onboarding: "home"};
+  output: "outputs", onboarding: "home", "test-connection": "settings"};
 
 function icon(d) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");

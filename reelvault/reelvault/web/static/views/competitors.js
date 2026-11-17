@@ -2,12 +2,19 @@
 import {h, clear, msg, say, busy, get, post, patch, del, arr, S, go, field, toast, pollSoon, onJobsDone, every,
   num, full, day, ago, empty, savesLine, pill, jobLine, backLink, checkbox, linkBtn} from "../app.js";
 import {signatureCard, dataNote} from "./parts.js";
+import {loadReads, readLine} from "./fetch.js";
 
 const STATUS = {new: ["New", ""], scheduled: ["Starts later", "busy"], active: ["Active", "ok"], paused: ["Paused", "warn"],
   not_found: ["Not found", "bad"], private: ["Private: we never read it", "bad"], error: ["Problem", "bad"]};
 const STOP = {target_reached: "Read 100 reels", no_more: "Reached their oldest reel", known_reel: "Caught up", page_cap: "Stopped at the page limit",
   rate_limited: "Instagram asked us to slow down", signed_out: "Chrome was signed out of Instagram", challenge: "Instagram asked for a check",
   error: "Something went wrong", canceled: "Stopped"};
+
+// Why a pull stopped. A pull that read without the login only says it in plain words (the server's stop_label).
+function stopText(p, read) {
+  const lab = read && read.read && read.read.stop_label;
+  return lab || STOP[p.stop_reason] || p.stop_reason || "Done";
+}
 
 // "Reading now" only while Chrome really reads; otherwise say what it waits for (fix round 1).
 function pullPill(a, ext) {
@@ -18,11 +25,13 @@ function pullPill(a, ext) {
   return pill(a.scheduled_for ? "Starts later" : "Up next", "busy");
 }
 
-function accountRow(a, ext) {
+function accountRow(a, ext, reads) {
   const [st, kind] = STATUS[a.status] || [a.status, ""];
   return h("div", {class: "card", dataset: {account: a.id}},
     h("div", {class: "row"}, h("a", {href: "#competitor/" + a.id, class: "bold"}, "@" + a.handle), a.full_name ? h("span", {class: "muted"}, a.full_name) : null,
       pill(st, kind), pullPill(a, ext)),
+    // DESIGN-FETCH.md 5.2: how the newest pull was read (without the login, with it, or both).
+    reads ? readLine(reads.byAccount[a.id]) : null,
     h("p", {class: "small muted"}, [a.followers !== null && a.followers !== undefined ? `${num(a.followers)} followers` : null,
       `${num(a.reels_count || 0)} reels`, `${num(a.outliers || 0)} outliers`, a.baseline_views ? `normal reel ${num(a.baseline_views)} views` : null,
       a.last_pull_at ? `read ${ago(a.last_pull_at)}` : "not read yet"].filter(Boolean).join(" · ")),
@@ -30,7 +39,7 @@ function accountRow(a, ext) {
 }
 
 export async function list(main, {token}) {
-  const r = await get("/api/accounts");
+  const [r, reads] = await Promise.all([get("/api/accounts"), loadReads()]);
   if (S.view !== token) return;
   if (!r.ok) { clear(main, h("h1", "Competitors"), empty(r.error)); return; }
   const d = r.data;
@@ -67,7 +76,7 @@ export async function list(main, {token}) {
   clear(main, h("div", {class: "view"},
     h("div", {class: "headrow"}, h("h1", "Competitors"), h("span", {class: "muted"}, `${accounts.length} of ${lim.max || 10} · ${lim.pulls_today || 0} of ${lim.pulls_max || 5} pulls today`)),
     chromeBanner,
-    accounts.length ? h("div", {class: "stack"}, accounts.map(a => accountRow(a, ext))) :
+    accounts.length ? h("div", {class: "stack"}, accounts.map(a => accountRow(a, ext, reads))) :
       empty("No competitors yet. Add 1-2 accounts whose reels work in your niche, and we'll find more."),
     h("section", {class: "panel"}, h("h2", "Add competitors"),
       h("p", {class: "hint"}, "Type @names or paste profile links, one per line. We read 100 reels from each, newest first. Private accounts are never read."),
@@ -80,7 +89,7 @@ export async function list(main, {token}) {
       h("div", {class: "row"}, h("label", {class: "sr", for: "discover-search"}, "Search"), query,
         h("button", {type: "button", class: "ghost", onclick: e => query.value.trim() && discover(e.currentTarget, {mode: "search", query: query.value.trim()})}, "Search")), dOut),
     h("section", {class: "panel"}, h("h2", "Your account"),
-      d.self ? accountRow(d.self) : [h("p", {class: "hint"}, "Add your own Instagram to compare yourself with your competitors. It never counts in their numbers."),
+      d.self ? accountRow(d.self, null, reads) : [h("p", {class: "hint"}, "Add your own Instagram to compare yourself with your competitors. It never counts in their numbers."),
         h("div", {class: "row"}, h("label", {class: "sr", for: "self-handle"}, "Your Instagram"), selfIn, h("button", {type: "button", class: "ghost", onclick: async e => {
           if (!selfIn.value.trim()) return;
           const res = await busy(e.currentTarget, () => post("/api/accounts", {handles: [selfIn.value.trim()], pull: true, role: "self"}));
@@ -91,7 +100,7 @@ export async function list(main, {token}) {
 
 export async function detail(main, {parts, token}) {
   const id = parts[0];
-  const r = await get("/api/accounts/" + encodeURIComponent(id || ""));
+  const [r, reads] = await Promise.all([get("/api/accounts/" + encodeURIComponent(id || "")), loadReads(id)]);
   if (S.view !== token) return;
   if (!r.ok) { clear(main, backLink("#competitors", "Competitors"), h("h1", "Competitor"), empty(r.error)); return; }
   const a = r.data.account;
@@ -130,14 +139,17 @@ export async function detail(main, {parts, token}) {
           const res = await busy(e.currentTarget, () => post("/api/reels/analyze-best", {account_id: a.id, limit: 5}));
           toast(res.ok ? (res.data.count ? `Breaking down ${res.data.count} top reels.` : "The top reels are already broken down.") : res.error); pollSoon();
         }}, "Break down the 5 best reels")),
-      myJobs.length ? h("div", {class: "stack"}, myJobs.map(j => jobLine(j, {onChange: reload}))) : null),
+      myJobs.length ? h("div", {class: "stack"}, myJobs.map(j => jobLine(j, {onChange: reload}))) : null,
+      a.pulling ? readLine(reads.byAccount[a.id]) : null),
     r.data.signature ? h("section", {class: "stack"}, h("h2", "Their signature"), signatureCard(r.data.signature)) : null,
     h("section", {class: "panel"}, h("h2", "Pulls"),
       arr(a.pulls).length ? h("div", {class: "tablewrap"}, h("table", null,
         h("thead", null, h("tr", null, h("th", "Started"), h("th", "Kind"), h("th", {class: "num"}, "New reels"), h("th", "Result"))),
         h("tbody", null, arr(a.pulls).map(p => h("tr", null, h("td", day(p.started_at || p.run_after)),
           h("td", {first: "First 100", next: "Next 100", refresh: "New reels"}[p.mode] || p.mode),
-          h("td", {class: "num"}, full(p.reels_new)), h("td", p.finished_at ? (STOP[p.stop_reason] || p.stop_reason || "Done") : (p.run_after ? "Starts " + day(p.run_after) : "Running"))))))) :
+          h("td", {class: "num"}, full(p.reels_new)), h("td", h("div", {class: "stack tight"},
+            p.finished_at ? stopText(p, reads.byPull[p.id]) : (p.run_after ? "Starts " + day(p.run_after) : "Running"),
+            readLine(reads.byPull[p.id])))))))) :
         h("p", {class: "muted"}, "No pulls yet.")),
     h("section", {class: "panel"}, h("h2", "Your note"), note, h("div", {class: "row"},
       h("button", {type: "button", class: "ghost", onclick: async e => { const res = await busy(e.currentTarget, () => patch(`/api/accounts/${a.id}`, {note: note.value})); toast(res.ok ? "Saved." : res.error); }}, "Save note"),

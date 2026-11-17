@@ -14,7 +14,7 @@ export async function extensionSetup(box, {onboarding = false, onReady = null} =
     const pairBox = h("div", {class: "stack", id: "pair-box"});
     clear(box, h("section", {class: "panel", id: "ext-install"},
       h("h2", "1. Add the extension to Chrome"),
-      h("p", "It works in Chrome, Edge or Brave on a computer. It reads Instagram with your own login. Your Instagram password and cookies never leave your browser."),
+      h("p", "It works in Chrome, Edge or Brave on a computer. It reads public reels without your login first. It uses your own Instagram login only for what is missing. Your Instagram password and cookies never leave your browser."),
       h("div", {class: "row"},
         st.store_url ? h("a", {class: "btn", href: st.store_url, target: "_blank", rel: "noopener noreferrer"}, "Add to Chrome from the Web Store") : null,
         h("a", {class: st.store_url ? "btn ghost" : "btn", href: st.download_url || "/download/reelvault-members-extension.zip"}, "Download the extension (ZIP)"),

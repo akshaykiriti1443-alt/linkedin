@@ -103,6 +103,49 @@ export function trimUser(u) {
   };
 }
 
+// ---------------------------------------------------------------------------------------------- logged-out shapes
+// The user object a logged-out profile page embeds (xig_user_by_username, DESIGN-FETCH.md 1). Its `id` is the
+// page id, NOT the user pk, so the pk is passed in: trimUser must never fall back to `id` here.
+export function trimXigUser(x, pk) {
+  return trimUser({...x, pk: sid(pk), id: undefined, media_count: x.all_media_count ?? x.media_count});
+}
+
+// A legacy GraphQL node (web_profile_info timeline edges, embed pages) -> the "gql" upload shape of
+// DESIGN-FETCH.md 4.2. Fields are copied, never interpreted. Ids are digit strings.
+export function trimGql(n) {
+  const cnt = (...keys) => {
+    for (const k of keys) { const v = n[k] && typeof n[k] === "object" ? n[k].count : undefined; if (v !== undefined && v !== null) return v; }
+    return null;
+  };
+  const capEdges = (n.edge_media_to_caption || {}).edges;
+  const cap = Array.isArray(capEdges) && capEdges[0] && capEdges[0].node ? capEdges[0].node.text : null;
+  const dim = n.dimensions && typeof n.dimensions === "object" ? n.dimensions : {};
+  const owner = n.owner && typeof n.owner === "object" ? n.owner : {};
+  return {
+    id: sid(n.id), shortcode: g(n, "shortcode"), is_video: !!n.is_video, product_type: g(n, "product_type"),
+    taken_at_timestamp: g(n, "taken_at_timestamp"), caption: cap ? String(cap).slice(0, CAPTION_MAX) : null,
+    video_view_count: g(n, "video_view_count"), video_play_count: g(n, "video_play_count"),
+    like_count: cnt("edge_liked_by", "edge_media_preview_like"),
+    comment_count: cnt("edge_media_to_comment", "edge_media_to_parent_comment"),
+    like_and_view_counts_disabled: !!g(n, "like_and_view_counts_disabled"), comments_disabled: !!g(n, "comments_disabled"),
+    video_duration: g(n, "video_duration"), has_audio: g(n, "has_audio"),
+    video_url: typeof n.video_url === "string" ? n.video_url : null,
+    display_url: typeof n.display_url === "string" ? n.display_url : null,
+    dimensions: {width: toInt(dim.width), height: toInt(dim.height)},
+    owner: {id: sid(owner.id), username: owner.username ?? null},
+    pinned: Array.isArray(n.pinned_for_users) && n.pinned_for_users.length > 0,
+    coauthors: (Array.isArray(n.coauthor_producers) ? n.coauthor_producers : []).filter(c => c && typeof c === "object")
+      .map(c => ({id: sid(c.id !== undefined && c.id !== null ? c.id : c.pk), username: c.username ?? null})),
+  };
+}
+
+// keepForTarget for a legacy GraphQL node: the target owns it or is a coauthor.
+export function keepForTargetGql(n, pk) {
+  if (n && n.owner && String(n.owner.id) === pk) return true;
+  return (n && Array.isArray(n.coauthor_producers) ? n.coauthor_producers : [])
+    .some(c => c && String(c.id !== undefined && c.id !== null ? c.id : c.pk) === pk);
+}
+
 // The key tree of a response for /debug-sample (5.9): values replaced by their type, arrays cut to 1 element.
 export function keysTree(v, depth = 0) {
   if (depth > 12) return "object";
