@@ -1,0 +1,228 @@
+{
+ "layer": "logged_out",
+ "account": {
+  "pk": "25025320",
+  "username": "scaleit.demo",
+  "full_name": "Demo Creator",
+  "biography": "Helping agency owners get clients with ads",
+  "bio_links": [],
+  "external_url": null,
+  "category": "Entrepreneur",
+  "is_private": false,
+  "is_verified": true,
+  "followers": 182000,
+  "following": 412,
+  "media_count": 640,
+  "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740"
+ },
+ "items": [
+  {
+   "shape": "v1",
+   "strategy": "lo_post_gql",
+   "pk": "4020599234213445632",
+   "id": "4020599234213445632_25025320",
+   "code": "DfMCbOTgAAA",
+   "taken_at": 1793512800,
+   "product_type": "clips",
+   "media_type": 2,
+   "pk_conflict": false,
+   "caption": "Stop boosting posts. Do this instead 👇\n\nComment \"ADS\" and I'll send you the checklist.",
+   "play_count": 106948,
+   "ig_play_count": null,
+   "view_count": 66307,
+   "fb_play_count": null,
+   "like_count": 3804,
+   "comment_count": 49,
+   "like_and_view_counts_disabled": false,
+   "comments_disabled": false,
+   "reshare_count": null,
+   "share_count": null,
+   "media_repost_count": null,
+   "video_duration": 45.8,
+   "has_audio": true,
+   "clips_tab_pinned_user_ids": [],
+   "timeline_pinned_user_ids": [],
+   "coauthor_producers": [],
+   "is_paid_partnership": false,
+   "audio": {
+    "audio_type": "original_sounds",
+    "music_title": null,
+    "music_artist": null,
+    "music_canonical_id": "18574904276680704",
+    "original_sound_title": "Original audio",
+    "is_reused": false
+   },
+   "video": {
+    "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/4020599234213445632_480.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD9919&oe=6AF06440",
+    "width": 480,
+    "height": 854
+   },
+   "cover": {
+    "url": "https://scontent.cdninstagram.com/v/t51.2885-15/4020599234213445632_480.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC11850&oe=6AF06440",
+    "width": 480,
+    "height": 853
+   },
+   "owner": {
+    "pk": "25025320",
+    "username": "scaleit.demo"
+   }
+  },
+  {
+   "shape": "v1",
+   "strategy": "lo_post_gql",
+   "pk": "4019609420412485633",
+   "id": "4019609420412485633_25025320",
+   "code": "DfIhXiXgAAB",
+   "taken_at": 1793394805,
+   "product_type": "clips",
+   "media_type": 2,
+   "pk_conflict": false,
+   "caption": "3 hooks that doubled our leads this month",
+   "play_count": null,
+   "ig_play_count": null,
+   "view_count": null,
+   "fb_play_count": null,
+   "like_count": 6403,
+   "comment_count": 193,
+   "like_and_view_counts_disabled": false,
+   "comments_disabled": false,
+   "reshare_count": null,
+   "share_count": null,
+   "media_repost_count": null,
+   "video_duration": 14.4,
+   "has_audio": true,
+   "clips_tab_pinned_user_ids": [],
+   "timeline_pinned_user_ids": [],
+   "coauthor_producers": [],
+   "is_paid_partnership": false,
+   "audio": {
+    "audio_type": "original_sounds",
+    "music_title": null,
+    "music_artist": null,
+    "music_canonical_id": "18451177551560704",
+    "original_sound_title": "Original audio",
+    "is_reused": false
+   },
+   "video": {
+    "url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/4019609420412485633_480.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD89613&oe=6AF06440",
+    "width": 480,
+    "height": 854
+   },
+   "cover": {
+    "url": "https://scontent.cdninstagram.com/v/t51.2885-15/4019609420412485633_480.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC55676&oe=6AF06440",
+    "width": 480,
+    "height": 853
+   },
+   "owner": {
+    "pk": "25025320",
+    "username": "scaleit.demo"
+   }
+  },
+  {
+   "shape": "v1",
+   "strategy": "lo_reels_gql",
+   "pk": "4018570357093957634",
+   "id": "4018570357093957634_25025320",
+   "code": "DfE1HLPgAAC",
+   "taken_at": null,
+   "product_type": "clips",
+   "media_type": 2,
+   "pk_conflict": false,
+   "caption": null,
+   "play_count": 406096,
+   "ig_play_count": null,
+   "view_count": null,
+   "fb_play_count": null,
+   "like_count": 11964,
+   "comment_count": 515,
+   "like_and_view_counts_disabled": false,
+   "comments_disabled": false,
+   "reshare_count": null,
+   "share_count": null,
+   "media_repost_count": null,
+   "video_duration": null,
+   "has_audio": null,
+   "clips_tab_pinned_user_ids": [],
+   "timeline_pinned_user_ids": [],
+   "coauthor_producers": [],
+   "is_paid_partnership": false,
+   "audio": null,
+   "video": null,
+   "cover": {
+    "url": "https://scontent.cdninstagram.com/v/t51.2885-15/4018570357093957634_640.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC88586&oe=6AF06440",
+    "width": 640,
+    "height": 1136
+   },
+   "owner": {
+    "pk": "25025320",
+    "username": null
+   }
+  },
+  {
+   "shape": "gql",
+   "strategy": "lo_web_profile",
+   "id": "4017683790280261635",
+   "shortcode": "DfBrh7jgAAD",
+   "is_video": true,
+   "product_type": "clips",
+   "taken_at_timestamp": 1793165252,
+   "caption": "POV: your client asks for 'just one more revision' 😅",
+   "video_view_count": 369570,
+   "video_play_count": null,
+   "like_count": 12913,
+   "comment_count": 618,
+   "like_and_view_counts_disabled": false,
+   "comments_disabled": false,
+   "video_duration": 48.4,
+   "has_audio": true,
+   "video_url": "https://scontent.cdninstagram.com/o1/v/t16/f2/m86/4017683790280261635_720.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6InhwdiJ9&_nc_ht=scontent.cdninstagram.com&oh=00_AYD54710&oe=6AF06440",
+   "display_url": "https://scontent.cdninstagram.com/v/t51.2885-15/4017683790280261635_1080.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC14450&oe=6AF06440",
+   "dimensions": {
+    "height": 1920,
+    "width": 1080
+   },
+   "owner": {
+    "id": "25025320",
+    "username": "scaleit.demo"
+   },
+   "pinned": false,
+   "coauthors": []
+  }
+ ],
+ "paging": {
+  "source": "lo",
+  "strategy": "lo_post_gql",
+  "more_available": true,
+  "stage_done": false,
+  "lo_stop": null
+ },
+ "fetch_log": [
+  {
+   "strategy": "lo_profile_page",
+   "status": "ok",
+   "code": null,
+   "http": 200,
+   "ms": 640,
+   "items": 12,
+   "at": 1793534400
+  },
+  {
+   "strategy": "lo_reels_gql",
+   "status": "blocked",
+   "code": "login_wall",
+   "http": 401,
+   "ms": 210,
+   "items": 0,
+   "at": 1793534409
+  },
+  {
+   "strategy": "lo_post_gql",
+   "status": "ok",
+   "code": null,
+   "http": 200,
+   "ms": 480,
+   "items": 1,
+   "at": 1793534418
+  }
+ ]
+}

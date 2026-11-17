@@ -1,0 +1,176 @@
+{
+ "data": {
+  "xdt_api__v1__media__shortcode__web_info": {
+   "items": [
+    {
+     "taken_at": 1793165852,
+     "pk": 4017688823445062135,
+     "id": "4017688823445062135_25025320",
+     "fbid": 18000000000000503,
+     "device_timestamp": 1793165852000503,
+     "caption_is_edited": false,
+     "strong_id__": "4017688823445062135_25025320",
+     "deleted_reason": 0,
+     "has_shared_to_fb": 0,
+     "has_delayed_metadata": false,
+     "share_count_disabled": false,
+     "is_reshare_of_text_post_app_media_in_ig": false,
+     "integrity_review_decision": "approved",
+     "client_cache_key": "NDAxNzY4ODgyMzQ0NTA2MjEzNQ==.3",
+     "is_visual_reply_commenter_notice_enabled": true,
+     "like_and_view_counts_disabled": false,
+     "is_post_live_clips_media": false,
+     "comment_threading_enabled": true,
+     "is_unified_video": false,
+     "commerciality_status": "not_commercial",
+     "exclude_from_ranking": false,
+     "is_quiet_post": false,
+     "code": "DfBsrLDgAH3",
+     "media_type": 1,
+     "product_type": "feed",
+     "pk_id": "4017688823445062135",
+     "filter_type": 0,
+     "is_paid_partnership": false,
+     "user": {
+      "pk": 25025320,
+      "pk_id": "25025320",
+      "id": "25025320",
+      "username": "scaleit.demo",
+      "full_name": "Demo Creator",
+      "is_private": false,
+      "is_verified": true,
+      "profile_pic_id": "3000000000025025320_25025320",
+      "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+      "fbid_v2": 17841400025025320,
+      "strong_id__": "25025320",
+      "has_anonymous_profile_picture": false,
+      "is_unpublished": false,
+      "is_favorite": false,
+      "friendship_status": {
+       "following": false,
+       "is_bestie": false,
+       "is_feed_favorite": false,
+       "is_restricted": false
+      }
+     },
+     "owner": {
+      "pk": 25025320,
+      "pk_id": "25025320",
+      "id": "25025320",
+      "username": "scaleit.demo",
+      "full_name": "Demo Creator",
+      "is_private": false,
+      "is_verified": true,
+      "profile_pic_id": "3000000000025025320_25025320",
+      "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+      "fbid_v2": 17841400025025320,
+      "strong_id__": "25025320",
+      "has_anonymous_profile_picture": false,
+      "is_unpublished": false,
+      "is_favorite": false,
+      "friendship_status": {
+       "following": false,
+       "is_bestie": false,
+       "is_feed_favorite": false,
+       "is_restricted": false
+      }
+     },
+     "caption": {
+      "pk": "18000000000003521",
+      "user_id": 25025320,
+      "type": 1,
+      "text": "The 3-second rule for scroll-stopping reels",
+      "did_report_as_spam": false,
+      "created_at": 1793165852,
+      "created_at_utc": 1793165852,
+      "content_type": "comment",
+      "status": "Active",
+      "bit_flags": 0,
+      "share_enabled": false,
+      "is_ranked_comment": false,
+      "is_covered": false,
+      "private_reply_status": 0,
+      "media_id": 4017688823445062135,
+      "user": {
+       "pk": 25025320,
+       "pk_id": "25025320",
+       "id": "25025320",
+       "username": "scaleit.demo",
+       "full_name": "Demo Creator",
+       "is_private": false,
+       "is_verified": true,
+       "profile_pic_id": "3000000000025025320_25025320",
+       "profile_pic_url": "https://scontent.cdninstagram.com/v/t51.2885-19/25025320_n.jpg?stp=dst-jpg_s150x150&oe=6AF30740",
+       "fbid_v2": 17841400025025320,
+       "strong_id__": "25025320",
+       "has_anonymous_profile_picture": false,
+       "is_unpublished": false,
+       "is_favorite": false,
+       "friendship_status": {
+        "following": false,
+        "is_bestie": false,
+        "is_feed_favorite": false,
+        "is_restricted": false
+       }
+      }
+     },
+     "comment_count": 14,
+     "like_count": 1703,
+     "number_of_qualities": 3,
+     "image_versions2": {
+      "candidates": [
+       {
+        "width": 1080,
+        "height": 1920,
+        "url": "https://scontent.cdninstagram.com/v/t51.2885-15/4017688823445062135_1080.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC23985&oe=6AF06440"
+       },
+       {
+        "width": 640,
+        "height": 1136,
+        "url": "https://scontent.cdninstagram.com/v/t51.2885-15/4017688823445062135_640.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC23985&oe=6AF06440"
+       },
+       {
+        "width": 480,
+        "height": 853,
+        "url": "https://scontent.cdninstagram.com/v/t51.2885-15/4017688823445062135_480.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC23985&oe=6AF06440"
+       },
+       {
+        "width": 320,
+        "height": 568,
+        "url": "https://scontent.cdninstagram.com/v/t51.2885-15/4017688823445062135_320.jpg?stp=dst-jpg_e15&_nc_ht=scontent.cdninstagram.com&oh=00_AYC23985&oe=6AF06440"
+       }
+      ],
+      "scrubber_spritesheet_info_candidates": {
+       "default": {
+        "video_length": 30.0,
+        "thumbnail_width": 100
+       }
+      }
+     },
+     "original_width": 720,
+     "original_height": 1280,
+     "clips_tab_pinned_user_ids": [],
+     "timeline_pinned_user_ids": [],
+     "coauthor_producers": [],
+     "coauthor_producer_can_see_organic_insights": false,
+     "invited_coauthor_producers": [],
+     "inventory_source": "clips_profile",
+     "is_dash_eligible": 1,
+     "video_codec": "avc1.64001F",
+     "has_more_comments": true,
+     "max_num_visible_preview_comments": 2,
+     "usertags": {
+      "in": []
+     },
+     "is_organic_product_tagging_eligible": false,
+     "music_metadata": null,
+     "play_count": null,
+     "view_count": null
+    }
+   ]
+  }
+ },
+ "extensions": {
+  "is_final": true
+ }
+}

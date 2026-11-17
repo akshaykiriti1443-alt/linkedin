@@ -1,0 +1,15 @@
+{
+ "data": null,
+ "errors": [
+  {
+   "message": "execution error",
+   "severity": "CRITICAL",
+   "code": 1675030,
+   "summary": "Query error",
+   "description": "Error performing query."
+  }
+ ],
+ "extensions": {
+  "is_final": true
+ }
+}

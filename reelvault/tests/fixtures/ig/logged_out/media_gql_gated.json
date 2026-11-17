@@ -1,0 +1,11 @@
+{
+ "data": {
+  "xig_polaris_media": {
+   "id": "0",
+   "if_not_gated_logged_out": null
+  }
+ },
+ "extensions": {
+  "is_final": true
+ }
+}

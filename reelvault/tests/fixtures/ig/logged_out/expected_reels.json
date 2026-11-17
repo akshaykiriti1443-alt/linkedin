@@ -1,0 +1,68 @@
+[
+ {
+  "ig_pk": "4020599234213445632",
+  "code": "DfMCbOTgAAA",
+  "taken_at": "2026-11-01T06:00:00Z",
+  "taken_at_derived": false,
+  "views": 106948,
+  "views_field": "play_count",
+  "likes": 3804,
+  "comments": 49,
+  "partial": false,
+  "missing": [],
+  "read_layer": "logged_out",
+  "read_strategy": "lo_post_gql",
+  "has_video_url": true
+ },
+ {
+  "ig_pk": "4019609420412485633",
+  "code": "DfIhXiXgAAB",
+  "taken_at": "2026-10-30T21:13:25Z",
+  "taken_at_derived": false,
+  "views": null,
+  "views_field": null,
+  "likes": 6403,
+  "comments": 193,
+  "partial": true,
+  "missing": [
+   "views"
+  ],
+  "read_layer": "logged_out",
+  "read_strategy": "lo_post_gql",
+  "has_video_url": true
+ },
+ {
+  "ig_pk": "4018570357093957634",
+  "code": "DfE1HLPgAAC",
+  "taken_at": "2026-10-29T10:48:59Z",
+  "taken_at_derived": true,
+  "views": 406096,
+  "views_field": "play_count",
+  "likes": 11964,
+  "comments": 515,
+  "partial": false,
+  "missing": [
+   "caption",
+   "duration",
+   "video_url"
+  ],
+  "read_layer": "logged_out",
+  "read_strategy": "lo_reels_gql",
+  "has_video_url": false
+ },
+ {
+  "ig_pk": "4017683790280261635",
+  "code": "DfBrh7jgAAD",
+  "taken_at": "2026-10-28T05:27:32Z",
+  "taken_at_derived": false,
+  "views": 369570,
+  "views_field": "view_count",
+  "likes": 12913,
+  "comments": 618,
+  "partial": true,
+  "missing": [],
+  "read_layer": "logged_out",
+  "read_strategy": "lo_web_profile",
+  "has_video_url": true
+ }
+]

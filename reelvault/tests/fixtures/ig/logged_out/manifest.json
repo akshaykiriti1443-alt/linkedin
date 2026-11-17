@@ -1,0 +1,214 @@
+{
+ "lsd": "AVqFixtureLsd01",
+ "doc_ids": {
+  "lo_posts_gql": [
+   "28904005159232689"
+  ],
+  "lo_reels_gql": [
+   "29285972954340351",
+   "7845543455542541"
+  ],
+  "lo_post_gql": [
+   "27128499623469141"
+  ],
+  "lo_media_gql": [
+   "27130156389949648"
+  ]
+ },
+ "target": {
+  "pk": "25025320",
+  "username": "scaleit.demo",
+  "page_id": "17841400025025320"
+ },
+ "files": [
+  {
+   "file": "profile_page.html",
+   "strategy": "lo_profile_page",
+   "http": 200,
+   "class": "success",
+   "verified": "source: instaloader structures.py Profile._from_page; wrapper path from yt-dlp. Stub fields other than `code` are a guess."
+  },
+  {
+   "file": "profile_page_codes_only.html",
+   "strategy": "lo_profile_page",
+   "http": 200,
+   "class": "success",
+   "verified": "source (the only verified stub field is code)"
+  },
+  {
+   "file": "profile_page_private.html",
+   "strategy": "lo_profile_page",
+   "http": 200,
+   "class": "private",
+   "verified": "source: instaloader (private page shows no posts)"
+  },
+  {
+   "file": "profile_page_no_data.html",
+   "strategy": "lo_profile_page",
+   "http": 200,
+   "class": "partial",
+   "verified": "guess: page without embedded data; profile_id regex is from gallery-dl"
+  },
+  {
+   "file": "login_page.html",
+   "strategy": "any page strategy",
+   "http": 200,
+   "class": "login_wall",
+   "verified": "source: final URL /accounts/login/ after a redirect (yt-dlp, gallery-dl, instaloader)"
+  },
+  {
+   "file": "reels_page.html",
+   "strategy": "lo_reels_page",
+   "http": 200,
+   "class": "success",
+   "verified": "guess"
+  },
+  {
+   "file": "web_profile_info_ok.json",
+   "strategy": "lo_web_profile",
+   "http": 200,
+   "class": "success",
+   "verified": "source: instagrapi; instaloader says it is often refused (400/401/429)"
+  },
+  {
+   "file": "wait_401.json",
+   "strategy": "any API strategy",
+   "http": 401,
+   "class": "rate_limit",
+   "verified": "source: instaloader/instagrapi (401 + Please wait)"
+  },
+  {
+   "file": "require_login_401.json",
+   "strategy": "any API strategy",
+   "http": 401,
+   "class": "login_wall",
+   "verified": "guess for the body; 401/403 is source"
+  },
+  {
+   "file": "rate_429.json",
+   "strategy": "any strategy",
+   "http": 429,
+   "class": "rate_limit",
+   "verified": "source: all three"
+  },
+  {
+   "file": "posts_gql_page1.json",
+   "strategy": "lo_posts_gql",
+   "http": 200,
+   "class": "success",
+   "verified": "source: instaloader get_posts (logged out)"
+  },
+  {
+   "file": "posts_gql_page2_last.json",
+   "strategy": "lo_posts_gql",
+   "http": 200,
+   "class": "success",
+   "verified": "source"
+  },
+  {
+   "file": "reels_gql_page1.json",
+   "strategy": "lo_reels_gql",
+   "http": 200,
+   "class": "success",
+   "verified": "shape: source (instaloader get_reels). Logged out: guess"
+  },
+  {
+   "file": "reels_gql_page2_last.json",
+   "strategy": "lo_reels_gql",
+   "http": 200,
+   "class": "success",
+   "verified": "same"
+  },
+  {
+   "file": "reels_gql_wrapped.json",
+   "strategy": "lo_reels_gql",
+   "http": 200,
+   "class": "success",
+   "verified": "shape: source (gallery-dl fetch__XDTUserDict). Logged out: guess"
+  },
+  {
+   "file": "post_gql_ok.json",
+   "strategy": "lo_post_gql",
+   "http": 200,
+   "class": "success",
+   "verified": "source: instaloader Post._obtain_metadata (logged out)"
+  },
+  {
+   "file": "post_gql_no_views.json",
+   "strategy": "lo_post_gql",
+   "http": 200,
+   "class": "partial",
+   "verified": "source hints at it: instaloader keeps a play-count fallback for this case"
+  },
+  {
+   "file": "post_gql_photo.json",
+   "strategy": "lo_post_gql",
+   "http": 200,
+   "class": "success",
+   "verified": "source (a photo: skip it)"
+  },
+  {
+   "file": "post_gql_empty.json",
+   "strategy": "lo_post_gql",
+   "http": 200,
+   "class": "empty",
+   "verified": "source: instaloader 'Fetching Post metadata failed'"
+  },
+  {
+   "file": "media_gql_ok.json",
+   "strategy": "lo_media_gql",
+   "http": 200,
+   "class": "success",
+   "verified": "source: yt-dlp (reads view_count, not play_count)"
+  },
+  {
+   "file": "media_gql_gated.json",
+   "strategy": "lo_media_gql",
+   "http": 200,
+   "class": "empty",
+   "verified": "source: yt-dlp (if_not_gated_logged_out is null)"
+  },
+  {
+   "file": "gql_error.json",
+   "strategy": "any GraphQL strategy",
+   "http": 200,
+   "class": "changed",
+   "verified": "source for errors[] (gallery-dl, instagrapi); exact text is a guess"
+  },
+  {
+   "file": "embed_ok.html",
+   "strategy": "lo_embed",
+   "http": 200,
+   "class": "success",
+   "verified": "guess (legacy)"
+  },
+  {
+   "file": "embed_no_data.html",
+   "strategy": "lo_embed",
+   "http": 200,
+   "class": "partial",
+   "verified": "guess"
+  },
+  {
+   "file": "upload_items.json",
+   "strategy": "POST /jobs/<id>/items",
+   "http": 200,
+   "class": "contract",
+   "verified": "this build's contract"
+  },
+  {
+   "file": "expected_reels.json",
+   "strategy": "server result for upload_items.json",
+   "http": 200,
+   "class": "contract",
+   "verified": "this build's contract"
+  },
+  {
+   "file": "probe_upload.json",
+   "strategy": "POST /jobs/<id>/probe",
+   "http": 200,
+   "class": "contract",
+   "verified": "this build's contract"
+  }
+ ]
+}

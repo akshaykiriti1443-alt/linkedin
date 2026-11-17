@@ -1,0 +1,139 @@
+{
+ "data": {
+  "node": {
+   "__typename": "XDTUserDict",
+   "id": "17841400025025320",
+   "polaris_ordered_timeline_connection": {
+    "edges": [
+     {
+      "node": {
+       "code": "DeokywPgAAK",
+       "pk": "4010617285621317642",
+       "id": "4010617285621317642_25025320",
+       "media_type": 2,
+       "product_type": "clips"
+      },
+      "cursor": "QVFbG86MTM6UVZGRFpXMXZZM1Z5YzI5eQ"
+     },
+     {
+      "node": {
+       "code": "DekwkI3gAH_",
+       "pk": "4009543157921350143",
+       "id": "4009543157921350143_25025320",
+       "media_type": 1,
+       "product_type": "feed"
+      },
+      "cursor": "QVFbG86MTQ6UVZGRFpXMXZZM1Z5YzI5eQ"
+     },
+     {
+      "node": {
+       "code": "Dekva5XgAAL",
+       "pk": "4009538124756549643",
+       "id": "4009538124756549643_25025320",
+       "media_type": 2,
+       "product_type": "clips"
+      },
+      "cursor": "QVFbG86MTU6UVZGRFpXMXZZM1Z5YzI5eQ"
+     },
+     {
+      "node": {
+       "code": "DegsMcTgAAM",
+       "pk": "4008398037431877644",
+       "id": "4008398037431877644_25025320",
+       "media_type": 2,
+       "product_type": "clips"
+      },
+      "cursor": "QVFbG86MTY6UVZGRFpXMXZZM1Z5YzI5eQ"
+     },
+     {
+      "node": {
+       "code": "Dec8OCzgAAN",
+       "pk": "4007342616327749645",
+       "id": "4007342616327749645_25025320",
+       "media_type": 2,
+       "product_type": "clips"
+      },
+      "cursor": "QVFbG86MTc6UVZGRFpXMXZZM1Z5YzI5eQ"
+     },
+     {
+      "node": {
+       "code": "DeYp-h7gAAO",
+       "pk": "4006136485492293646",
+       "id": "4006136485492293646_25025320",
+       "media_type": 2,
+       "product_type": "clips"
+      },
+      "cursor": "QVFbG86MTg6UVZGRFpXMXZZM1Z5YzI5eQ"
+     },
+     {
+      "node": {
+       "code": "DeVXbT3gAID",
+       "pk": "4005210475443782147",
+       "id": "4005210475443782147_25025320",
+       "media_type": 1,
+       "product_type": "feed"
+      },
+      "cursor": "QVFbG86MTk6UVZGRFpXMXZZM1Z5YzI5eQ"
+     },
+     {
+      "node": {
+       "code": "DeVWSEXgAAP",
+       "pk": "4005205442278981647",
+       "id": "4005205442278981647_25025320",
+       "media_type": 2,
+       "product_type": "clips"
+      },
+      "cursor": "QVFbG86MjA6UVZGRFpXMXZZM1Z5YzI5eQ"
+     },
+     {
+      "node": {
+       "code": "DeRlZzvgAAQ",
+       "pk": "4004146044974661648",
+       "id": "4004146044974661648_25025320",
+       "media_type": 2,
+       "product_type": "clips"
+      },
+      "cursor": "QVFbG86MjE6UVZGRFpXMXZZM1Z5YzI5eQ"
+     },
+     {
+      "node": {
+       "code": "DeOXze7gAAR",
+       "pk": "4003241811752517649",
+       "id": "4003241811752517649_25025320",
+       "media_type": 2,
+       "product_type": "clips"
+      },
+      "cursor": "QVFbG86MjI6UVZGRFpXMXZZM1Z5YzI5eQ"
+     },
+     {
+      "node": {
+       "code": "DeKo_LngAAS",
+       "pk": "4002191482533445650",
+       "id": "4002191482533445650_25025320",
+       "media_type": 2,
+       "product_type": "clips"
+      },
+      "cursor": "QVFbG86MjM6UVZGRFpXMXZZM1Z5YzI5eQ"
+     },
+     {
+      "node": {
+       "code": "DeHA5izgAIH",
+       "pk": "4001170748323398151",
+       "id": "4001170748323398151_25025320",
+       "media_type": 1,
+       "product_type": "feed"
+      },
+      "cursor": "QVFbG86MjQ6UVZGRFpXMXZZM1Z5YzI5eQ"
+     }
+    ],
+    "page_info": {
+     "end_cursor": null,
+     "has_next_page": false
+    }
+   }
+  }
+ },
+ "extensions": {
+  "is_final": true
+ }
+}

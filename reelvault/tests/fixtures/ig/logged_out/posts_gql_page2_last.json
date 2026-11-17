@@ -1,0 +1,79 @@
+{
+ "data": {
+  "node": {
+   "__typename": "XDTUserDict",
+   "id": "17841400025025320",
+   "polaris_ordered_timeline_connection": {
+    "edges": [
+     {
+      "node": {
+       "code": "DeG_wTTgAAT",
+       "pk": "4001165715158597651",
+       "id": "4001165715158597651_25025320",
+       "media_type": 2,
+       "product_type": "clips"
+      },
+      "cursor": "QVFbG86MjU6UVZGRFpXMXZZM1Z5YzI5eQ"
+     },
+     {
+      "node": {
+       "code": "DeECFwHgAAU",
+       "pk": "4000331560367685652",
+       "id": "4000331560367685652_25025320",
+       "media_type": 2,
+       "product_type": "clips"
+      },
+      "cursor": "QVFbG86MjY6UVZGRFpXMXZZM1Z5YzI5eQ"
+     },
+     {
+      "node": {
+       "code": "DeAx_wjgAAV",
+       "pk": "3999416354846277653",
+       "id": "3999416354846277653_25025320",
+       "media_type": 2,
+       "product_type": "clips"
+      },
+      "cursor": "QVFbG86Mjc6UVZGRFpXMXZZM1Z5YzI5eQ"
+     },
+     {
+      "node": {
+       "code": "Dd8v33HgAAW",
+       "pk": "3998281116137029654",
+       "id": "3998281116137029654_25025320",
+       "media_type": 2,
+       "product_type": "clips"
+      },
+      "cursor": "QVFbG86Mjg6UVZGRFpXMXZZM1Z5YzI5eQ"
+     },
+     {
+      "node": {
+       "code": "Dd6DU5HgAIL",
+       "pk": "3997522249102918155",
+       "id": "3997522249102918155_25025320",
+       "media_type": 1,
+       "product_type": "feed"
+      },
+      "cursor": "QVFbG86Mjk6UVZGRFpXMXZZM1Z5YzI5eQ"
+     },
+     {
+      "node": {
+       "code": "Dd6CLpngAAX",
+       "pk": "3997517215938117655",
+       "id": "3997517215938117655_25025320",
+       "media_type": 2,
+       "product_type": "clips"
+      },
+      "cursor": "QVFbG86MzA6UVZGRFpXMXZZM1Z5YzI5eQ"
+     }
+    ],
+    "page_info": {
+     "end_cursor": null,
+     "has_next_page": false
+    }
+   }
+  }
+ },
+ "extensions": {
+  "is_final": true
+ }
+}

@@ -1,0 +1,5 @@
+{
+ "message": "Please wait a few minutes before you try again.",
+ "require_login": true,
+ "status": "fail"
+}

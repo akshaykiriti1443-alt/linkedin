@@ -1,0 +1,164 @@
+{
+ "rows": [
+  {
+   "strategy": "lo_profile_page",
+   "layer": "logged_out",
+   "handle": "instagram",
+   "status": "ok",
+   "code": null,
+   "http": 200,
+   "ms": 640,
+   "items": 12,
+   "fields": [
+    "user",
+    "followers",
+    "reel_list",
+    "lsd"
+   ]
+  },
+  {
+   "strategy": "lo_reels_page",
+   "layer": "logged_out",
+   "handle": "instagram",
+   "status": "partial",
+   "code": "no_data",
+   "http": 200,
+   "ms": 590,
+   "items": 0,
+   "fields": [
+    "lsd"
+   ]
+  },
+  {
+   "strategy": "lo_reels_gql",
+   "layer": "logged_out",
+   "handle": "instagram",
+   "status": "blocked",
+   "code": "login_wall",
+   "http": 401,
+   "ms": 180,
+   "items": 0,
+   "fields": []
+  },
+  {
+   "strategy": "lo_web_profile",
+   "layer": "logged_out",
+   "handle": "instagram",
+   "status": "blocked",
+   "code": "rate",
+   "http": 401,
+   "ms": 150,
+   "items": 0,
+   "fields": []
+  },
+  {
+   "strategy": "lo_posts_gql",
+   "layer": "logged_out",
+   "handle": "instagram",
+   "status": "ok",
+   "code": null,
+   "http": 200,
+   "ms": 420,
+   "items": 12,
+   "fields": [
+    "reel_list"
+   ]
+  },
+  {
+   "strategy": "lo_post_gql",
+   "layer": "logged_out",
+   "handle": "instagram",
+   "status": "partial",
+   "code": "no_views",
+   "http": 200,
+   "ms": 510,
+   "items": 1,
+   "fields": [
+    "likes",
+    "comments",
+    "taken_at",
+    "caption",
+    "video_url",
+    "duration"
+   ]
+  },
+  {
+   "strategy": "lo_media_gql",
+   "layer": "logged_out",
+   "handle": "instagram",
+   "status": "ok",
+   "code": null,
+   "http": 200,
+   "ms": 530,
+   "items": 1,
+   "fields": [
+    "views",
+    "likes",
+    "comments",
+    "taken_at",
+    "caption",
+    "video_url",
+    "duration"
+   ]
+  },
+  {
+   "strategy": "lo_embed",
+   "layer": "logged_out",
+   "handle": "instagram",
+   "status": "blocked",
+   "code": "no_data",
+   "http": 200,
+   "ms": 300,
+   "items": 0,
+   "fields": []
+  },
+  {
+   "strategy": "lo_profile_page",
+   "layer": "logged_out",
+   "handle": "scaleit.demo",
+   "status": "ok",
+   "code": null,
+   "http": 200,
+   "ms": 610,
+   "items": 12,
+   "fields": [
+    "user",
+    "followers",
+    "reel_list",
+    "lsd"
+   ]
+  },
+  {
+   "strategy": "li_session",
+   "layer": "logged_in",
+   "handle": null,
+   "status": "ok",
+   "code": null,
+   "http": 200,
+   "ms": 0,
+   "items": 0,
+   "fields": [
+    "signed_in"
+   ]
+  },
+  {
+   "strategy": "li_clips",
+   "layer": "logged_in",
+   "handle": "scaleit.demo",
+   "status": "ok",
+   "code": null,
+   "http": 200,
+   "ms": 700,
+   "items": 12,
+   "fields": [
+    "views",
+    "likes",
+    "comments",
+    "taken_at",
+    "caption",
+    "video_url",
+    "duration"
+   ]
+  }
+ ]
+}
